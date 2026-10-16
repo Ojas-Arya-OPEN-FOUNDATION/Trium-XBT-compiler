@@ -289,6 +289,7 @@ private:
         }
     }
 
+public:
     bool is_float_ahead(size_t offset = 0) const {
         size_t cur = pos_ + offset;
         if (cur < source_.size() && (source_[cur] == '+' || source_[cur] == '-')) {
@@ -307,7 +308,14 @@ private:
             }
         }
         if (has_digits_before && cur < source_.size() && (source_[cur] == 'e' || source_[cur] == 'E')) {
-            return true;
+            size_t exp_cur = cur + 1;
+            if (exp_cur < source_.size() && (source_[exp_cur] == '+' || source_[exp_cur] == '-')) {
+                exp_cur++;
+            }
+            if (exp_cur < source_.size() && std::isdigit(static_cast<unsigned char>(source_[exp_cur]))) {
+                return true;
+            }
+            return false;
         }
         return false;
     }
@@ -1675,38 +1683,65 @@ private:
 
     // ==========================================================================
     // Expression Parsing with Proper Precedence
-    // Precedence (lowest to highest):
-    // 1. Comparison: <=> (spaceship), ==, !=, <, >, <=, >=
-    // 2. Kleene OR: |
-    // 3. Ternary XOR: ^
-    // 4. Kleene AND: &
-    // 5. Add / Sub: +, -
-    // 6. Mul: *
-    // 7. Unary: -, ~, !
-    // 8. Primary: Literals, Identifiers, Grouping, Select expression, Calls
+    // Precedence hierarchy (lowest to highest):
+    // 1. Equality: ==, !=
+    // 2. Relational: <, <=, >, >=
+    // 3. Three-way comparison: <=> (spaceship)
+    // 4. Kleene OR: |
+    // 5. Ternary XOR: ^
+    // 6. Kleene AND: &
+    // 7. Add / Sub: +, -
+    // 8. Mul: *
+    // 9. Unary: -, ~, !
+    // 10. Primary: Literals, Identifiers, Grouping, Select expression, Calls
     // ==========================================================================
 
     ASTNodePtr parse_expression() {
-        return parse_comparison();
+        return parse_equality();
     }
 
     ASTNodePtr parse_comparison() {
+        return parse_equality();
+    }
+
+    ASTNodePtr parse_equality() {
+        ASTNodePtr expr = parse_relational();
+
+        while (match({TokenType::OpEq, TokenType::OpNe})) {
+            Token op_tok = previous();
+            BinaryOp op = (op_tok.type == TokenType::OpEq) ? BinaryOp::Equal : BinaryOp::NotEqual;
+            ASTNodePtr right = parse_relational();
+            expr = std::make_shared<BinaryOpNode>(op, op_tok.text, expr, right, op_tok.loc);
+        }
+
+        return expr;
+    }
+
+    ASTNodePtr parse_relational() {
+        ASTNodePtr expr = parse_spaceship();
+
+        while (match({TokenType::OpLt, TokenType::OpGt, TokenType::OpLe, TokenType::OpGe})) {
+            Token op_tok = previous();
+            BinaryOp op = BinaryOp::LessThan;
+            if (op_tok.type == TokenType::OpLt)      op = BinaryOp::LessThan;
+            else if (op_tok.type == TokenType::OpGt) op = BinaryOp::GreaterThan;
+            else if (op_tok.type == TokenType::OpLe) op = BinaryOp::LessEqual;
+            else if (op_tok.type == TokenType::OpGe) op = BinaryOp::GreaterEqual;
+
+            ASTNodePtr right = parse_spaceship();
+            expr = std::make_shared<BinaryOpNode>(op, op_tok.text, expr, right, op_tok.loc);
+        }
+
+        return expr;
+    }
+
+    ASTNodePtr parse_spaceship() {
         ASTNodePtr expr = parse_bitwise_or();
 
-        while (match({TokenType::OpSpaceship, TokenType::OpEq, TokenType::OpNe,
-                      TokenType::OpLt, TokenType::OpGt, TokenType::OpLe, TokenType::OpGe})) {
+        while (match({TokenType::OpSpaceship})) {
             Token op_tok = previous();
-            BinaryOp op = BinaryOp::Spaceship;
-            if (op_tok.type == TokenType::OpSpaceship) op = BinaryOp::Spaceship;
-            else if (op_tok.type == TokenType::OpEq)  op = BinaryOp::Equal;
-            else if (op_tok.type == TokenType::OpNe)  op = BinaryOp::NotEqual;
-            else if (op_tok.type == TokenType::OpLt)  op = BinaryOp::LessThan;
-            else if (op_tok.type == TokenType::OpGt)  op = BinaryOp::GreaterThan;
-            else if (op_tok.type == TokenType::OpLe)  op = BinaryOp::LessEqual;
-            else if (op_tok.type == TokenType::OpGe)  op = BinaryOp::GreaterEqual;
-
             ASTNodePtr right = parse_bitwise_or();
-            expr = std::make_shared<BinaryOpNode>(op, op_tok.text, expr, right, op_tok.loc);
+            expr = std::make_shared<BinaryOpNode>(BinaryOp::Spaceship, op_tok.text, expr, right, op_tok.loc);
         }
 
         return expr;

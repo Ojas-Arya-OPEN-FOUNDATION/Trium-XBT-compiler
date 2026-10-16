@@ -268,12 +268,12 @@ struct MLIROperation {
         if (!operands.empty() || !results.empty()) {
             ss << " : ";
             if (!operands.empty()) {
-                if (operands.size() > 1 && results.size() > 1) ss << "(";
+                if (operands.size() > 1) ss << "(";
                 for (size_t i = 0; i < operands.size(); ++i) {
                     ss << operands[i].type.to_string();
                     if (i + 1 < operands.size()) ss << ", ";
                 }
-                if (operands.size() > 1 && results.size() > 1) ss << ")";
+                if (operands.size() > 1) ss << ")";
             }
 
             if (!results.empty()) {

@@ -5,6 +5,7 @@
  */
 
 #include "../../ternary_mlir_lowering.hpp"
+#include "../../include/Ternary/ternary_c_abi.h"
 #include <iostream>
 #include <cassert>
 #include <string>
@@ -267,6 +268,133 @@ void test_ir_emission_and_tablegen() {
     std::cout << "    -> PASSED: TableGen & MLIR IR text generation verified.\n";
 }
 
+// ==============================================================================
+// 7. Test Fixed MLIR (i64, i64) -> i64 Type Formatting
+// ==============================================================================
+
+void test_mlir_type_formatting() {
+    std::cout << "  [MLIR Lowering 7/8] Testing MLIR Operation Type Formatting...\n";
+
+    MLIROperation opAdd;
+    opAdd.name = "arith.addi";
+    opAdd.operands = {
+        MLIRValue("%a", MLIRType::getI64()),
+        MLIRValue("%b", MLIRType::getI64())
+    };
+    opAdd.results = {
+        MLIRValue("%res", MLIRType::getI64())
+    };
+
+    std::string opStr = opAdd.to_string();
+    assert(opStr.find(": (i64, i64) -> i64") != std::string::npos &&
+           "Expected '(i64, i64) -> i64' MLIR type formatting for multi-operand single-result!");
+
+    MLIROperation opAbs;
+    opAbs.name = "math.abs";
+    opAbs.operands = { MLIRValue("%x", MLIRType::getI64()) };
+    opAbs.results = { MLIRValue("%y", MLIRType::getI64()) };
+    std::string absStr = opAbs.to_string();
+    assert(absStr.find(": i64 -> i64") != std::string::npos &&
+           "Expected 'i64 -> i64' for single operand single result!");
+
+    MLIROperation opMulti;
+    opMulti.name = "bt.btha";
+    opMulti.operands = {
+        MLIRValue("%p", MLIRType::getI64()),
+        MLIRValue("%n", MLIRType::getI64())
+    };
+    opMulti.results = {
+        MLIRValue("%sp", MLIRType::getI64()),
+        MLIRValue("%sn", MLIRType::getI64())
+    };
+    std::string multiStr = opMulti.to_string();
+    assert(multiStr.find(": (i64, i64) -> (i64, i64)") != std::string::npos &&
+           "Expected '(i64, i64) -> (i64, i64)' for multi-operand multi-result!");
+
+    std::cout << "    -> PASSED: (i64, i64) -> i64 MLIR type formatting validated.\n";
+}
+
+// ==============================================================================
+// 8. Test Production C ABI (include/Ternary/ternary_c_abi.h)
+// ==============================================================================
+
+void test_ternary_c_abi() {
+    std::cout << "  [MLIR Lowering 8/8] Testing Production C ABI (include/Ternary/ternary_c_abi.h)...\n";
+
+    // 1. bt_word64_t and disjointness
+    bt_word64_t w1 = bt_make_word64(0x5555555555555555ULL, 0xAAAAAAAAAAAAAAAAULL);
+    assert(bt_verify_disjointness(w1));
+    bt_word64_t w_bad = bt_make_word64(0x3ULL, 0x1ULL);
+    assert(!bt_verify_disjointness(w_bad));
+
+    // 2. bt_dot_product_64
+    bt_word64_t a = bt_make_word64(0b0011ULL, 0b1100ULL);
+    bt_word64_t b = bt_make_word64(0b0101ULL, 0b1010ULL);
+    int64_t dot = bt_dot_product_64(a, b);
+    assert(dot == 0);
+    assert(bt_dot_product_64_raw(0b0011ULL, 0b1100ULL, 0b0101ULL, 0b1010ULL) == 0);
+
+    // 3. bt_btha_step
+    for (int t1 = -1; t1 <= 1; ++t1) {
+        for (int t2 = -1; t2 <= 1; ++t2) {
+            bt_word64_t wa = bt_make_word64((t1 == 1) ? 1 : 0, (t1 == -1) ? 1 : 0);
+            bt_word64_t wb = bt_make_word64((t2 == 1) ? 1 : 0, (t2 == -1) ? 1 : 0);
+            bt_btha_result_t res = bt_btha_step(wa, wb);
+            int sum = (res.sum.p & 1 ? 1 : 0) - (res.sum.n & 1 ? 1 : 0);
+            int carry = (res.carry.p & 1 ? 1 : 0) - (res.carry.n & 1 ? 1 : 0);
+            assert(t1 + t2 == 3 * carry + sum);
+        }
+    }
+
+    // 4. bt_base243_pack and bt_base243_unpack
+    for (uint32_t byte = 0; byte < 243; ++byte) {
+        int8_t trits[5];
+        bt_base243_unpack(static_cast<uint8_t>(byte), trits);
+        uint8_t repacked = bt_base243_pack(trits);
+        assert(repacked == byte);
+    }
+
+    // 5. bt_swar_bct_to_bin32
+    assert(bt_swar_bct_to_bin32(0, 0) == 0);
+    assert(bt_swar_bct_to_bin32(1, 0) == 1);
+    assert(bt_swar_bct_to_bin32(0, 1) == -1);
+    assert(bt_swar_bct_to_bin32(2, 0) == 3);
+    assert(bt_swar_bct_to_bin32(3, 0) == 4);
+
+    std::mt19937_64 rng(42);
+    for (size_t trial = 0; trial < 100; ++trial) {
+        uint32_t p = static_cast<uint32_t>(rng() & 0xFFFFFFFFU);
+        uint32_t n = ~p & static_cast<uint32_t>(rng() & 0xFFFFFFFFU);
+        int64_t swar_val = bt_swar_bct_to_bin32(p, n);
+
+        int64_t ref_val = 0;
+        int64_t power3 = 1;
+        for (int i = 0; i < 32; ++i) {
+            int d = ((p >> i) & 1) - ((n >> i) & 1);
+            ref_val += d * power3;
+            power3 *= 3;
+        }
+        assert(swar_val == ref_val && "SWAR BCT-to-bin32 mismatch with polynomial evaluation!");
+    }
+
+    // 6. bt_hamming_distance_64
+    bt_word64_t ha1 = bt_make_word64(0x0FULL, 0x00ULL);
+    bt_word64_t ha2 = bt_make_word64(0x00ULL, 0x0FULL);
+    assert(bt_hamming_distance_64(ha1, ha2) == 4);
+    assert(bt_hamming_distance_64(ha1, ha1) == 0);
+
+    // 7. bt_fp32_t and bt_csr_t
+    bt_fp32_t fp = { 100, 2 };
+    assert(fp.mantissa == 100 && fp.exponent == 2);
+    uint32_t rptr[2] = {0, 1};
+    uint32_t cidx[1] = {0};
+    uint64_t sgn[1] = {1};
+    bt_csr_t csr = { 1, 1, 1, rptr, cidx, sgn };
+    assert(csr.rows == 1 && csr.nnz == 1);
+
+    std::cout << "    -> PASSED: All C ABI / FFI functions and structures validated.\n";
+}
+
 int main() {
     std::cout << "======================================================================\n";
     std::cout << "  [LLVM Unit Test Layer 1] MLIR Dialect & Larq Lowering Engine\n";
@@ -278,6 +406,8 @@ int main() {
     test_convert_base243();
     test_mlir_pass_pipeline();
     test_ir_emission_and_tablegen();
+    test_mlir_type_formatting();
+    test_ternary_c_abi();
 
     std::cout << "======================================================================\n";
     std::cout << "  -> PASSED: All MLIR Lowering Unit Tests Verified (0 Failures).\n";

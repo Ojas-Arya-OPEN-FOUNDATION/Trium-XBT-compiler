@@ -86,6 +86,9 @@ public:
      */
     void push_element(size_t r, size_t c, Trit val) {
         if (val == Trit::Zero) return;
+        if (r < m_current_build_row) {
+            throw std::invalid_argument("push_element: row indices must be monotonically non-decreasing");
+        }
         if (r >= rows || c >= cols) {
             throw std::out_of_range("push_element index out of range");
         }
@@ -110,6 +113,10 @@ public:
         }
 
         nnz++;
+    }
+
+    void push_element(size_t r, size_t c, int8_t val) {
+        push_element(r, c, from_int(val));
     }
 
     /**
@@ -455,6 +462,9 @@ public:
 
             for (size_t a_idx = a_start; a_idx < a_end; ++a_idx) {
                 uint32_t k = col_indices[a_idx];
+                if (k >= B.rows) {
+                    throw std::out_of_range("spmm column index exceeds B.rows");
+                }
                 bool a_pos = (signs[a_idx / 64] >> (a_idx % 64)) & 1ULL;
                 int64_t a_val = a_pos ? 1 : -1;
 

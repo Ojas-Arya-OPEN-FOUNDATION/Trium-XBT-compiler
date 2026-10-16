@@ -28,13 +28,21 @@ public:
         };
 
         std::ostringstream ss;
-        ss << "    // Shift carry plane by 1 position (multiplication by 3)\n";
-        ss << "    %c1 = arith.constant 1 : i64\n";
-        ss << "    %sh_cp = arith.shli %cp, %c1 : i64\n";
-        ss << "    %sh_cn = arith.shli %cn, %c1 : i64\n";
-        ss << "    // BTHA addition of Sum and Shifted Carry\n";
-        ss << "    %s1, %s1_n, %c1_p, %c1_n = func.call @bt_btha_lowering(%sp, %sn, %sh_cp, %sh_cn) : (i64, i64, i64, i64) -> (i64, i64, i64, i64)\n";
-        ss << "    func.return %s1, %s1_n : i64, i64\n";
+        ss << "    // Iterative scf.while carry-propagation loop until carry is zero\n";
+        ss << "    %res_sp, %res_sn, %res_cp, %res_cn = scf.while (%curr_sp = %sp, %curr_sn = %sn, %curr_cp = %cp, %curr_cn = %cn) : (i64, i64, i64, i64) -> (i64, i64, i64, i64) {\n";
+        ss << "      %c0 = arith.constant 0 : i64\n";
+        ss << "      %c_or = arith.ori %curr_cp, %curr_cn : i64\n";
+        ss << "      %cond = arith.cmpi ne, %c_or, %c0 : i64\n";
+        ss << "      scf.condition(%cond) %curr_sp, %curr_sn, %curr_cp, %curr_cn : i64, i64, i64, i64\n";
+        ss << "    } do {\n";
+        ss << "    ^bb0(%in_sp: i64, %in_sn: i64, %in_cp: i64, %in_cn: i64):\n";
+        ss << "      %c1 = arith.constant 1 : i64\n";
+        ss << "      %sh_cp = arith.shli %in_cp, %c1 : i64\n";
+        ss << "      %sh_cn = arith.shli %in_cn, %c1 : i64\n";
+        ss << "      %s1_p, %s1_n, %next_cp, %next_cn = func.call @bt_btha_lowering(%in_sp, %in_sn, %sh_cp, %sh_cn) : (i64, i64, i64, i64) -> (i64, i64, i64, i64)\n";
+        ss << "      scf.yield %s1_p, %s1_n, %next_cp, %next_cn : i64, i64, i64, i64\n";
+        ss << "    }\n";
+        ss << "    func.return %res_sp, %res_sn : i64, i64\n";
 
         fn.rawCustomBody = ss.str();
         mod.functions.push_back(fn);

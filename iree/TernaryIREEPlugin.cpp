@@ -16,8 +16,10 @@ namespace mlir::iree_compiler {
 // ==============================================================================
 
 std::string VulkanSPIRVBackend::emitShaderKernel(const std::string& opName, size_t M, size_t N, size_t K) const {
+    size_t words_per_row = (K + 63) / 64;
     std::ostringstream ss;
     ss << "#version 450\n";
+    ss << "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
     ss << "// IREE Vulkan/SPIR-V Dispatch for " << opName << " (" << M << "x" << N << "x" << K << ")\n";
     ss << "layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;\n";
     ss << "layout(set = 0, binding = 0) readonly buffer BufA_P { uint64_t data_A_P[]; };\n";
@@ -30,15 +32,27 @@ std::string VulkanSPIRVBackend::emitShaderKernel(const std::string& opName, size
     ss << "    uint col = gl_GlobalInvocationID.x;\n";
     ss << "    if (row >= " << M << " || col >= " << N << ") return;\n";
     ss << "    int64_t acc = 0;\n";
-    ss << "    for (uint k = 0; k < " << (K / 64) << "; ++k) {\n";
-    ss << "        uint64_t ap = data_A_P[row * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t an = data_A_N[row * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t bp = data_B_P[col * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t bn = data_B_N[col * " << (K / 64) << " + k];\n";
+    ss << "    for (uint k = 0; k < " << words_per_row << "; ++k) {\n";
+    ss << "        uint64_t ap = data_A_P[row * " << words_per_row << " + k];\n";
+    ss << "        uint64_t an = data_A_N[row * " << words_per_row << " + k];\n";
+    ss << "        uint64_t bp = data_B_P[col * " << words_per_row << " + k];\n";
+    ss << "        uint64_t bn = data_B_N[col * " << words_per_row << " + k];\n";
+    if ((K % 64) != 0) {
+        uint64_t tail_mask = (1ULL << (K % 64)) - 1ULL;
+        ss << "        if (k + 1 == " << words_per_row << ") {\n";
+        ss << "            uint64_t tail_mask = 0x" << std::hex << tail_mask << std::dec << "ul; // (1ULL << (" << (K % 64) << ")) - 1\n";
+        ss << "            ap &= tail_mask;\n";
+        ss << "            an &= tail_mask;\n";
+        ss << "            bp &= tail_mask;\n";
+        ss << "            bn &= tail_mask;\n";
+        ss << "        }\n";
+    }
     ss << "        uint64_t prod_p = (ap & bp) | (an & bn);\n";
     ss << "        uint64_t prod_n = (ap & bn) | (an & bp);\n";
-    ss << "        // SPIR-V OpBitCount\n";
-    ss << "        acc += int64_t(bitCount(prod_p)) - int64_t(bitCount(prod_n));\n";
+    ss << "        // SPIR-V OpBitCount with 32-bit unpacked pairs\n";
+    ss << "        uvec2 up = unpackUint2x32(prod_p);\n";
+    ss << "        uvec2 un = unpackUint2x32(prod_n);\n";
+    ss << "        acc += int64_t(bitCount(up.x) + bitCount(up.y)) - int64_t(bitCount(un.x) + bitCount(un.y));\n";
     ss << "    }\n";
     ss << "    data_C[row * " << N << " + col] = acc;\n";
     ss << "}\n";
@@ -46,6 +60,7 @@ std::string VulkanSPIRVBackend::emitShaderKernel(const std::string& opName, size
 }
 
 std::string MetalMSLBackend::emitShaderKernel(const std::string& opName, size_t M, size_t N, size_t K) const {
+    size_t words_per_row = (K + 63) / 64;
     std::ostringstream ss;
     ss << "#include <metal_stdlib>\n";
     ss << "using namespace metal;\n\n";
@@ -62,11 +77,21 @@ std::string MetalMSLBackend::emitShaderKernel(const std::string& opName, size_t 
     ss << "    uint col = tid.x;\n";
     ss << "    if (row >= " << M << " || col >= " << N << ") return;\n";
     ss << "    int64_t acc = 0;\n";
-    ss << "    for (uint k = 0; k < " << (K / 64) << "; ++k) {\n";
-    ss << "        uint64_t ap = A_P[row * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t an = A_N[row * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t bp = B_P[col * " << (K / 64) << " + k];\n";
-    ss << "        uint64_t bn = B_N[col * " << (K / 64) << " + k];\n";
+    ss << "    for (uint k = 0; k < " << words_per_row << "; ++k) {\n";
+    ss << "        uint64_t ap = A_P[row * " << words_per_row << " + k];\n";
+    ss << "        uint64_t an = A_N[row * " << words_per_row << " + k];\n";
+    ss << "        uint64_t bp = B_P[col * " << words_per_row << " + k];\n";
+    ss << "        uint64_t bn = B_N[col * " << words_per_row << " + k];\n";
+    if ((K % 64) != 0) {
+        uint64_t tail_mask = (1ULL << (K % 64)) - 1ULL;
+        ss << "        if (k + 1 == " << words_per_row << ") {\n";
+        ss << "            uint64_t tail_mask = 0x" << std::hex << tail_mask << std::dec << "ULL; // (1ULL << (" << (K % 64) << ")) - 1\n";
+        ss << "            ap &= tail_mask;\n";
+        ss << "            an &= tail_mask;\n";
+        ss << "            bp &= tail_mask;\n";
+        ss << "            bn &= tail_mask;\n";
+        ss << "        }\n";
+    }
     ss << "        uint64_t prod_p = (ap & bp) | (an & bn);\n";
     ss << "        uint64_t prod_n = (ap & bn) | (an & bp);\n";
     ss << "        acc += int64_t(popcount(prod_p)) - int64_t(popcount(prod_n));\n";
@@ -77,6 +102,7 @@ std::string MetalMSLBackend::emitShaderKernel(const std::string& opName, size_t 
 }
 
 std::string CUDAPTXBackend::emitShaderKernel(const std::string& opName, size_t M, size_t N, size_t K) const {
+    size_t words_per_row = (K + 63) / 64;
     std::ostringstream ss;
     ss << "// IREE CUDA PTX Dispatch for " << opName << " (" << M << "x" << N << "x" << K << ")\n";
     ss << "__global__ void bt_iree_cuda_kernel(\n";
@@ -90,11 +116,21 @@ std::string CUDAPTXBackend::emitShaderKernel(const std::string& opName, size_t M
     ss << "    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;\n";
     ss << "    if (row >= " << M << " || col >= " << N << ") return;\n";
     ss << "    long long acc = 0;\n";
-    ss << "    for (unsigned int k = 0; k < " << (K / 64) << "; ++k) {\n";
-    ss << "        unsigned long long ap = A_P[row * " << (K / 64) << " + k];\n";
-    ss << "        unsigned long long an = A_N[row * " << (K / 64) << " + k];\n";
-    ss << "        unsigned long long bp = B_P[col * " << (K / 64) << " + k];\n";
-    ss << "        unsigned long long bn = B_N[col * " << (K / 64) << " + k];\n";
+    ss << "    for (unsigned int k = 0; k < " << words_per_row << "; ++k) {\n";
+    ss << "        unsigned long long ap = A_P[row * " << words_per_row << " + k];\n";
+    ss << "        unsigned long long an = A_N[row * " << words_per_row << " + k];\n";
+    ss << "        unsigned long long bp = B_P[col * " << words_per_row << " + k];\n";
+    ss << "        unsigned long long bn = B_N[col * " << words_per_row << " + k];\n";
+    if ((K % 64) != 0) {
+        uint64_t tail_mask = (1ULL << (K % 64)) - 1ULL;
+        ss << "        if (k + 1 == " << words_per_row << ") {\n";
+        ss << "            unsigned long long tail_mask = 0x" << std::hex << tail_mask << std::dec << "ULL; // (1ULL << (" << (K % 64) << ")) - 1\n";
+        ss << "            ap &= tail_mask;\n";
+        ss << "            an &= tail_mask;\n";
+        ss << "            bp &= tail_mask;\n";
+        ss << "            bn &= tail_mask;\n";
+        ss << "        }\n";
+    }
     ss << "        unsigned long long prod_p = (ap & bp) | (an & bn);\n";
     ss << "        unsigned long long prod_n = (ap & bn) | (an & bp);\n";
     ss << "        acc += (long long)(__popcll(prod_p)) - (long long)(__popcll(prod_n));\n";
@@ -151,6 +187,7 @@ std::shared_ptr<TargetBackend> TernaryIREEPlugin::getBackend(TargetBackendKind k
 }
 
 std::string TernaryIREEPlugin::buildFlowDispatchModule(const std::string& kernelName, size_t M, size_t N, size_t K) const {
+    size_t words_per_row = (K + 63) / 64;
     std::ostringstream ss;
     ss << "// IREE Flow Dialect Dispatch Module for " << kernelName << "\n";
     ss << "module @iree_flow_dispatch {\n";
@@ -163,10 +200,10 @@ std::string TernaryIREEPlugin::buildFlowDispatchModule(const std::string& kernel
     ss << "    }\n";
     ss << "    builtin.module {\n";
     ss << "      func.func @" << kernelName << "_entry(\n";
-    ss << "          %argA_P: !flow.dispatch.tensor<readonly:" << M << "x" << (K/64) << "xi64>,\n";
-    ss << "          %argA_N: !flow.dispatch.tensor<readonly:" << M << "x" << (K/64) << "xi64>,\n";
-    ss << "          %argB_P: !flow.dispatch.tensor<readonly:" << N << "x" << (K/64) << "xi64>,\n";
-    ss << "          %argB_N: !flow.dispatch.tensor<readonly:" << N << "x" << (K/64) << "xi64>,\n";
+    ss << "          %argA_P: !flow.dispatch.tensor<readonly:" << M << "x" << words_per_row << "xi64>,\n";
+    ss << "          %argA_N: !flow.dispatch.tensor<readonly:" << M << "x" << words_per_row << "xi64>,\n";
+    ss << "          %argB_P: !flow.dispatch.tensor<readonly:" << N << "x" << words_per_row << "xi64>,\n";
+    ss << "          %argB_N: !flow.dispatch.tensor<readonly:" << N << "x" << words_per_row << "xi64>,\n";
     ss << "          %argC:   !flow.dispatch.tensor<writeonly:" << M << "x" << N << "xi64>) {\n";
     ss << "        // Lowers to bitwise popcount contraction\n";
     ss << "        return\n";
@@ -178,12 +215,14 @@ std::string TernaryIREEPlugin::buildFlowDispatchModule(const std::string& kernel
 }
 
 std::string TernaryIREEPlugin::buildStreamDispatchModule(const std::string& kernelName, size_t M, size_t N, size_t K) const {
+    size_t wg_x = (N + 7) / 8;
+    size_t wg_y = (M + 7) / 8;
     std::ostringstream ss;
     ss << "// IREE Stream Dialect Timeline Module for " << kernelName << "\n";
     ss << "module @iree_stream_timeline {\n";
     ss << "  stream.cmd.execute with() {\n";
     ss << "    // Asynchronous hardware queue dispatch for " << M << "x" << N << "x" << K << "\n";
-    ss << "    stream.cmd.dispatch @dispatch_kernel::@" << kernelName << "_entry[" << (N/8) << ", " << (M/8) << ", 1]\n";
+    ss << "    stream.cmd.dispatch @dispatch_kernel::@" << kernelName << "_entry[" << wg_x << ", " << wg_y << ", 1]\n";
     ss << "  }\n";
     ss << "}\n";
     return ss.str();

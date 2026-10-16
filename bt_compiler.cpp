@@ -793,7 +793,7 @@ int main(int argc, char** argv) {
             std::string asm_path = use_stdout ? std::string(tmp_ir_path) + ".s" : opts.outputFile;
             std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
                               "clang -O3 -Wno-override-module --target=" + triple +
-                              " -S " + std::string(tmp_ir_path) + " -o " + asm_path + " 2>/dev/null";
+                              " -S \"" + std::string(tmp_ir_path) + "\" -o \"" + asm_path + "\" 2>/dev/null";
             int ret = std::system(cmd.c_str());
             unlink(tmp_ir_path);
             if (ret != 0) {
@@ -825,7 +825,7 @@ int main(int argc, char** argv) {
             }
             std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
                               "clang -O3 -Wno-override-module --target=" + triple +
-                              " -c " + std::string(tmp_ir_path) + " -o " + out_obj + " 2>/dev/null";
+                              " -c \"" + std::string(tmp_ir_path) + "\" -o \"" + out_obj + "\" 2>/dev/null";
             int ret = std::system(cmd.c_str());
             unlink(tmp_ir_path);
             if (ret != 0) {

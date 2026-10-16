@@ -66,15 +66,17 @@ struct Rational {
         if (d == 0) {
             throw std::invalid_argument("Rational: denominator cannot be zero");
         }
-        if (d < 0) {
-            n = -n;
-            d = -d;
+        __int128_t n128 = n;
+        __int128_t d128 = d;
+        if (d128 < 0) {
+            n128 = -n128;
+            d128 = -d128;
         }
-        __int128_t an = (n < 0) ? -static_cast<__int128_t>(n) : static_cast<__int128_t>(n);
-        __int128_t ad = static_cast<__int128_t>(d);
+        __int128_t an = (n128 < 0) ? -n128 : n128;
+        __int128_t ad = d128;
         __int128_t g = std::gcd(an, ad);
-        num = static_cast<int64_t>(n / g);
-        den = static_cast<int64_t>(d / g);
+        num = static_cast<int64_t>(n128 / g);
+        den = static_cast<int64_t>(d128 / g);
     }
 
     constexpr bool is_zero() const noexcept {
@@ -953,6 +955,7 @@ public:
      * Preserves exact total energy: ||X_unitary||_2 == ||x||_2.
      */
     static std::vector<cdouble> fft_unitary(const std::vector<cdouble>& x) {
+        if (x.empty()) return {};
         std::vector<cdouble> res = fft(x);
         double scale = 1.0 / std::sqrt(static_cast<double>(x.size()));
         for (auto& v : res) v *= scale;
@@ -963,6 +966,7 @@ public:
      * @brief Unitary Inverse Radix-3 FFT scaled by sqrt(N).
      */
     static std::vector<cdouble> ifft_unitary(const std::vector<cdouble>& X) {
+        if (X.empty()) return {};
         std::vector<cdouble> res = ifft(X);
         double scale = std::sqrt(static_cast<double>(X.size()));
         for (auto& v : res) v *= scale;
@@ -998,6 +1002,7 @@ public:
      * @brief Direct Discrete Fourier Transform (DFT) reference oracle for verification.
      */
     static std::vector<cdouble> dft_reference(const std::vector<cdouble>& x, bool inverse = false) {
+        if (x.empty()) return {};
         size_t N = x.size();
         std::vector<cdouble> X(N, cdouble(0, 0));
         double sign = inverse ? 1.0 : -1.0;

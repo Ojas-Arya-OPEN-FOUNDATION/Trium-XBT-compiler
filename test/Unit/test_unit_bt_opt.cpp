@@ -6,6 +6,7 @@
 
 #include "../../include/Ternary/TernaryDialect.h"
 #include "../../include/Ternary/TernaryPasses.h"
+#include "../../include/Ternary/ternary_c_abi.h"
 #include "../../iree/TernaryIREEPlugin.h"
 #include "../../ternary_mlir_lowering.hpp"
 
@@ -61,6 +62,19 @@ void test_dialect_registration() {
     uint64_t rp = 0, rn = 0;
     assert(TernaryDialect::verifyCSAReduce(0x0FULL, 0xF0ULL, 0x00ULL, 0x00ULL, rp, rn));
     assert((rp & rn) == 0 && "CSA reduce produced overlapping rails!");
+
+    // Test MSB carry bit 63 tracking in evalCSAReduce
+    int8_t cout_p = 0;
+    uint64_t msb_sp = 1ULL << 63;
+    uint64_t msb_cp = 1ULL << 63;
+    CSAReduceOp::evalCSAReduce(msb_sp, 0, msb_cp, 0, &cout_p);
+    assert(cout_p == 1 && "Expected MSB positive carry-out bit 63 to be tracked!");
+
+    int8_t cout_n = 0;
+    uint64_t msb_sn = 1ULL << 63;
+    uint64_t msb_cn = 1ULL << 63;
+    CSAReduceOp::evalCSAReduce(0, msb_sn, 0, msb_cn, &cout_n);
+    assert(cout_n == -1 && "Expected MSB negative carry-out bit 63 to be tracked!");
 
     std::cout << "    -> PASSED: Dialect registration, types, and invariant verifiers.\n";
 }
@@ -137,13 +151,22 @@ void test_pass_pipelining() {
         for (const auto& fn : mod.functions) {
             if (fn.name == name) {
                 found = true;
+                if (fn.name == "bt_csa_reduce_canonical") {
+                    assert(fn.rawCustomBody.find("scf.while") != std::string::npos &&
+                           "ConvertCSAReducePass must emit scf.while loop!");
+                    assert(fn.rawCustomBody.find("scf.condition") != std::string::npos &&
+                           "ConvertCSAReducePass must emit scf.condition!");
+                    assert(fn.rawCustomBody.find("scf.yield") != std::string::npos &&
+                           "ConvertCSAReducePass must emit scf.yield!");
+                    assert(fn.rawCustomBody.find("arith.ori") != std::string::npos);
+                }
                 break;
             }
         }
         assert(found && "Expected lowered function not found in module!");
     }
 
-    std::cout << "    -> PASSED: All 5 dialect lowerings executed into MLIR module.\n";
+    std::cout << "    -> PASSED: All 5 dialect lowerings executed into MLIR module (iterative CSA carry loop verified).\n";
 }
 
 // ==============================================================================
@@ -228,8 +251,21 @@ void test_iree_plugin_initialization() {
     auto vulkan = plugin.getBackend(TargetBackendKind::VulkanSPIRV);
     assert(vulkan != nullptr);
     std::string vulkanShader = vulkan->emitShaderKernel("bt.matmul", 32, 32, 128);
-    assert(vulkanShader.find("OpBitCount") != std::string::npos || vulkanShader.find("bitCount") != std::string::npos);
+    assert(vulkanShader.find("bitCount") != std::string::npos);
     assert(vulkanShader.find("gl_GlobalInvocationID") != std::string::npos);
+    assert(vulkanShader.find("#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require") != std::string::npos &&
+           "Vulkan shader must include int64 extension!");
+    assert(vulkanShader.find("unpackUint2x32(prod_p)") != std::string::npos &&
+           "Vulkan shader must unpack 64-bit mask via unpackUint2x32!");
+    assert(vulkanShader.find("bitCount(up.x) + bitCount(up.y)") != std::string::npos &&
+           "Vulkan shader must sum 32-bit unpacked bitCount!");
+
+    // Test arbitrary matrix size tail-masking (e.g. K = 100 trits -> words_per_row = 2)
+    std::string vulkanTail = vulkan->emitShaderKernel("bt.matmul", 16, 16, 100);
+    assert(vulkanTail.find("tail_mask") != std::string::npos &&
+           "Vulkan shader must emit tail-masking for non-multiple-of-64 K!");
+    assert(vulkanTail.find("for (uint k = 0; k < 2; ++k)") != std::string::npos &&
+           "Expected words_per_row = 2 loop bound for K = 100!");
 
     // Test Metal backend emission
     auto metal = plugin.getBackend(TargetBackendKind::MetalMSL);
@@ -238,11 +274,21 @@ void test_iree_plugin_initialization() {
     assert(metalShader.find("popcount") != std::string::npos);
     assert(metalShader.find("kernel void bt_iree_kernel") != std::string::npos);
 
+    std::string metalTail = metal->emitShaderKernel("bt.matmul", 16, 16, 100);
+    assert(metalTail.find("tail_mask") != std::string::npos &&
+           "Metal MSL shader must emit tail-masking for non-multiple-of-64 K!");
+    assert(metalTail.find("for (uint k = 0; k < 2; ++k)") != std::string::npos);
+
     // Test CUDA backend emission
     auto cuda = plugin.getBackend(TargetBackendKind::CUDAPTX);
     assert(cuda != nullptr);
     std::string cudaShader = cuda->emitShaderKernel("bt.matmul", 32, 32, 128);
     assert(cudaShader.find("__popcll") != std::string::npos);
+
+    std::string cudaTail = cuda->emitShaderKernel("bt.matmul", 16, 16, 100);
+    assert(cudaTail.find("tail_mask") != std::string::npos &&
+           "CUDA PTX kernel must emit tail-masking for non-multiple-of-64 K!");
+    assert(cudaTail.find("for (unsigned int k = 0; k < 2; ++k)") != std::string::npos);
 
     // Test CPU backend emission
     auto cpu = plugin.getBackend(TargetBackendKind::CPULLVM);
@@ -284,6 +330,101 @@ void test_bt_opt_emission() {
     std::cout << "    -> PASSED: Valid MLIR IR generation and canonical pipeline verified.\n";
 }
 
+// ==============================================================================
+// 7. Test Production C ABI / FFI & MLIR Type Formatting
+// ==============================================================================
+
+void test_c_abi() {
+    std::cout << "  [bt-opt 7/7] Testing Production C ABI & MLIR Type Formatting...\n";
+
+    // 1. Verify fixed MLIR (i64, i64) -> i64 type formatting
+    ::bt::mlir::MLIROperation opAdd;
+    opAdd.name = "arith.addi";
+    opAdd.operands = {
+        ::bt::mlir::MLIRValue("%a", ::bt::mlir::MLIRType::getI64()),
+        ::bt::mlir::MLIRValue("%b", ::bt::mlir::MLIRType::getI64())
+    };
+    opAdd.results = {
+        ::bt::mlir::MLIRValue("%c", ::bt::mlir::MLIRType::getI64())
+    };
+    std::string opStr = opAdd.to_string();
+    assert(opStr.find(": (i64, i64) -> i64") != std::string::npos &&
+           "MLIROperation::to_string must emit valid '(i64, i64) -> i64' syntax!");
+
+    // 2. bt_word64_t & disjointness
+    bt_word64_t w1 = bt_make_word64(0x5555555555555555ULL, 0xAAAAAAAAAAAAAAAAULL);
+    assert(bt_verify_disjointness(w1));
+    bt_word64_t w_bad = bt_make_word64(0x3ULL, 0x1ULL);
+    assert(!bt_verify_disjointness(w_bad));
+
+    // 3. bt_dot_product_64
+    bt_word64_t a = bt_make_word64(0b0011ULL, 0b1100ULL);
+    bt_word64_t b = bt_make_word64(0b0101ULL, 0b1010ULL);
+    int64_t dot = bt_dot_product_64(a, b);
+    assert(dot == 0);
+    assert(bt_dot_product_64_raw(0b0011ULL, 0b1100ULL, 0b0101ULL, 0b1010ULL) == 0);
+
+    // 4. bt_btha_step
+    for (int t1 = -1; t1 <= 1; ++t1) {
+        for (int t2 = -1; t2 <= 1; ++t2) {
+            bt_word64_t wa = bt_make_word64((t1 == 1) ? 1 : 0, (t1 == -1) ? 1 : 0);
+            bt_word64_t wb = bt_make_word64((t2 == 1) ? 1 : 0, (t2 == -1) ? 1 : 0);
+            bt_btha_result_t res = bt_btha_step(wa, wb);
+            int sum = (res.sum.p & 1 ? 1 : 0) - (res.sum.n & 1 ? 1 : 0);
+            int carry = (res.carry.p & 1 ? 1 : 0) - (res.carry.n & 1 ? 1 : 0);
+            assert(t1 + t2 == 3 * carry + sum);
+        }
+    }
+
+    // 5. bt_base243_pack and bt_base243_unpack
+    for (uint32_t byte = 0; byte < 243; ++byte) {
+        int8_t trits[5];
+        bt_base243_unpack(static_cast<uint8_t>(byte), trits);
+        uint8_t repacked = bt_base243_pack(trits);
+        assert(repacked == byte);
+    }
+
+    // 6. bt_swar_bct_to_bin32
+    assert(bt_swar_bct_to_bin32(0, 0) == 0);
+    assert(bt_swar_bct_to_bin32(1, 0) == 1);
+    assert(bt_swar_bct_to_bin32(0, 1) == -1);
+    assert(bt_swar_bct_to_bin32(2, 0) == 3);
+    assert(bt_swar_bct_to_bin32(3, 0) == 4);
+
+    std::mt19937_64 rng(777);
+    for (size_t trial = 0; trial < 100; ++trial) {
+        uint32_t p = static_cast<uint32_t>(rng() & 0xFFFFFFFFU);
+        uint32_t n = ~p & static_cast<uint32_t>(rng() & 0xFFFFFFFFU);
+        int64_t swar_val = bt_swar_bct_to_bin32(p, n);
+
+        int64_t ref_val = 0;
+        int64_t power3 = 1;
+        for (int i = 0; i < 32; ++i) {
+            int d = ((p >> i) & 1) - ((n >> i) & 1);
+            ref_val += d * power3;
+            power3 *= 3;
+        }
+        assert(swar_val == ref_val);
+    }
+
+    // 7. bt_hamming_distance_64
+    bt_word64_t ha1 = bt_make_word64(0x0FULL, 0x00ULL);
+    bt_word64_t ha2 = bt_make_word64(0x00ULL, 0x0FULL);
+    assert(bt_hamming_distance_64(ha1, ha2) == 4);
+    assert(bt_hamming_distance_64(ha1, ha1) == 0);
+
+    // 8. bt_fp32_t & bt_csr_t
+    bt_fp32_t fp = { 500, 3 };
+    assert(fp.mantissa == 500 && fp.exponent == 3);
+    uint32_t rptr[2] = {0, 1};
+    uint32_t cidx[1] = {0};
+    uint64_t sgn[1] = {1};
+    bt_csr_t csr = { 1, 1, 1, rptr, cidx, sgn };
+    assert(csr.rows == 1 && csr.nnz == 1);
+
+    std::cout << "    -> PASSED: Production C ABI & MLIR type formatting verified.\n";
+}
+
 int main() {
     std::cout << "======================================================================\n";
     std::cout << "  [LLVM Unit Test Layer 1] bt-opt MLIR Optimizer & IREE Plugin Suite\n";
@@ -295,6 +436,7 @@ int main() {
     test_bit_sliced_execution();
     test_iree_plugin_initialization();
     test_bt_opt_emission();
+    test_c_abi();
 
     std::cout << "======================================================================\n";
     std::cout << "  -> PASSED: 100% of bt-opt & IREE Plugin Unit Tests Succeeded (0 Errors)!\n";

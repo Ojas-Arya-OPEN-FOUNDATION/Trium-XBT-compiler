@@ -34,3 +34,4 @@ __pycache__/
 lake-manifest.json
 test/Unit/unit_*
 test/Unit/test_unit_bt_opt
+bin_sanitizer/

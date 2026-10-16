@@ -102,6 +102,7 @@ public:
     }
 
     static bool verifyCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, uint64_t& rp, uint64_t& rn);
+    static std::pair<uint64_t, uint64_t> evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out = nullptr);
 };
 
 // Operations
@@ -159,8 +160,11 @@ struct CSAReduceOp {
     std::string acc;
     std::string result;
 
-    static std::pair<uint64_t, uint64_t> execute(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn);
+    static std::pair<uint64_t, uint64_t> execute(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out = nullptr);
+    static std::pair<uint64_t, uint64_t> evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out = nullptr);
 };
+
+std::pair<uint64_t, uint64_t> evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out = nullptr);
 
 struct CSAAccumOp {
     static constexpr const char* kOpName = "bt.csa_accum";

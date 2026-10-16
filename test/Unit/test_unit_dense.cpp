@@ -50,10 +50,55 @@ void test_tiled_gemm() {
     }
 }
 
+void test_codec_and_gemm_guards() {
+    std::cout << "  [Dense] Testing Codec Guards & MultiTrit GEMM Edge Cases...\n";
+
+    // 1. to_int64 with num_trits > 39
+    TritWord64 w(0x55, 0xAA);
+    bool caught_overflow = false;
+    try {
+        Codec::to_int64(w, 40);
+    } catch (const std::invalid_argument&) {
+        caught_overflow = true;
+    }
+    assert(caught_overflow && "to_int64 with num_trits > 39 must throw std::invalid_argument");
+
+    // 2. float_to_trits with NaN and Inf
+    std::vector<Trit> trits;
+    bool caught_nan = false;
+    try {
+        Codec::float_to_trits(std::numeric_limits<double>::quiet_NaN(), trits);
+    } catch (const std::domain_error&) {
+        caught_nan = true;
+    }
+    assert(caught_nan && "float_to_trits with NaN must throw std::domain_error");
+
+    bool caught_inf = false;
+    try {
+        Codec::float_to_trits(std::numeric_limits<double>::infinity(), trits);
+    } catch (const std::domain_error&) {
+        caught_inf = true;
+    }
+    assert(caught_inf && "float_to_trits with Inf must throw std::domain_error");
+
+    // 3. float_to_trits with fractional_trits clamped
+    Codec::float_to_trits(1.2345, trits, 45); // Should clamp to 38 without buffer overflow
+    assert(!trits.empty());
+
+    // 4. gemm_multitrit with empty planes
+    MultiTritMatrix A_empty(4, 4, 0);
+    MultiTritMatrix B_empty(4, 4, 0);
+    DenseMatrixInt64 C(4, 4);
+    C.data[0] = 42;
+    gemm_multitrit(A_empty, B_empty, C);
+    assert(C.data[0] == 0 && "gemm_multitrit on empty planes must zero C and safely return");
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Dense Algebra & GEMM Tests...\n";
     test_kleene_logic();
     test_tiled_gemm();
+    test_codec_and_gemm_guards();
     std::cout << "  -> PASSED: All Dense Algebra Unit Tests Verified.\n";
     return 0;
 }

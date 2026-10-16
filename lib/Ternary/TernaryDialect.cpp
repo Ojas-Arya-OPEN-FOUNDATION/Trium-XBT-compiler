@@ -37,11 +37,18 @@ void TernaryDialect::initialize() {
     g_ternary_dialect_registered = true;
 }
 
-std::pair<uint64_t, uint64_t> CSAReduceOp::execute(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn) {
+std::pair<uint64_t, uint64_t> CSAReduceOp::evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out) {
     ::bt::TritWord64 curr_S(sp, sn);
     ::bt::TritWord64 curr_C(cp, cn);
+    int8_t accumulated_cout = 0;
     size_t iters = 0;
     while ((curr_C.P != 0 || curr_C.N != 0) && iters < 64) {
+        // Track MSB carry bit 63 before shifting left
+        if ((curr_C.P >> 63) & 1ULL) {
+            accumulated_cout += 1;
+        } else if ((curr_C.N >> 63) & 1ULL) {
+            accumulated_cout -= 1;
+        }
         uint64_t sh_P = curr_C.P << 1;
         uint64_t sh_N = curr_C.N << 1;
         auto ha = ::bt::BTHA(curr_S, ::bt::TritWord64(sh_P, sh_N));
@@ -49,7 +56,22 @@ std::pair<uint64_t, uint64_t> CSAReduceOp::execute(uint64_t sp, uint64_t sn, uin
         curr_C = ha.Carry;
         iters++;
     }
+    if (carry_out) {
+        *carry_out = accumulated_cout;
+    }
     return {curr_S.P, curr_S.N};
+}
+
+std::pair<uint64_t, uint64_t> CSAReduceOp::execute(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out) {
+    return evalCSAReduce(sp, sn, cp, cn, carry_out);
+}
+
+std::pair<uint64_t, uint64_t> evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out) {
+    return CSAReduceOp::evalCSAReduce(sp, sn, cp, cn, carry_out);
+}
+
+std::pair<uint64_t, uint64_t> TernaryDialect::evalCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, int8_t* carry_out) {
+    return CSAReduceOp::evalCSAReduce(sp, sn, cp, cn, carry_out);
 }
 
 bool TernaryDialect::verifyCSAReduce(uint64_t sp, uint64_t sn, uint64_t cp, uint64_t cn, uint64_t& rp, uint64_t& rn) {

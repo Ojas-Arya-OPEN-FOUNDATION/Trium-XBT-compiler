@@ -277,6 +277,15 @@ public:
         if (m_mantissa == 0) {
             m_exponent = 0;
         }
+
+        if constexpr (ExponentTrits > 0) {
+            constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
+            if (m_exponent > max_e) {
+                m_exponent = static_cast<int32_t>(max_e);
+            } else if (m_exponent < -max_e) {
+                m_exponent = static_cast<int32_t>(-max_e);
+            }
+        }
     }
 
     /**
@@ -333,8 +342,11 @@ public:
     /**
      * @brief Constructs a BTFP instance from a standard IEEE-754 double.
      */
-    static BTFP from_double(double val) noexcept {
-        if (val == 0.0 || !std::isfinite(val)) {
+    static BTFP from_double(double val) {
+        if (!std::isfinite(val)) {
+            throw std::domain_error("BTFP::from_double: NaN or Inf cannot be represented in BTFP");
+        }
+        if (val == 0.0 || std::abs(val) < 1e-300) {
             return BTFP(0, 0);
         }
 
@@ -462,9 +474,19 @@ public:
 
     inline bool operator<(const BTFP& other) const noexcept {
         if (*this == other) return false;
-        if (sign() != other.sign()) return sign() < other.sign();
-        // Same sign
-        return sub(other).is_negative();
+        int s_this = sign();
+        int s_other = other.sign();
+        if (s_this != s_other) return s_this < s_other;
+        if (s_this == 0) return false; // Both are zero, already handled by *this == other
+        if (s_this > 0) {
+            // Both positive: larger exponent is strictly larger number
+            if (m_exponent != other.m_exponent) return m_exponent < other.m_exponent;
+            return m_mantissa < other.m_mantissa;
+        } else {
+            // Both negative: larger exponent is strictly more negative (smaller number)
+            if (m_exponent != other.m_exponent) return m_exponent > other.m_exponent;
+            return m_mantissa < other.m_mantissa;
+        }
     }
 
     inline bool operator<=(const BTFP& other) const noexcept {

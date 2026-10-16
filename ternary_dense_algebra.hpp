@@ -452,6 +452,11 @@ public:
  * Uses exact power-of-3 weighting: C = sum_{p, q} (A^(p) * B^(q)) * 3^(p+q).
  */
 inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, DenseMatrixInt64& C) {
+    if (A.num_planes == 0 || B.num_planes == 0) {
+        std::fill(C.data.begin(), C.data.end(), 0);
+        return;
+    }
+
     if (A.num_planes + B.num_planes > 38) {
         throw std::invalid_argument("gemm_multitrit: sum of planes exceeds 38 (exceeds 128-bit scaling limit)");
     }
@@ -522,7 +527,9 @@ struct Codec {
      */
     static inline int64_t to_int64(const TritWord64& word, size_t num_trits = 39) {
         // 3^39 fits in signed 64-bit int (3^39 = 4.05e18 < 9.22e18)
-        assert(num_trits <= 39);
+        if (num_trits > 39) {
+            throw std::invalid_argument("num_trits > 39 overflows int64_t");
+        }
         int64_t total = 0;
         int64_t p3 = 1;
         for (size_t i = 0; i < num_trits; ++i) {
@@ -537,13 +544,22 @@ struct Codec {
      * Rounding to nearest integer is automatic and unbiased by truncating trits!
      */
     static inline void float_to_trits(double val, std::vector<Trit>& trits, int fractional_trits = 8) {
+        if (!std::isfinite(val)) {
+            throw std::domain_error("NaN/Inf in float_to_trits");
+        }
+        if (fractional_trits > 38) {
+            fractional_trits = 38;
+        }
+        if (fractional_trits < 0) {
+            fractional_trits = 0;
+        }
         trits.resize(fractional_trits + 16, Trit::Zero);
         // Scale by 3^fractional_trits
         double scale = std::pow(3.0, fractional_trits);
         int64_t scaled_int = std::llround(val * scale);
         
-        TritWord64 w = from_int64(scaled_int, trits.size());
-        for (size_t i = 0; i < trits.size(); ++i) {
+        TritWord64 w = from_int64(scaled_int, std::min<size_t>(trits.size(), 64));
+        for (size_t i = 0; i < trits.size() && i < 64; ++i) {
             trits[i] = w.getTrit(i);
         }
     }

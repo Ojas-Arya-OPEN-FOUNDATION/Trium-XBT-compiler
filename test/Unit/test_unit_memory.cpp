@@ -42,10 +42,60 @@ void test_hierarchical_zero_matrix() {
     assert(mat.stats().materialized_pages == 0);
 }
 
+void test_hierarchical_zero_page_bounds_and_atomic() {
+    std::cout << "  [Memory] Testing HierarchicalZeroPage Bounds & Atomic Read Count...\n";
+
+    HierarchicalZeroPage page(1024);
+    assert(page.read_count() == 0);
+
+    // Reads within capacity increment atomic read_count
+    uint8_t b0 = page.get_byte(0);
+    uint8_t b1 = page.get_byte(100);
+    assert(b0 == 0 && b1 == 0);
+    assert(page.read_count() == 2);
+
+    // Out of bounds get_byte throws std::out_of_range
+    bool caught_read_oob = false;
+    try {
+        (void)page.get_byte(1024);
+    } catch (const std::out_of_range&) {
+        caught_read_oob = true;
+    }
+    assert(caught_read_oob && "get_byte(offset >= virtual_capacity) must throw std::out_of_range");
+
+    // Out of bounds set_byte throws std::out_of_range
+    bool caught_write_oob = false;
+    try {
+        page.set_byte(1024, 1);
+    } catch (const std::out_of_range&) {
+        caught_write_oob = true;
+    }
+    assert(caught_write_oob && "set_byte(offset >= virtual_capacity) must throw std::out_of_range");
+
+    // HierarchicalZeroMatrix bounds checks
+    HierarchicalZeroMatrix mat(10, 10);
+    bool caught_mat_get_oob = false;
+    try {
+        (void)mat.get(10, 0);
+    } catch (const std::out_of_range&) {
+        caught_mat_get_oob = true;
+    }
+    assert(caught_mat_get_oob && "mat.get(r >= rows) must throw std::out_of_range");
+
+    bool caught_mat_set_oob = false;
+    try {
+        mat.set(0, 10, Trit::Pos);
+    } catch (const std::out_of_range&) {
+        caught_mat_set_oob = true;
+    }
+    assert(caught_mat_set_oob && "mat.set(c >= cols) must throw std::out_of_range");
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Memory Arena & Zero-Page Tests...\n";
     test_dual_rail_planes();
     test_hierarchical_zero_matrix();
+    test_hierarchical_zero_page_bounds_and_atomic();
     std::cout << "  -> PASSED: All Memory Arena Unit Tests Verified.\n";
     return 0;
 }

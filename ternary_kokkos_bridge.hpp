@@ -53,6 +53,8 @@ struct PlanarTensorView {
     size_t rows{0};
     size_t cols{0};
     size_t stride_words{0};   // Words per row (ceil(cols / 64))
+    std::shared_ptr<std::vector<uint64_t>> host_pos_storage{nullptr};
+    std::shared_ptr<std::vector<uint64_t>> host_neg_storage{nullptr};
 
     constexpr bool is_allocated() const noexcept {
         return d_pos != nullptr && d_neg != nullptr;
@@ -75,6 +77,20 @@ inline PlanarTensorView<void> make_host_view(TernaryMatrix& mat) noexcept {
     view.rows = mat.rows;
     view.cols = mat.cols;
     view.stride_words = mat.words_per_row;
+    size_t total_w = mat.rows * mat.words_per_row;
+    if (total_w > 0 && mat.data.size() >= total_w) {
+        view.host_pos_storage = std::make_shared<std::vector<uint64_t>>(total_w);
+        view.host_neg_storage = std::make_shared<std::vector<uint64_t>>(total_w);
+        for (size_t i = 0; i < total_w; ++i) {
+            (*view.host_pos_storage)[i] = mat.data[i].P;
+            (*view.host_neg_storage)[i] = mat.data[i].N;
+        }
+        view.d_pos = view.host_pos_storage->data();
+        view.d_neg = view.host_neg_storage->data();
+    } else {
+        view.d_pos = nullptr;
+        view.d_neg = nullptr;
+    }
     return view;
 }
 
@@ -532,7 +548,8 @@ inline AdderOutput parallel_reduce_csa(const std::vector<TritWord64>& inputs,
 
     size_t n = inputs.size();
     size_t nthreads = ::Kokkos::num_threads();
-    size_t chunks = std::min(nthreads, n);
+    if (nthreads == 0) nthreads = 1;
+    size_t chunks = std::max<size_t>(1, std::min(nthreads, n));
     size_t chunk_size = (n + chunks - 1) / chunks;
 
     std::vector<AdderOutput> local_outputs(chunks);

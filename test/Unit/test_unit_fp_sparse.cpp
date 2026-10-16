@@ -338,6 +338,129 @@ void test_tcsr_spmm() {
     assert(C_sp(2, 0) == -2 && C_sp(2, 1) == 0 && C_sp(2, 2) ==  2);
 }
 
+void test_fp_and_sparse_guards() {
+    std::cout << "  [BT-FP & T-CSR] Testing FP/Sparse Edge Cases & Invariant Guards...\n";
+
+    // 1. BTFP::from_double domain errors
+    bool caught_nan = false;
+    try {
+        BTFP16::from_double(std::numeric_limits<double>::quiet_NaN());
+    } catch (const std::domain_error&) {
+        caught_nan = true;
+    }
+    assert(caught_nan && "from_double on NaN must throw std::domain_error");
+
+    bool caught_inf = false;
+    try {
+        BTFP16::from_double(std::numeric_limits<double>::infinity());
+    } catch (const std::domain_error&) {
+        caught_inf = true;
+    }
+    assert(caught_inf && "from_double on Inf must throw std::domain_error");
+
+    bool caught_neginf = false;
+    try {
+        BTFP16::from_double(-std::numeric_limits<double>::infinity());
+    } catch (const std::domain_error&) {
+        caught_neginf = true;
+    }
+    assert(caught_neginf && "from_double on -Inf must throw std::domain_error");
+
+    // 2. Subnormal double flush to canonical zero
+    BTFP16 subnormal = BTFP16::from_double(1e-310);
+    assert(subnormal.is_zero() && "Subnormal double must flush to canonical zero");
+    assert(subnormal.mantissa() == 0 && subnormal.exponent() == 0);
+
+    // 3. ExponentTrits clamping in normalize()
+    // For ExponentTrits = 3, max_exp = (3^3 - 1)/2 = 13
+    BTFP<10, 3> fp_clamped(1, 100);
+    assert(fp_clamped.exponent() <= 13 && "Exponent must be clamped to ExponentTrits max_exp");
+    BTFP<10, 3> fp_clamped_neg(1, -100);
+    assert(fp_clamped_neg.exponent() >= -13 && "Negative exponent must be clamped to -max_exp");
+
+    // 4. Strict weak ordering for operator<
+    BTFP16 v_neg10(-10);
+    BTFP16 v_neg5(-5);
+    BTFP16 v_zero(0);
+    BTFP16 v_pos5(5);
+    BTFP16 v_pos10(10);
+
+    assert(v_neg10 < v_neg5);
+    assert(v_neg5 < v_zero);
+    assert(v_zero < v_pos5);
+    assert(v_pos5 < v_pos10);
+
+    // Irreflexivity: !(a < a)
+    assert(!(v_zero < v_zero));
+    assert(!(v_pos5 < v_pos5));
+    assert(!(v_neg10 < v_neg10));
+
+    // Asymmetry: a < b => !(b < a)
+    assert(v_neg10 < v_pos10 && !(v_pos10 < v_neg10));
+
+    // Distinct numbers with same sign but differing exponents
+    BTFP16 big_exp(100, 20);
+    BTFP16 small_exp(100, 5);
+    assert(small_exp < big_exp);
+    assert(!(big_exp < small_exp));
+
+    // Negative differing exponents: larger exponent is more negative (smaller)
+    BTFP16 neg_big_exp(-100, 20);
+    BTFP16 neg_small_exp(-100, 5);
+    assert(neg_big_exp < neg_small_exp);
+    assert(!(neg_small_exp < neg_big_exp));
+
+    // std::sort verification
+    std::vector<BTFP16> to_sort = {v_pos10, v_neg5, v_zero, v_pos5, v_neg10};
+    std::sort(to_sort.begin(), to_sort.end());
+    assert(to_sort[0] == v_neg10);
+    assert(to_sort[1] == v_neg5);
+    assert(to_sort[2] == v_zero);
+    assert(to_sort[3] == v_pos5);
+    assert(to_sort[4] == v_pos10);
+
+    // 5. TCSRMatrix push_element monotonic row check & int8_t overload
+    TCSRMatrix mat(4, 4);
+    mat.push_element(1, 0, static_cast<int8_t>(1)); // int8_t overload
+    mat.push_element(1, 2, static_cast<int8_t>(-1));
+    bool caught_row_order = false;
+    try {
+        mat.push_element(0, 1, static_cast<int8_t>(1)); // row 0 < current row 1!
+    } catch (const std::invalid_argument&) {
+        caught_row_order = true;
+    }
+    assert(caught_row_order && "Out-of-order row push must throw std::invalid_argument");
+
+    // Out of bounds row/col
+    bool caught_oob = false;
+    try {
+        mat.push_element(5, 0, Trit::Pos);
+    } catch (const std::out_of_range&) {
+        caught_oob = true;
+    }
+    assert(caught_oob && "Out of bounds push_element must throw std::out_of_range");
+
+    // 6. TCSRMatrix spmm column bounds check
+    // Create matrix A (2x2) with an invalid column index = 5 (exceeding B's rows = 2)
+    TCSRMatrix A_bad(2, 2);
+    A_bad.push_element(0, 0, Trit::Pos);
+    A_bad.finalize();
+    // Tamper col_indices to simulate corrupted or mismatched dimensions
+    A_bad.col_indices[0] = 10; // Col index 10 >= B.rows (2)
+
+    TCSRMatrix B_mat(2, 2);
+    B_mat.push_element(0, 0, Trit::Pos);
+    B_mat.finalize();
+
+    bool caught_spmm_oob = false;
+    try {
+        A_bad.spmm(B_mat);
+    } catch (const std::out_of_range&) {
+        caught_spmm_oob = true;
+    }
+    assert(caught_spmm_oob && "spmm with column index exceeding B.rows must throw std::out_of_range");
+}
+
 // ==============================================================================
 // Main Test Runner
 // ==============================================================================
@@ -358,6 +481,9 @@ int main() {
     test_tcsr_density_and_memory();
     test_tcsr_spmv();
     test_tcsr_spmm();
+
+    // Phase 3.3: Invariant & Exception Guards
+    test_fp_and_sparse_guards();
 
     std::cout << "======================================================================\n";
     std::cout << "  -> PASSED: All BT-FP & T-CSR Unit Tests 100% Verified Successfully!\n";

@@ -60,6 +60,17 @@ void test_rational_arithmetic() {
         threw = true;
     }
     assert(threw);
+
+    // INT64_MIN safety with __int128_t (no UB on sign negation)
+    int64_t min_i64 = std::numeric_limits<int64_t>::min();
+    Rational r_min_both(min_i64, min_i64);
+    assert(r_min_both.num == 1 && r_min_both.den == 1);
+
+    Rational r_min_num(min_i64, 2);
+    assert(r_min_num.num == min_i64 / 2 && r_min_num.den == 1);
+
+    Rational r_min_den(2, min_i64);
+    assert(r_min_den.num == -1 && r_min_den.den == -(min_i64 / 2));
 }
 
 // ==============================================================================
@@ -382,6 +393,13 @@ void test_radix3_fft() {
                   << " | Max Round-Trip Error: " << std::scientific << max_rec_err
                   << " | Parseval Preserved: 100% (diff < 1e-12)\n";
     }
+
+    // Empty signal guards
+    std::vector<std::complex<double>> empty_sig;
+    assert(Radix3FFT::fft_unitary(empty_sig).empty());
+    assert(Radix3FFT::ifft_unitary(empty_sig).empty());
+    assert(Radix3FFT::dft_reference(empty_sig, false).empty());
+    assert(Radix3FFT::dft_reference(empty_sig, true).empty());
 }
 
 // ==============================================================================

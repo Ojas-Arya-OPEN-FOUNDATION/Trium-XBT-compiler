@@ -14,6 +14,7 @@
 #include "../../ternary_frontend_ast.hpp"
 #include "../../ternary_llvm_codegen.hpp"
 #include "../../ternary_jit_engine.hpp"
+#include "../../ternary_kokkos_bridge.hpp"
 #include <iostream>
 #include <cassert>
 #include <cmath>
@@ -71,6 +72,14 @@ void test_float_lexer_and_ast() {
     auto lit_d = std::dynamic_pointer_cast<FloatLiteralExprAST>(var_d->init_expr);
     assert(lit_d != nullptr);
     assert(std::abs(lit_d->value - (-0.5)) < 1e-9);
+
+    // Verify scientific exponent lookahead guard (Lexer::is_float_ahead)
+    Lexer lex_incomplete_e("123e");
+    assert(!lex_incomplete_e.is_float_ahead() && "'123e' without digits must not be recognized as float!");
+    Lexer lex_incomplete_sign("42e+");
+    assert(!lex_incomplete_sign.is_float_ahead() && "'42e+' without digits must not be recognized as float!");
+    Lexer lex_valid_sci("42e+3");
+    assert(lex_valid_sci.is_float_ahead() && "'42e+3' must be recognized as float!");
 
     std::cout << "      -> Float Literal Lexing & AST passed.\n";
 }
@@ -281,6 +290,203 @@ void test_baremetal_native_jit_execution() {
 }
 
 // ==============================================================================
+// 6. Variable Shadowing in Nested If Blocks
+// ==============================================================================
+
+void test_variable_shadowing_nested_if() {
+    std::cout << "  [6/10] Testing Variable Shadowing in Nested If Blocks...\n";
+    std::string src = "var x: int = 10;\n"
+                      "var result: int = 0;\n"
+                      "if (x == 10) {\n"
+                      "    var x: int = 25;\n"
+                      "    result = x;\n"
+                      "}\n"
+                      "result = result + x;\n" // 25 + 10 = 35
+                      "return result;\n";
+
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    LLVMCodeGenVisitor codegen;
+    std::string ir = codegen.generate(*prog);
+    assert(ir.find("%var_x_1") != std::string::npos && "Outer variable must have unique SSA alloca register %var_x_1");
+    assert(ir.find("%var_x_3") != std::string::npos && "Shadowed variable must have unique SSA alloca register %var_x_3");
+
+    int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+    assert(exit_code == 35 && "Variable shadowing result must be 35!");
+    std::cout << "      -> Variable Shadowing in Nested If passed.\n";
+}
+
+// ==============================================================================
+// 7. Early Return in If/Else Blocks
+// ==============================================================================
+
+void test_early_return_if_else() {
+    std::cout << "  [7/10] Testing Early Return in If/Else Blocks...\n";
+    // Then-branch return
+    {
+        std::string src = "var cond: int = 1;\n"
+                          "if (cond == 1) {\n"
+                          "    return 42;\n"
+                          "} else {\n"
+                          "    return 99;\n"
+                          "}\n";
+        Parser parser(src);
+        auto prog = parser.parse_program();
+        assert(prog != nullptr);
+
+        int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+        assert(exit_code == 42 && "Early return in then branch must return 42!");
+    }
+
+    // Else-branch return
+    {
+        std::string src = "var cond: int = -1;\n"
+                          "if (cond == 1) {\n"
+                          "    return 42;\n"
+                          "} else {\n"
+                          "    return 99;\n"
+                          "}\n";
+        Parser parser(src);
+        auto prog = parser.parse_program();
+        assert(prog != nullptr);
+
+        int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+        assert(exit_code == 99 && "Early return in else branch must return 99!");
+    }
+
+    // Early return with float expression truncated to i32
+    {
+        std::string src = "var f: float = 7.8;\n"
+                          "return f;\n";
+        Parser parser(src);
+        auto prog = parser.parse_program();
+        assert(prog != nullptr);
+
+        int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+        assert(exit_code == 7 && "Float return must truncate to i32 (7)!");
+    }
+    std::cout << "      -> Early Return in If/Else passed.\n";
+}
+
+// ==============================================================================
+// 8. Mixed Float + Int Expressions
+// ==============================================================================
+
+void test_mixed_float_int_expressions() {
+    std::cout << "  [8/10] Testing Mixed Float + Int Expressions...\n";
+    std::string src = "var a: float = 3.5;\n"
+                      "var b: int = 2;\n"
+                      "var sum: float = a + b;\n"       // 5.5
+                      "var prod: float = b * a;\n"      // 7.0
+                      "var diff: float = a - b;\n"      // 1.5
+                      "var cmp1: int = (a < 10);\n"     // 1
+                      "var cmp2: int = (a > b);\n"      // 1
+                      "var cmp3: int = (2.0 == b);\n"   // 1
+                      "var total: int = cmp1 + cmp2 + cmp3;\n" // 3
+                      "return total;\n";
+
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    LLVMCodeGenVisitor codegen;
+    std::string ir = codegen.generate(*prog);
+    assert(ir.find("sitofp i64") != std::string::npos && "Must emit sitofp for mixed ops!");
+    assert(ir.find("fcmp olt double") != std::string::npos && "Must emit fcmp olt!");
+    assert(ir.find("fcmp ogt double") != std::string::npos && "Must emit fcmp ogt!");
+    assert(ir.find("fcmp oeq double") != std::string::npos && "Must emit fcmp oeq!");
+
+    int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+    assert(exit_code == 3 && "Mixed float + int comparisons must evaluate to 3!");
+    std::cout << "      -> Mixed Float + Int Expressions passed.\n";
+}
+
+// ==============================================================================
+// 9. Comparison Precedence (Relational vs Equality)
+// ==============================================================================
+
+void test_comparison_precedence() {
+    std::cout << "  [9/10] Testing Comparison Precedence (Relational vs Equality)...\n";
+    // 1. AST verification: 'a < b == c < d' must parse as '(a < b) == (c < d)'
+    std::string src = "var res = a < b == c < d;\n";
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+    assert(prog->declarations.size() == 1);
+
+    auto vdecl = std::dynamic_pointer_cast<VarDeclNode>(prog->declarations[0]);
+    assert(vdecl != nullptr);
+
+    auto root_bin = std::dynamic_pointer_cast<BinaryOpNode>(vdecl->init_expr);
+    assert(root_bin != nullptr);
+    assert(root_bin->op == BinaryOp::Equal && "Root operator of 'a < b == c < d' must be Equality (==)!");
+
+    auto left_bin = std::dynamic_pointer_cast<BinaryOpNode>(root_bin->left);
+    assert(left_bin != nullptr);
+    assert(left_bin->op == BinaryOp::LessThan && "Left child must be LessThan (<)!");
+
+    auto right_bin = std::dynamic_pointer_cast<BinaryOpNode>(root_bin->right);
+    assert(right_bin != nullptr);
+    assert(right_bin->op == BinaryOp::LessThan && "Right child must be LessThan (<)!");
+
+    // 2. Bare-metal JIT execution of precedence expression:
+    // a = 1, b = 2 (a < b is 1)
+    // c = 10, d = 20 (c < d is 1)
+    // res = (1 < 2 == 10 < 20) => (1 == 1) => 1
+    std::string exec_src = "var a: int = 1;\n"
+                           "var b: int = 2;\n"
+                           "var c: int = 10;\n"
+                           "var d: int = 20;\n"
+                           "var res: int = (a < b == c < d);\n"
+                           "if (res == 1) {\n"
+                           "    return 100;\n"
+                           "} else {\n"
+                           "    return 50;\n"
+                           "}\n";
+    Parser exec_parser(exec_src);
+    auto exec_prog = exec_parser.parse_program();
+    assert(exec_prog != nullptr);
+
+    int exit_code = NativeLLVMJIT::execute_program(*exec_prog, false);
+    assert(exit_code == 100 && "Execution of (a < b == c < d) must return 100!");
+
+    std::cout << "      -> Comparison Precedence passed.\n";
+}
+
+// ==============================================================================
+// 10. Kokkos Bridge Fixes
+// ==============================================================================
+
+void test_kokkos_bridge_fixes() {
+    std::cout << "  [10/10] Testing Kokkos Bridge Fixes (Host View & Parallel CSA)...\n";
+    // 1. make_host_view on allocated matrix
+    TernaryMatrix mat(4, 128);
+    mat.set(0, 0, Trit::Pos);
+    mat.set(1, 65, Trit::Neg);
+    auto view = bt::kokkos::make_host_view(mat);
+    assert(view.is_allocated() && "Host view of non-empty matrix must be allocated!");
+    assert(view.d_pos != nullptr && view.d_neg != nullptr);
+    assert((view.d_pos[0] & 1ULL) == 1ULL);
+    assert(view.rows == 4 && view.cols == 128);
+
+    // 2. make_host_view on empty matrix
+    TernaryMatrix empty_mat(0, 0);
+    auto empty_view = bt::kokkos::make_host_view(empty_mat);
+    assert(!empty_view.is_allocated() && "Host view of empty matrix must not be allocated!");
+    assert(empty_view.d_pos == nullptr && empty_view.d_neg == nullptr);
+
+    // 3. parallel_reduce_csa with num_threads = 0 (guard against division by zero)
+    std::vector<TritWord64> words = { TritWord64(1, 0), TritWord64(0, 1), TritWord64(1, 0) };
+    auto csa_res = bt::kokkos::parallel_reduce_csa(words, 0);
+    assert(csa_res.Sum.isValid());
+    assert(csa_res.Carry.isValid());
+
+    std::cout << "      -> Kokkos Bridge Fixes passed.\n";
+}
+
+// ==============================================================================
 // Main Entry Point
 // ==============================================================================
 
@@ -294,8 +500,13 @@ int main() {
     test_typechecker_sema();
     test_llvm_codegen_patterns();
     test_baremetal_native_jit_execution();
+    test_variable_shadowing_nested_if();
+    test_early_return_if_else();
+    test_mixed_float_int_expressions();
+    test_comparison_precedence();
+    test_kokkos_bridge_fixes();
 
-    std::cout << "\n  -> ALL 5 FRONTEND FP & SPARSE MATRIX UNIT TESTS PASSED (100%)\n";
+    std::cout << "\n  -> ALL 10 FRONTEND FP & SPARSE MATRIX UNIT TESTS PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

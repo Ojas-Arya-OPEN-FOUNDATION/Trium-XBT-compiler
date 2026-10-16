@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cassert>
 #include <array>
+#include <vector>
 #include <span>
 #include <string>
 #include <sstream>
@@ -112,6 +113,7 @@ struct TritWord64 {
     }
 
     constexpr Trit getTrit(size_t index) const noexcept {
+        if (index >= 64) return Trit::Zero;
         assert(index < 64);
         bool p = (P >> index) & 1ULL;
         bool n = (N >> index) & 1ULL;
@@ -121,6 +123,7 @@ struct TritWord64 {
     }
 
     constexpr void setTrit(size_t index, Trit t) noexcept {
+        if (index >= 64) return;
         assert(index < 64);
         uint64_t mask = 1ULL << index;
         P &= ~mask;
@@ -217,6 +220,12 @@ public:
         C = comp.Carry;
     }
 
+    struct CanonicalResult {
+        TritWord64 word;
+        Trit overflow_trit{Trit::Zero};
+        bool overflow{false};
+    };
+
     // Resolves (S, C) to a single canonical TritWord64 at kernel exit
     inline TritWord64 canonicalize() const noexcept {
         TritWord64 curr_S = S;
@@ -224,6 +233,8 @@ public:
 
         // Loop terminates in 2-3 iterations because balanced carries cancel out
         while (curr_C.P != 0 || curr_C.N != 0) {
+            bool overflow = ((curr_C.P | curr_C.N) >> 63) != 0;
+            (void)overflow; // Track MSB carry-out before shifting
             uint64_t sh_P = curr_C.P << 1;
             uint64_t sh_N = curr_C.N << 1;
             AdderOutput ha = BTHA(curr_S, TritWord64(sh_P, sh_N));
@@ -231,6 +242,27 @@ public:
             curr_C = ha.Carry;
         }
         return curr_S;
+    }
+
+    inline CanonicalResult canonicalize_with_overflow() const noexcept {
+        TritWord64 curr_S = S;
+        TritWord64 curr_C = C;
+        Trit ovf = Trit::Zero;
+        bool overflow = false;
+
+        while (curr_C.P != 0 || curr_C.N != 0) {
+            if (((curr_C.P | curr_C.N) >> 63) != 0) {
+                overflow = true;
+                if ((curr_C.P >> 63) & 1ULL) ovf = Trit::Pos;
+                if ((curr_C.N >> 63) & 1ULL) ovf = Trit::Neg;
+            }
+            uint64_t sh_P = curr_C.P << 1;
+            uint64_t sh_N = curr_C.N << 1;
+            AdderOutput ha = BTHA(curr_S, TritWord64(sh_P, sh_N));
+            curr_S = ha.Sum;
+            curr_C = ha.Carry;
+        }
+        return { curr_S, ovf, overflow };
     }
 };
 
@@ -265,6 +297,80 @@ inline TritWord64 ternarySelect(const DualRailTrit& cond,
     uint64_t out_N = (mask_p & pos_val.N) | (mask_z & zero_val.N) | (mask_n & neg_val.N);
 
     return {out_P, out_N};
+}
+
+// ==============================================================================
+// 6.5. Douglas W. Jones SWAR Parallel BCT-to-Binary Tree Reduction
+// ==============================================================================
+
+/**
+ * @brief Douglas W. Jones' SWAR Parallel BCT-to-Binary Tree Reduction.
+ * Reduces 16 packed 2-bit trits [0..2] in a 32-bit register into unsigned binary
+ * in 4 parallel SWAR stages:
+ *   Stage 1 (Pairs   -> Base 9):     8 parallel 4-bit fields:  V1 = 3 * d_odd + d_even
+ *   Stage 2 (Quads   -> Base 81):    4 parallel 8-bit fields:  V2 = 9 * V1_odd + V1_even
+ *   Stage 3 (Octets  -> Base 6561):  2 parallel 16-bit fields: V3 = 81 * V2_odd + V2_even
+ *   Stage 4 (Hexadec -> Base 3^16):  1 32-bit binary field:    V4 = 6561 * V3_odd + V3_even
+ */
+constexpr inline uint32_t bct_to_bin_swar32(uint32_t bct) noexcept {
+    // Stage 1: Pairs -> Base 9
+    uint32_t v1 = (bct & 0x33333333U) + 3U * ((bct >> 2) & 0x33333333U);
+    // Stage 2: Quads -> Base 81
+    uint32_t v2 = (v1 & 0x0F0F0F0FU) + 9U * ((v1 >> 4) & 0x0F0F0F0FU);
+    // Stage 3: Octets -> Base 6561
+    uint32_t v3 = (v2 & 0x00FF00FFU) + 81U * ((v2 >> 8) & 0x00FF00FFU);
+    // Stage 4: Hexadecs -> Binary (Base 3^16 = 43046721)
+    uint32_t v4 = (v3 & 0x0000FFFFU) + 6561U * (v3 >> 16);
+    return v4;
+}
+
+/**
+ * @brief Expands 16 contiguous bits into 32 bits, placing bit i at bit 2*i.
+ * Uses 4 parallel SWAR shift-and-mask steps in O(log 16) instructions.
+ */
+constexpr inline uint32_t spread_16_to_32(uint16_t x) noexcept {
+    uint32_t v = x;
+    v = (v | (v << 8)) & 0x00FF00FFU;
+    v = (v | (v << 4)) & 0x0F0F0F0FU;
+    v = (v | (v << 2)) & 0x33333333U;
+    v = (v | (v << 1)) & 0x55555555U;
+    return v;
+}
+
+/**
+ * @brief Douglas W. Jones' SWAR Balanced Ternary to int64_t parallel conversion.
+ * Combines positive (P) and negative (N) bitplanes using bct_to_bin_swar32 in O(log N) operations.
+ */
+inline int64_t swar_to_int64(const TritWord64& w, size_t num_trits = 39) {
+    if (num_trits > 39) {
+        throw std::invalid_argument("swar_to_int64: num_trits > 39 overflows int64_t");
+    }
+    uint64_t mask = (num_trits == 64) ? ~0ULL : ((1ULL << num_trits) - 1ULL);
+    uint64_t P = w.P & mask;
+    uint64_t N = w.N & mask;
+
+    // Chunk 0: trits 0..15
+    uint32_t p0 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>(P & 0xFFFFU)));
+    uint32_t n0 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>(N & 0xFFFFU)));
+    int64_t res = static_cast<int64_t>(p0) - static_cast<int64_t>(n0);
+
+    // Chunk 1: trits 16..31
+    if (num_trits > 16) {
+        uint32_t p1 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>((P >> 16) & 0xFFFFU)));
+        uint32_t n1 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>((N >> 16) & 0xFFFFU)));
+        constexpr int64_t const_3_16 = 43046721LL; // 3^16
+        res += (static_cast<int64_t>(p1) - static_cast<int64_t>(n1)) * const_3_16;
+    }
+
+    // Chunk 2: trits 32..38
+    if (num_trits > 32) {
+        uint32_t p2 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>((P >> 32) & 0xFFFFU)));
+        uint32_t n2 = bct_to_bin_swar32(spread_16_to_32(static_cast<uint16_t>((N >> 32) & 0xFFFFU)));
+        constexpr int64_t const_3_32 = 1853020188851841LL; // 3^32
+        res += (static_cast<int64_t>(p2) - static_cast<int64_t>(n2)) * const_3_32;
+    }
+
+    return res;
 }
 
 // ==============================================================================

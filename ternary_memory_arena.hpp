@@ -39,6 +39,8 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <atomic>
+#include <stdexcept>
 
 #if defined(__ARM_NEON) || defined(__aarch64__)
 #include <arm_neon.h>
@@ -728,7 +730,7 @@ private:
     size_t physical_committed_{0};
     size_t peak_committed_{0};
     size_t materialized_pages_{0};
-    size_t read_count_{0};
+    mutable std::atomic<size_t> read_count_{0};
     size_t write_count_{0};
 
     // Aligned canonical zero buffer shared for zero-copy read operations
@@ -768,7 +770,7 @@ public:
         : virtual_capacity_(o.virtual_capacity_), num_l1_entries_(o.num_l1_entries_),
           root_is_heap_(o.root_is_heap_), physical_committed_(o.physical_committed_),
           peak_committed_(o.peak_committed_), materialized_pages_(o.materialized_pages_),
-          read_count_(o.read_count_), write_count_(o.write_count_) {
+          read_count_(o.read_count_.load(std::memory_order_relaxed)), write_count_(o.write_count_) {
         if (!o.root_is_heap_) {
             root_ = static_root_;
             for (size_t i = 0; i < L1_ENTRIES; ++i) {
@@ -795,7 +797,7 @@ public:
             physical_committed_ = o.physical_committed_;
             peak_committed_ = o.peak_committed_;
             materialized_pages_ = o.materialized_pages_;
-            read_count_ = o.read_count_;
+            read_count_.store(o.read_count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
             write_count_ = o.write_count_;
 
             if (!o.root_is_heap_) {
@@ -834,7 +836,7 @@ public:
      */
     void reset() noexcept {
         clear_all();
-        read_count_ = 0;
+        read_count_.store(0, std::memory_order_relaxed);
         write_count_ = 0;
     }
 
@@ -897,9 +899,11 @@ public:
     // Byte-Level Virtual Memory Access (CoW)
     // ==========================================================================
 
-    [[nodiscard]] uint8_t get_byte(size_t offset) const noexcept {
-        assert(offset < virtual_capacity_ && "Offset exceeds virtual capacity");
-        ++const_cast<HierarchicalZeroPage*>(this)->read_count_;
+    [[nodiscard]] uint8_t get_byte(size_t offset) const {
+        if (offset >= virtual_capacity_) {
+            throw std::out_of_range("HierarchicalZeroPage: offset exceeds virtual capacity");
+        }
+        read_count_.fetch_add(1, std::memory_order_relaxed);
 
         size_t l1 = offset / L1_SPAN;
         if (l1 >= num_l1_entries_ || root_[l1] == nullptr) {
@@ -918,7 +922,9 @@ public:
     }
 
     void set_byte(size_t offset, uint8_t value) {
-        assert(offset < virtual_capacity_ && "Offset exceeds virtual capacity");
+        if (offset >= virtual_capacity_) {
+            throw std::out_of_range("HierarchicalZeroPage: offset exceeds virtual capacity");
+        }
         ++write_count_;
 
         size_t l1 = offset / L1_SPAN;
@@ -960,7 +966,7 @@ public:
     // Trit-Level Virtual Memory Access (CoW)
     // ==========================================================================
 
-    [[nodiscard]] Trit get_trit(size_t index) const noexcept {
+    [[nodiscard]] Trit get_trit(size_t index) const {
         uint8_t b = get_byte(index);
         return static_cast<Trit>(static_cast<int8_t>(b));
     }
@@ -974,9 +980,11 @@ public:
     // TritWord64 Virtual Memory Access (CoW)
     // ==========================================================================
 
-    [[nodiscard]] TritWord64 get_word(size_t word_index) const noexcept {
+    [[nodiscard]] TritWord64 get_word(size_t word_index) const {
         size_t byte_offset = word_index * sizeof(TritWord64);
-        assert(byte_offset + sizeof(TritWord64) <= virtual_capacity_);
+        if (byte_offset + sizeof(TritWord64) > virtual_capacity_) {
+            throw std::out_of_range("HierarchicalZeroPage: word offset exceeds virtual capacity");
+        }
         TritWord64 w{0, 0};
         for (size_t i = 0; i < sizeof(TritWord64); ++i) {
             reinterpret_cast<uint8_t*>(&w)[i] = get_byte(byte_offset + i);
@@ -986,7 +994,9 @@ public:
 
     void set_word(size_t word_index, const TritWord64& w) {
         size_t byte_offset = word_index * sizeof(TritWord64);
-        assert(byte_offset + sizeof(TritWord64) <= virtual_capacity_);
+        if (byte_offset + sizeof(TritWord64) > virtual_capacity_) {
+            throw std::out_of_range("HierarchicalZeroPage: word offset exceeds virtual capacity");
+        }
         const uint8_t* src = reinterpret_cast<const uint8_t*>(&w);
         for (size_t i = 0; i < sizeof(TritWord64); ++i) {
             set_byte(byte_offset + i, src[i]);
@@ -1027,7 +1037,7 @@ public:
     [[nodiscard]] size_t physical_committed() const noexcept { return physical_committed_; }
     [[nodiscard]] size_t peak_committed() const noexcept { return peak_committed_; }
     [[nodiscard]] size_t materialized_pages() const noexcept { return materialized_pages_; }
-    [[nodiscard]] size_t read_count() const noexcept { return read_count_; }
+    [[nodiscard]] size_t read_count() const noexcept { return read_count_.load(std::memory_order_relaxed); }
     [[nodiscard]] size_t write_count() const noexcept { return write_count_; }
 
     [[nodiscard]] MemoryStats stats() const noexcept {
@@ -1068,13 +1078,17 @@ public:
     [[nodiscard]] constexpr size_t cols() const noexcept { return cols_; }
     [[nodiscard]] constexpr size_t total_elements() const noexcept { return rows_ * cols_; }
 
-    [[nodiscard]] Trit get(size_t r, size_t c) const noexcept {
-        assert(r < rows_ && c < cols_ && "Matrix indices out of bounds");
+    [[nodiscard]] Trit get(size_t r, size_t c) const {
+        if (r >= rows_ || c >= cols_) {
+            throw std::out_of_range("HierarchicalZeroMatrix: matrix index out of bounds");
+        }
         return page_manager_.get_trit(r * cols_ + c);
     }
 
     void set(size_t r, size_t c, Trit t) {
-        assert(r < rows_ && c < cols_ && "Matrix indices out of bounds");
+        if (r >= rows_ || c >= cols_) {
+            throw std::out_of_range("HierarchicalZeroMatrix: matrix index out of bounds");
+        }
         page_manager_.set_trit(r * cols_ + c, t);
     }
 
