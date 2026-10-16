@@ -236,8 +236,115 @@ static inline bool bt_verify_disjointness(bt_word64_t word) {
     return (word.p & word.n) == 0;
 }
 
+/* ============================================================================
+ * 3. Exported Dynamic Shared Library Runtime API (libbt_runtime)
+ * ============================================================================ */
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+  #ifdef BT_BUILD_SHARED
+    #define BT_API __declspec(dllexport)
+  #else
+    #define BT_API __declspec(dllimport)
+  #endif
+#else
+  #if defined(__GNUC__) && __GNUC__ >= 4
+    #define BT_API __attribute__((visibility("default")))
+  #else
+    #define BT_API
+  #endif
+#endif
+
+/**
+ * @brief Converts up to 39 packed trits in a dual-rail word to an int64_t binary integer
+ * using Douglas W. Jones' SWAR tree reduction.
+ */
+BT_API int64_t bt_swar_word64_to_int64(bt_word64_t w, size_t num_trits);
+
+/**
+ * @brief Computes the bit-sliced dot product over arrays of 64-trit dual-rail words.
+ */
+BT_API int64_t bt_dot_product_array(const bt_word64_t* a, const bt_word64_t* b, size_t num_words);
+
+/**
+ * @brief Constructs a balanced ternary float from IEEE-754 double precision float.
+ */
+BT_API bt_fp32_t bt_fp32_from_double(double val);
+
+/**
+ * @brief Converts balanced ternary float to standard IEEE-754 double precision float.
+ */
+BT_API double bt_fp32_to_double(bt_fp32_t a);
+
+/**
+ * @brief Adds two balanced ternary floats with 0-bias truncation rounding.
+ */
+BT_API bt_fp32_t bt_fp32_add(bt_fp32_t a, bt_fp32_t b);
+
+/**
+ * @brief Subtracts two balanced ternary floats.
+ */
+BT_API bt_fp32_t bt_fp32_sub(bt_fp32_t a, bt_fp32_t b);
+
+/**
+ * @brief Multiplies two balanced ternary floats.
+ */
+BT_API bt_fp32_t bt_fp32_mul(bt_fp32_t a, bt_fp32_t b);
+
+/**
+ * @brief Divides two balanced ternary floats with symmetric nearest-integer rounding.
+ */
+BT_API bt_fp32_t bt_fp32_div(bt_fp32_t a, bt_fp32_t b);
+
+/**
+ * @brief Multiplier-Free Sparse Matrix-Vector Multiply (SpMV): y = mat * x.
+ */
+BT_API void bt_csr_spmv_exec(const bt_csr_t* mat, const int64_t* x, int64_t* y);
+
+/**
+ * @brief Forward Radix-3 Cooley-Tukey FFT for sequence length N = 3^k.
+ * @return 0 on success, -1 on invalid args, -2 on non-power-of-3 size.
+ */
+BT_API int bt_radix3_fft_forward(const double* real_in, const double* imag_in, double* real_out, double* imag_out, size_t n);
+
+/**
+ * @brief Inverse Radix-3 Cooley-Tukey FFT with 1/N normalization for N = 3^k.
+ * @return 0 on success, -1 on invalid args, -2 on non-power-of-3 size.
+ */
+BT_API int bt_radix3_fft_inverse(const double* real_in, const double* imag_in, double* real_out, double* imag_out, size_t n);
+
+/**
+ * @brief Exported single-word 64-trit dot product for dynamic FFI bindings.
+ */
+BT_API int64_t bt_dot_product_64_val(bt_word64_t a, bt_word64_t b);
+
+/**
+ * @brief Exported branchless BTHA step for dynamic FFI bindings.
+ */
+BT_API bt_btha_result_t bt_btha_step_val(bt_word64_t a, bt_word64_t b);
+
+/**
+ * @brief Exported Base-243 pack for dynamic FFI bindings.
+ */
+BT_API uint8_t bt_base243_pack_val(const int8_t trits[5]);
+
+/**
+ * @brief Exported Base-243 unpack for dynamic FFI bindings.
+ */
+BT_API void bt_base243_unpack_val(uint8_t byte, int8_t out_trits[5]);
+
+/**
+ * @brief Exported Hamming distance across 64 trits for dynamic FFI bindings.
+ */
+BT_API uint32_t bt_hamming_distance_64_val(bt_word64_t a, bt_word64_t b);
+
+/**
+ * @brief Exported disjointness verifier for dynamic FFI bindings.
+ */
+BT_API bool bt_verify_disjointness_val(bt_word64_t word);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* TERNARY_C_ABI_H */
+

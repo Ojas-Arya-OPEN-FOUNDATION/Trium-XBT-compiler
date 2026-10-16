@@ -16,6 +16,7 @@
 #define SYMPLECTIC_TERNARY_ENGINE_HPP
 
 #include "ternary_dense_algebra.hpp"
+#include "ternary_bigint.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -138,6 +139,143 @@ public:
         return csa.resolve();
     }
 };
+
+// Backwards compatibility alias
+using SymplecticState = PhaseState;
+
+/**
+ * @brief Multi-Word Phase-Space State Vector (Q, P).
+ * Represents an exact discrete physical state across 64*NumWords trits:
+ * - Q: Generalized Position (TritBigInt<NumWords>)
+ * - P: Generalized Momentum (TritBigInt<NumWords>)
+ * - No modular ring truncation: carries are fully preserved across all word boundaries.
+ */
+template <size_t NumWords = 4>
+struct MultiWordSymplecticState {
+    using BigInt = TritBigInt<NumWords>;
+
+    BigInt Q; // Position: Multi-word balanced ternary integer
+    BigInt P; // Momentum: Multi-word balanced ternary integer
+
+    constexpr MultiWordSymplecticState() noexcept = default;
+    constexpr MultiWordSymplecticState(const BigInt& q, const BigInt& p) noexcept : Q(q), P(p) {}
+
+    // Invariant check: Both rails in every word of Q and P must be disjoint
+    constexpr bool isValid() const noexcept {
+        return Q.verify_invariants() && P.verify_invariants();
+    }
+
+    bool operator==(const MultiWordSymplecticState& other) const noexcept = default;
+    bool operator!=(const MultiWordSymplecticState& other) const noexcept = default;
+};
+
+/**
+ * @brief Multi-Word Carry-Preserving Symplectic Leapfrog Integrator.
+ * 
+ * Implements discrete Hamiltonian volume-preserving arithmetic in Phase Space (Q, P):
+ * - Position Q and Momentum P represented as arbitrary-precision TritBigInt<NumWords>.
+ * - Reversible Leapfrog Step Forward:
+ *   1. P_{t+1/2} = P_t + F(Q_t)      (exact TritBigInt addition with full cross-word carry propagation)
+ *   2. Q_{t+1}   = Q_t + P_{t+1/2}
+ *   3. P_{t+1}   = P_{t+1/2} + F(Q_{t+1})
+ * - Reversible Leapfrog Step Backward (exact mathematical inverse):
+ *   1. P_{t+1/2} = P_{t+1} - F(Q_{t+1})
+ *   2. Q_t       = Q_{t+1} - P_{t+1/2}
+ *   3. P_t       = P_{t+1/2} - F(Q_t)
+ * 
+ * Guarantees 100% bit-exact time-reversibility: Phi_{-tau} o Phi_tau = Identity
+ * and zero carry loss across 256-trit / 512-trit word boundaries over arbitrarily long trajectories.
+ */
+template <size_t NumWords = 4>
+class MultiWordSymplecticEngine {
+public:
+    using State = MultiWordSymplecticState<NumWords>;
+    using BigInt = TritBigInt<NumWords>;
+
+    /**
+     * @brief Forward Symplectic Leapfrog Step with generic Force Law F(Q):
+     * 1. Half-kick in Momentum: P_{t+1/2} = P_t + F(Q_t)
+     * 2. Full-drift in Position: Q_{t+1}   = Q_t + P_{t+1/2}
+     * 3. Half-kick in Momentum: P_{t+1}   = P_{t+1/2} + F(Q_{t+1})
+     */
+    template <typename ForceFn>
+    static inline State forward_step(const State& state, ForceFn&& force) noexcept {
+        BigInt p_half = state.P + force(state.Q);
+        BigInt q_next = state.Q + p_half;
+        BigInt p_next = p_half + force(q_next);
+        return State(q_next, p_next);
+    }
+
+    /**
+     * @brief Forward Symplectic Leapfrog Step with constant input force:
+     */
+    static inline State forward_step(const State& state, const BigInt& input_force) noexcept {
+        return forward_step(state, [&input_force](const BigInt&) { return input_force; });
+    }
+
+    /**
+     * @brief Forward Symplectic Leapfrog Step with discrete harmonic restoring force F(Q) = -Q:
+     */
+    static inline State forward_step(const State& state) noexcept {
+        return forward_step(state, [](const BigInt& q) { return -q; });
+    }
+
+    /**
+     * @brief Backward Symplectic Leapfrog Step (Exact Mathematical Inverse):
+     * 1. Reverse Stage 3: P_{t+1/2} = P_{t+1} - F(Q_{t+1})
+     * 2. Reverse Stage 2: Q_t       = Q_{t+1} - P_{t+1/2}
+     * 3. Reverse Stage 1: P_t       = P_{t+1/2} - F(Q_t)
+     */
+    template <typename ForceFn>
+    static inline State reverse_step(const State& state, ForceFn&& force) noexcept {
+        BigInt p_half = state.P - force(state.Q);
+        BigInt q_prev = state.Q - p_half;
+        BigInt p_prev = p_half - force(q_prev);
+        return State(q_prev, p_prev);
+    }
+
+    /**
+     * @brief Backward Symplectic Leapfrog Step with constant input force:
+     */
+    static inline State reverse_step(const State& state, const BigInt& input_force) noexcept {
+        return reverse_step(state, [&input_force](const BigInt&) { return input_force; });
+    }
+
+    /**
+     * @brief Backward Symplectic Leapfrog Step with discrete harmonic restoring force F(Q) = -Q:
+     */
+    static inline State reverse_step(const State& state) noexcept {
+        return reverse_step(state, [](const BigInt& q) { return -q; });
+    }
+
+    /**
+     * @brief Forward trajectory integration over N steps:
+     */
+    template <typename ForceFn>
+    static inline State forward_trajectory(State state, size_t steps, ForceFn&& force) noexcept {
+        for (size_t s = 0; s < steps; ++s) {
+            state = forward_step(state, force);
+        }
+        return state;
+    }
+
+    /**
+     * @brief Backward trajectory integration over N steps:
+     */
+    template <typename ForceFn>
+    static inline State reverse_trajectory(State state, size_t steps, ForceFn&& force) noexcept {
+        for (size_t s = 0; s < steps; ++s) {
+            state = reverse_step(state, force);
+        }
+        return state;
+    }
+};
+
+// Aliases for 256-trit and 512-trit Symplectic Integrators
+using SymplecticState256 = MultiWordSymplecticState<4>;
+using SymplecticState512 = MultiWordSymplecticState<8>;
+using MultiWordSymplecticEngine256 = MultiWordSymplecticEngine<4>;
+using MultiWordSymplecticEngine512 = MultiWordSymplecticEngine<8>;
 
 } // namespace symplectic
 } // namespace bt

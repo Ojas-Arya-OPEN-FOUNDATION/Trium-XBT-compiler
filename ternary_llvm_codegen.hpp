@@ -8,6 +8,7 @@
 #define TERNARY_LLVM_CODEGEN_HPP
 
 #include "ternary_frontend_ast.hpp"
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -55,6 +56,44 @@ private:
     };
     std::unordered_map<std::string, SparseMatrixInfo> sparse_matrices_;
 
+    bool emit_debug_{false};
+    std::string source_filename_{"program.bt"};
+    frontend::SourceLocation current_loc_{1, 1};
+    uint64_t main_subprog_id_{4};
+    uint64_t current_subprog_id_{4};
+    uint64_t loop_meta_id_{6};
+    uint64_t loop_enable_id_{7};
+    uint64_t next_meta_id_{8};
+
+    struct LocEntry {
+        uint64_t id;
+        size_t line;
+        size_t col;
+        uint64_t scope;
+    };
+    std::map<std::pair<size_t, size_t>, uint64_t> loc_map_;
+    std::vector<LocEntry> loc_entries_;
+
+    uint64_t get_or_create_loc(size_t line, size_t col, uint64_t scope = 4) {
+        if (line == 0) line = 1;
+        if (col == 0) col = 1;
+        auto key = std::make_pair(line, col);
+        auto it = loc_map_.find(key);
+        if (it != loc_map_.end()) {
+            return it->second;
+        }
+        uint64_t id = next_meta_id_++;
+        loc_map_[key] = id;
+        loc_entries_.push_back({id, line, col, scope});
+        return id;
+    }
+
+    std::string dbg_tag() {
+        if (!emit_debug_) return "";
+        uint64_t loc_id = get_or_create_loc(current_loc_.line, current_loc_.column, current_subprog_id_);
+        return ", !dbg !" + std::to_string(loc_id);
+    }
+
     std::string new_reg() {
         return "%t" + std::to_string(++reg_counter_);
     }
@@ -94,6 +133,15 @@ private:
     }
 
 public:
+    LLVMCodeGenVisitor() = default;
+    explicit LLVMCodeGenVisitor(bool emit_debug, const std::string& filename = "program.bt")
+        : emit_debug_(emit_debug), source_filename_(filename) {}
+
+    void set_debug_info(bool enable, const std::string& filename = "program.bt") {
+        emit_debug_ = enable;
+        source_filename_ = filename;
+    }
+
     std::string generate(frontend::ProgramNode& program,
                           const std::string& target_triple = "arm64-apple-macosx",
                           const std::string& datalayout = "e-m:o-i64:64-i128:128-n32:64-S128") {
@@ -102,6 +150,8 @@ public:
         scope_stack_.clear();
         enter_scope();
         sparse_matrices_.clear();
+        loc_map_.clear();
+        loc_entries_.clear();
         alloca_counter_ = 0;
         reg_counter_ = 0;
         label_counter_ = 0;
@@ -111,10 +161,23 @@ public:
         current_dim_ = 0;
         block_terminated_ = false;
         is_in_bt_main_ = false;
+        current_loc_ = {1, 1};
+
+        if (emit_debug_) {
+            main_subprog_id_ = 4;
+            current_subprog_id_ = 4;
+            loop_meta_id_ = 6;
+            loop_enable_id_ = 7;
+            next_meta_id_ = 8;
+        } else {
+            loop_meta_id_ = 0;
+            loop_enable_id_ = 1;
+            next_meta_id_ = 2;
+        }
 
         // 1. Module Header
         ir_ << "; ModuleID = 'bt_native_module'\n";
-        ir_ << "source_filename = \"bt_program.bt\"\n";
+        ir_ << "source_filename = \"" << source_filename_ << "\"\n";
         ir_ << "target datalayout = \"" << datalayout << "\"\n";
         ir_ << "target triple = \"" << target_triple << "\"\n\n";
 
@@ -167,7 +230,7 @@ public:
         ir_ << "entry:\n";
         ir_ << "  br label %row_loop_cond\n\n";
         ir_ << "row_loop_cond:\n";
-        ir_ << "  %r = phi i64 [ 0, %entry ], [ %next_r, %row_loop_inc ]\n";
+        ir_ << "  %r = phi i64 [ 0, %entry ], [ %next_r, %spmv_inner_exit ]\n";
         ir_ << "  %cmp_row = icmp ult i64 %r, %rows\n";
         ir_ << "  br i1 %cmp_row, label %row_loop_body, label %spmv_done\n\n";
         ir_ << "row_loop_body:\n";
@@ -183,8 +246,8 @@ public:
         ir_ << "  %k = phi i64 [ %start, %row_loop_body ], [ %next_k, %nz_loop_inc ]\n";
         ir_ << "  %acc = phi i64 [ 0, %row_loop_body ], [ %new_acc, %nz_loop_inc ]\n";
         ir_ << "  %cmp_k = icmp ult i64 %k, %end\n";
-        ir_ << "  br i1 %cmp_k, label %nz_loop_body, label %row_loop_inc\n\n";
-        ir_ << "nz_loop_body:\n";
+        ir_ << "  br i1 %cmp_k, label %spmv_inner_body, label %spmv_inner_exit, !llvm.loop !" << loop_meta_id_ << "\n\n";
+        ir_ << "spmv_inner_body:\n";
         ir_ << "  %p_col = getelementptr inbounds i32, i32* %col_indices, i64 %k\n";
         ir_ << "  %raw_col = load i32, i32* %p_col, align 4\n";
         ir_ << "  %col = zext i32 %raw_col to i64\n";
@@ -204,7 +267,7 @@ public:
         ir_ << "nz_loop_inc:\n";
         ir_ << "  %next_k = add i64 %k, 1\n";
         ir_ << "  br label %nz_loop_cond\n\n";
-        ir_ << "row_loop_inc:\n";
+        ir_ << "spmv_inner_exit:\n";
         ir_ << "  %final_acc = phi i64 [ %acc, %nz_loop_cond ]\n";
         ir_ << "  %p_out = getelementptr inbounds i64, i64* %vec_out, i64 %r\n";
         ir_ << "  store i64 %final_acc, i64* %p_out, align 8\n";
@@ -216,25 +279,61 @@ public:
 
         // 3. Generate main entry function containing top-level statements
         is_in_bt_main_ = true;
-        fn_body_ << "define i32 @bt_main() nounwind {\n";
+        current_subprog_id_ = main_subprog_id_;
+        if (program.location.line > 0) current_loc_ = program.location;
+        if (emit_debug_) {
+            fn_body_ << "define i32 @bt_main() !dbg !" << main_subprog_id_ << " {\n";
+        } else {
+            fn_body_ << "define i32 @bt_main() nounwind {\n";
+        }
         fn_body_ << "entry:\n";
         block_terminated_ = false;
 
         // Visit top-level AST declarations
         for (auto& decl : program.declarations) {
             if (block_terminated_) break;
-            if (decl) decl->accept(*this);
+            if (decl) {
+                if (decl->location.line > 0) current_loc_ = decl->location;
+                decl->accept(*this);
+            }
         }
 
         if (!block_terminated_) {
-            fn_body_ << "  ret i32 0\n";
+            fn_body_ << "  ret i32 0" << dbg_tag() << "\n";
         }
         fn_body_ << "}\n";
         is_in_bt_main_ = false;
 
         // Combine module header + generated functions
         ir_ << fn_body_.str();
+
+        if (emit_debug_) {
+            ir_ << "\n!llvm.dbg.cu = !{!0}\n";
+            ir_ << "!llvm.module.flags = !{!1, !2}\n\n";
+            ir_ << "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !3, producer: \"bt-compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly)\n";
+            ir_ << "!1 = !{i32 7, !\"Dwarf Version\", i32 5}\n";
+            ir_ << "!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n";
+            ir_ << "!3 = !DIFile(filename: \"" << source_filename_ << "\", directory: \".\")\n";
+            ir_ << "!4 = distinct !DISubprogram(name: \"bt_main\", scope: !3, file: !3, line: 1, type: !5, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0)\n";
+            ir_ << "!5 = !DISubroutineType(types: !{})\n";
+            for (const auto& entry : loc_entries_) {
+                ir_ << "!" << entry.id << " = !DILocation(line: " << entry.line
+                    << ", column: " << entry.col << ", scope: !" << entry.scope << ")\n";
+            }
+            ir_ << "!" << loop_meta_id_ << " = distinct !{!" << loop_meta_id_ << ", !" << loop_enable_id_ << "}\n";
+            ir_ << "!" << loop_enable_id_ << " = !{!\"llvm.loop.vectorize.enable\", i1 true}\n";
+        } else {
+            ir_ << "\n!" << loop_meta_id_ << " = distinct !{!" << loop_meta_id_ << ", !" << loop_enable_id_ << "}\n";
+            ir_ << "!" << loop_enable_id_ << " = !{!\"llvm.loop.vectorize.enable\", i1 true}\n";
+        }
+
         return ir_.str();
+    }
+
+    std::string generate_ir(frontend::ProgramNode& program,
+                             const std::string& target_triple = "arm64-apple-macosx",
+                             const std::string& datalayout = "e-m:o-i64:64-i128:128-n32:64-S128") {
+        return generate(program, target_triple, datalayout);
     }
 
     void visit(frontend::ProgramNode& node) override {
@@ -259,6 +358,7 @@ public:
 
     void visit(frontend::VarDeclNode& node) override {
         if (block_terminated_) return;
+        if (node.location.line > 0) current_loc_ = node.location;
         if (scope_stack_.empty()) enter_scope();
 
         std::string ptr_reg = "%var_" + node.name + "_" + std::to_string(++alloca_counter_);
@@ -276,6 +376,7 @@ public:
             else if (current_type_ == "sparse_matrix") v_type = "sparse_matrix";
             else if (current_type_ == "i64*") v_type = "i64*";
         }
+        if (node.location.line > 0) current_loc_ = node.location;
 
         VarInfo info;
         info.ptr_reg = ptr_reg;
@@ -283,16 +384,16 @@ public:
         info.dim = current_dim_;
 
         if (v_type == "double") {
-            fn_body_ << "  " << ptr_reg << " = alloca double, align 8\n";
+            fn_body_ << "  " << ptr_reg << " = alloca double, align 8" << dbg_tag() << "\n";
             if (node.init_expr) {
                 if (current_type_ == "i64") {
                     std::string cast = new_reg();
-                    fn_body_ << "  " << cast << " = sitofp i64 " << current_val_ << " to double\n";
+                    fn_body_ << "  " << cast << " = sitofp i64 " << current_val_ << " to double" << dbg_tag() << "\n";
                     current_val_ = cast;
                 }
-                fn_body_ << "  store double " << current_val_ << ", double* " << ptr_reg << ", align 8\n";
+                fn_body_ << "  store double " << current_val_ << ", double* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
             } else {
-                fn_body_ << "  store double 0.0, double* " << ptr_reg << ", align 8\n";
+                fn_body_ << "  store double 0.0, double* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
             }
         } else if (v_type == "sparse_matrix") {
             if (current_type_ == "sparse_matrix") {
@@ -302,16 +403,16 @@ public:
             info.ptr_reg = current_val_;
             info.dim = current_dim_;
         } else {
-            fn_body_ << "  " << ptr_reg << " = alloca i64, align 8\n";
+            fn_body_ << "  " << ptr_reg << " = alloca i64, align 8" << dbg_tag() << "\n";
             if (node.init_expr) {
                 if (current_type_ == "double") {
                     std::string cast = new_reg();
-                    fn_body_ << "  " << cast << " = fptosi double " << current_val_ << " to i64\n";
+                    fn_body_ << "  " << cast << " = fptosi double " << current_val_ << " to i64" << dbg_tag() << "\n";
                     current_val_ = cast;
                 }
-                fn_body_ << "  store i64 " << current_val_ << ", i64* " << ptr_reg << ", align 8\n";
+                fn_body_ << "  store i64 " << current_val_ << ", i64* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
             } else {
-                fn_body_ << "  store i64 0, i64* " << ptr_reg << ", align 8\n";
+                fn_body_ << "  store i64 0, i64* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
             }
         }
 
@@ -320,27 +421,29 @@ public:
 
     void visit(frontend::AssignNode& node) override {
         if (block_terminated_) return;
+        if (node.location.line > 0) current_loc_ = node.location;
         if (node.value) {
             node.value->accept(*this);
+            if (node.location.line > 0) current_loc_ = node.location;
             VarInfo* var = lookup_var_mut(node.target);
             if (var) {
                 if (var->type == "double") {
                     if (current_type_ == "i64") {
                         std::string cast = new_reg();
-                        fn_body_ << "  " << cast << " = sitofp i64 " << current_val_ << " to double\n";
+                        fn_body_ << "  " << cast << " = sitofp i64 " << current_val_ << " to double" << dbg_tag() << "\n";
                         current_val_ = cast;
                     }
-                    fn_body_ << "  store double " << current_val_ << ", double* " << var->ptr_reg << ", align 8\n";
+                    fn_body_ << "  store double " << current_val_ << ", double* " << var->ptr_reg << ", align 8" << dbg_tag() << "\n";
                 } else if (var->type == "i64*") {
                     var->ptr_reg = current_val_;
                     var->dim = current_dim_;
                 } else {
                     if (current_type_ == "double") {
                         std::string cast = new_reg();
-                        fn_body_ << "  " << cast << " = fptosi double " << current_val_ << " to i64\n";
+                        fn_body_ << "  " << cast << " = fptosi double " << current_val_ << " to i64" << dbg_tag() << "\n";
                         current_val_ = cast;
                     }
-                    fn_body_ << "  store i64 " << current_val_ << ", i64* " << var->ptr_reg << ", align 8\n";
+                    fn_body_ << "  store i64 " << current_val_ << ", i64* " << var->ptr_reg << ", align 8" << dbg_tag() << "\n";
                 }
             } else {
                 std::string ptr_reg = "%var_" + node.target + "_" + std::to_string(++alloca_counter_);
@@ -349,13 +452,13 @@ public:
                 info.type = (current_type_ == "double") ? "double" : (current_type_ == "i64*" ? "i64*" : "i64");
                 info.dim = current_dim_;
                 if (info.type == "double") {
-                    fn_body_ << "  " << ptr_reg << " = alloca double, align 8\n";
-                    fn_body_ << "  store double " << current_val_ << ", double* " << ptr_reg << ", align 8\n";
+                    fn_body_ << "  " << ptr_reg << " = alloca double, align 8" << dbg_tag() << "\n";
+                    fn_body_ << "  store double " << current_val_ << ", double* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
                 } else if (info.type == "i64*") {
                     info.ptr_reg = current_val_;
                 } else {
-                    fn_body_ << "  " << ptr_reg << " = alloca i64, align 8\n";
-                    fn_body_ << "  store i64 " << current_val_ << ", i64* " << ptr_reg << ", align 8\n";
+                    fn_body_ << "  " << ptr_reg << " = alloca i64, align 8" << dbg_tag() << "\n";
+                    fn_body_ << "  store i64 " << current_val_ << ", i64* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
                 }
                 if (scope_stack_.empty()) enter_scope();
                 scope_stack_.back()[node.target] = info;
@@ -364,6 +467,7 @@ public:
     }
 
     void visit(frontend::BinaryOpNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         node.left->accept(*this);
         std::string left_val = current_val_;
         std::string left_type = current_type_;
@@ -371,6 +475,7 @@ public:
         node.right->accept(*this);
         std::string right_val = current_val_;
         std::string right_type = current_type_;
+        if (node.location.line > 0) current_loc_ = node.location;
 
         // 1. SpMV: sparse_matrix * vector
         if (node.op == frontend::BinaryOp::Mul && left_type == "sparse_matrix") {
@@ -378,28 +483,28 @@ public:
             if (it != sparse_matrices_.end()) {
                 const auto& info = it->second;
                 std::string out_vec = new_reg();
-                fn_body_ << "  " << out_vec << " = alloca [" << info.rows << " x i64], align 8\n";
+                fn_body_ << "  " << out_vec << " = alloca [" << info.rows << " x i64], align 8" << dbg_tag() << "\n";
                 std::string p_out = new_reg();
                 fn_body_ << "  " << p_out << " = getelementptr inbounds [" << info.rows
-                         << " x i64], [" << info.rows << " x i64]* " << out_vec << ", i64 0, i64 0\n";
+                         << " x i64], [" << info.rows << " x i64]* " << out_vec << ", i64 0, i64 0" << dbg_tag() << "\n";
 
                 std::string p_r = new_reg();
                 fn_body_ << "  " << p_r << " = getelementptr inbounds [" << (info.rows + 1)
-                         << " x i32], [" << (info.rows + 1) << " x i32]* " << info.g_row_ptr << ", i64 0, i64 0\n";
+                         << " x i32], [" << (info.rows + 1) << " x i32]* " << info.g_row_ptr << ", i64 0, i64 0" << dbg_tag() << "\n";
 
                 std::string p_c = new_reg();
                 size_t c_sz = std::max<size_t>(info.nnz, 1);
                 fn_body_ << "  " << p_c << " = getelementptr inbounds [" << c_sz
-                         << " x i32], [" << c_sz << " x i32]* " << info.g_col_ind << ", i64 0, i64 0\n";
+                         << " x i32], [" << c_sz << " x i32]* " << info.g_col_ind << ", i64 0, i64 0" << dbg_tag() << "\n";
 
                 std::string p_s = new_reg();
                 size_t s_sz = std::max<size_t>((info.nnz + 63) / 64, 1);
                 fn_body_ << "  " << p_s << " = getelementptr inbounds [" << s_sz
-                         << " x i64], [" << s_sz << " x i64]* " << info.g_signs << ", i64 0, i64 0\n";
+                         << " x i64], [" << s_sz << " x i64]* " << info.g_signs << ", i64 0, i64 0" << dbg_tag() << "\n";
 
                 fn_body_ << "  call void @bt_spmv(i64 " << info.rows << ", i32* " << p_r
                          << ", i32* " << p_c << ", i64* " << p_s << ", i64* " << right_val
-                         << ", i64* " << p_out << ")\n";
+                         << ", i64* " << p_out << ")" << dbg_tag() << "\n";
 
                 current_val_ = p_out;
                 current_type_ = "i64*";
@@ -412,13 +517,13 @@ public:
         if (left_type == "double" || right_type == "double") {
             if (left_type == "i64") {
                 std::string cast = new_reg();
-                fn_body_ << "  " << cast << " = sitofp i64 " << left_val << " to double\n";
+                fn_body_ << "  " << cast << " = sitofp i64 " << left_val << " to double" << dbg_tag() << "\n";
                 left_val = cast;
                 left_type = "double";
             }
             if (right_type == "i64") {
                 std::string cast = new_reg();
-                fn_body_ << "  " << cast << " = sitofp i64 " << right_val << " to double\n";
+                fn_body_ << "  " << cast << " = sitofp i64 " << right_val << " to double" << dbg_tag() << "\n";
                 right_val = cast;
                 right_type = "double";
             }
@@ -426,95 +531,95 @@ public:
             switch (node.op) {
                 case frontend::BinaryOp::Add: {
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = fadd double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << res << " = fadd double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "double";
                     return;
                 }
                 case frontend::BinaryOp::Sub: {
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = fsub double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << res << " = fsub double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "double";
                     return;
                 }
                 case frontend::BinaryOp::Mul: {
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = fmul double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << res << " = fmul double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "double";
                     return;
                 }
                 case frontend::BinaryOp::Equal: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp oeq double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp oeq double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::NotEqual: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp one double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp one double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::LessThan: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp olt double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp olt double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::GreaterThan: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp ogt double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp ogt double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::LessEqual: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp ole double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp ole double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::GreaterEqual: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp oge double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp oge double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 case frontend::BinaryOp::Spaceship: {
                     std::string cmp_gt = new_reg();
-                    fn_body_ << "  " << cmp_gt << " = fcmp ogt double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp_gt << " = fcmp ogt double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string cmp_lt = new_reg();
-                    fn_body_ << "  " << cmp_lt << " = fcmp olt double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << cmp_lt << " = fcmp olt double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string sel1 = new_reg();
-                    fn_body_ << "  " << sel1 << " = select i1 " << cmp_gt << ", i64 1, i64 0\n";
+                    fn_body_ << "  " << sel1 << " = select i1 " << cmp_gt << ", i64 1, i64 0" << dbg_tag() << "\n";
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = select i1 " << cmp_lt << ", i64 -1, i64 " << sel1 << "\n";
+                    fn_body_ << "  " << res << " = select i1 " << cmp_lt << ", i64 -1, i64 " << sel1 << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "i64";
                     return;
                 }
                 default: {
                     std::string res = new_reg();
-                    fn_body_ << "  " << res << " = fadd double " << left_val << ", " << right_val << "\n";
+                    fn_body_ << "  " << res << " = fadd double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     current_val_ = res;
                     current_type_ = "double";
                     return;
@@ -526,64 +631,64 @@ public:
         std::string res = new_reg();
         switch (node.op) {
             case frontend::BinaryOp::Add:
-                fn_body_ << "  " << res << " = add i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = add i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::Sub:
-                fn_body_ << "  " << res << " = sub i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = sub i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::Mul:
-                fn_body_ << "  " << res << " = mul i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = mul i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::KleeneAnd:
-                fn_body_ << "  " << res << " = and i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = and i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::KleeneOr:
-                fn_body_ << "  " << res << " = or i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = or i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::TernaryXor:
-                fn_body_ << "  " << res << " = xor i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = xor i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::Spaceship:
-                fn_body_ << "  " << res << " = call i64 @bt_spaceship(i64 " << left_val << ", i64 " << right_val << ")\n";
+                fn_body_ << "  " << res << " = call i64 @bt_spaceship(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::Equal: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp eq i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp eq i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             case frontend::BinaryOp::NotEqual: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp ne i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp ne i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             case frontend::BinaryOp::LessThan: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp slt i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp slt i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             case frontend::BinaryOp::GreaterThan: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp sgt i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp sgt i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             case frontend::BinaryOp::LessEqual: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp sle i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp sle i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             case frontend::BinaryOp::GreaterEqual: {
                 std::string cmp = new_reg();
-                fn_body_ << "  " << cmp << " = icmp sge i64 " << left_val << ", " << right_val << "\n";
-                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1\n";
+                fn_body_ << "  " << cmp << " = icmp sge i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                 break;
             }
             default:
-                fn_body_ << "  " << res << " = add i64 " << left_val << ", " << right_val << "\n";
+                fn_body_ << "  " << res << " = add i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
         }
         current_val_ = res;
@@ -591,17 +696,20 @@ public:
     }
 
     void visit(frontend::UnaryOpNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         node.operand->accept(*this);
+        if (node.location.line > 0) current_loc_ = node.location;
         std::string res = new_reg();
         if (current_type_ == "double") {
-            fn_body_ << "  " << res << " = fsub double -0.0, " << current_val_ << "\n";
+            fn_body_ << "  " << res << " = fsub double -0.0, " << current_val_ << dbg_tag() << "\n";
         } else {
-            fn_body_ << "  " << res << " = sub i64 0, " << current_val_ << "\n";
+            fn_body_ << "  " << res << " = sub i64 0, " << current_val_ << dbg_tag() << "\n";
         }
         current_val_ = res;
     }
 
     void visit(frontend::SelectNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         node.condition->accept(*this);
         std::string cond_val = current_val_;
 
@@ -613,42 +721,46 @@ public:
 
         node.neg_branch->accept(*this);
         std::string n_val = current_val_;
+        if (node.location.line > 0) current_loc_ = node.location;
 
         std::string res = new_reg();
         fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << cond_val << ", i64 "
-                 << p_val << ", i64 " << z_val << ", i64 " << n_val << ")\n";
+                 << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
         current_val_ = res;
         current_type_ = "i64";
     }
 
     void visit(frontend::WhileNode& node) override {
         if (block_terminated_) return;
+        if (node.location.line > 0) current_loc_ = node.location;
 
         std::string cond_lbl = new_label("while_cond");
         std::string body_lbl = new_label("while_body");
         std::string exit_lbl = new_label("while_exit");
 
-        fn_body_ << "  br label %" << cond_lbl << "\n";
+        fn_body_ << "  br label %" << cond_lbl << dbg_tag() << "\n";
         fn_body_ << cond_lbl << ":\n";
         block_terminated_ = false;
 
         node.condition->accept(*this);
         std::string cond_val = current_val_;
+        if (node.location.line > 0) current_loc_ = node.location;
         if (current_type_ == "double") {
             std::string fcmp = new_reg();
-            fn_body_ << "  " << fcmp << " = fcmp ogt double " << cond_val << ", 0.0\n";
-            fn_body_ << "  br i1 " << fcmp << ", label %" << body_lbl << ", label %" << exit_lbl << "\n";
+            fn_body_ << "  " << fcmp << " = fcmp ogt double " << cond_val << ", 0.0" << dbg_tag() << "\n";
+            fn_body_ << "  br i1 " << fcmp << ", label %" << body_lbl << ", label %" << exit_lbl << dbg_tag() << "\n";
         } else {
             std::string cmp = new_reg();
-            fn_body_ << "  " << cmp << " = icmp sgt i64 " << cond_val << ", 0\n";
-            fn_body_ << "  br i1 " << cmp << ", label %" << body_lbl << ", label %" << exit_lbl << "\n";
+            fn_body_ << "  " << cmp << " = icmp sgt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
+            fn_body_ << "  br i1 " << cmp << ", label %" << body_lbl << ", label %" << exit_lbl << dbg_tag() << "\n";
         }
 
         fn_body_ << body_lbl << ":\n";
         block_terminated_ = false;
         if (node.body) node.body->accept(*this);
         if (!block_terminated_) {
-            fn_body_ << "  br label %" << cond_lbl << "\n";
+            if (node.location.line > 0) current_loc_ = node.location;
+            fn_body_ << "  br label %" << cond_lbl << dbg_tag() << "\n";
         }
 
         fn_body_ << exit_lbl << ":\n";
@@ -657,31 +769,34 @@ public:
 
     void visit(frontend::ReturnNode& node) override {
         if (block_terminated_) return;
+        if (node.location.line > 0) current_loc_ = node.location;
         if (is_in_bt_main_) {
             if (node.expr) {
                 node.expr->accept(*this);
+                if (node.location.line > 0) current_loc_ = node.location;
                 if (current_type_ == "double") {
                     std::string conv = new_reg();
-                    fn_body_ << "  " << conv << " = fptosi double " << current_val_ << " to i32\n";
-                    fn_body_ << "  ret i32 " << conv << "\n";
+                    fn_body_ << "  " << conv << " = fptosi double " << current_val_ << " to i32" << dbg_tag() << "\n";
+                    fn_body_ << "  ret i32 " << conv << dbg_tag() << "\n";
                 } else {
                     std::string ret_i32 = new_reg();
-                    fn_body_ << "  " << ret_i32 << " = trunc i64 " << current_val_ << " to i32\n";
-                    fn_body_ << "  ret i32 " << ret_i32 << "\n";
+                    fn_body_ << "  " << ret_i32 << " = trunc i64 " << current_val_ << " to i32" << dbg_tag() << "\n";
+                    fn_body_ << "  ret i32 " << ret_i32 << dbg_tag() << "\n";
                 }
             } else {
-                fn_body_ << "  ret i32 0\n";
+                fn_body_ << "  ret i32 0" << dbg_tag() << "\n";
             }
         } else {
             if (node.expr) {
                 node.expr->accept(*this);
+                if (node.location.line > 0) current_loc_ = node.location;
                 if (current_type_ == "double") {
-                    fn_body_ << "  ret double " << current_val_ << "\n";
+                    fn_body_ << "  ret double " << current_val_ << dbg_tag() << "\n";
                 } else {
-                    fn_body_ << "  ret i64 " << current_val_ << "\n";
+                    fn_body_ << "  ret i64 " << current_val_ << dbg_tag() << "\n";
                 }
             } else {
-                fn_body_ << "  ret void\n";
+                fn_body_ << "  ret void" << dbg_tag() << "\n";
             }
         }
         block_terminated_ = true;
@@ -748,6 +863,7 @@ public:
     }
 
     void visit(frontend::IdentifierNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         const VarInfo* var = lookup_var(node.name);
         if (var) {
             if (var->type == "sparse_matrix") {
@@ -763,10 +879,10 @@ public:
             }
             std::string res = new_reg();
             if (var->type == "double") {
-                fn_body_ << "  " << res << " = load double, double* " << var->ptr_reg << ", align 8\n";
+                fn_body_ << "  " << res << " = load double, double* " << var->ptr_reg << ", align 8" << dbg_tag() << "\n";
                 current_type_ = "double";
             } else {
-                fn_body_ << "  " << res << " = load i64, i64* " << var->ptr_reg << ", align 8\n";
+                fn_body_ << "  " << res << " = load i64, i64* " << var->ptr_reg << ", align 8" << dbg_tag() << "\n";
                 current_type_ = "i64";
             }
             current_val_ = res;
@@ -785,22 +901,24 @@ public:
     }
 
     void visit(frontend::CallNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         if (node.callee == "print") {
             if (!node.arguments.empty()) {
                 node.arguments[0]->accept(*this);
+                if (node.location.line > 0) current_loc_ = node.location;
                 if (current_type_ == "double") {
-                    fn_body_ << "  call void @bt_print_float(double " << current_val_ << ")\n";
+                    fn_body_ << "  call void @bt_print_float(double " << current_val_ << ")" << dbg_tag() << "\n";
                 } else if (current_type_ == "i64*") {
                     for (size_t i = 0; i < current_dim_; ++i) {
                         std::string p_elem = new_reg();
                         fn_body_ << "  " << p_elem << " = getelementptr inbounds i64, i64* "
-                                 << current_val_ << ", i64 " << i << "\n";
+                                 << current_val_ << ", i64 " << i << dbg_tag() << "\n";
                         std::string val = new_reg();
-                        fn_body_ << "  " << val << " = load i64, i64* " << p_elem << ", align 8\n";
-                        fn_body_ << "  call void @bt_print(i64 " << val << ")\n";
+                        fn_body_ << "  " << val << " = load i64, i64* " << p_elem << ", align 8" << dbg_tag() << "\n";
+                        fn_body_ << "  call void @bt_print(i64 " << val << ")" << dbg_tag() << "\n";
                     }
                 } else {
-                    fn_body_ << "  call void @bt_print(i64 " << current_val_ << ")\n";
+                    fn_body_ << "  call void @bt_print(i64 " << current_val_ << ")" << dbg_tag() << "\n";
                 }
             }
             current_val_ = "0";
@@ -817,17 +935,18 @@ public:
             }
 
             std::string arr = new_reg();
-            fn_body_ << "  " << arr << " = alloca [" << count << " x i64], align 8\n";
+            fn_body_ << "  " << arr << " = alloca [" << count << " x i64], align 8" << dbg_tag() << "\n";
             for (size_t i = 0; i < count; ++i) {
                 node.arguments[start_idx + i]->accept(*this);
+                if (node.location.line > 0) current_loc_ = node.location;
                 std::string p_i = new_reg();
                 fn_body_ << "  " << p_i << " = getelementptr inbounds [" << count << " x i64], ["
-                         << count << " x i64]* " << arr << ", i64 0, i64 " << i << "\n";
-                fn_body_ << "  store i64 " << current_val_ << ", i64* " << p_i << ", align 8\n";
+                         << count << " x i64]* " << arr << ", i64 0, i64 " << i << dbg_tag() << "\n";
+                fn_body_ << "  store i64 " << current_val_ << ", i64* " << p_i << ", align 8" << dbg_tag() << "\n";
             }
             std::string p_ret = new_reg();
             fn_body_ << "  " << p_ret << " = getelementptr inbounds [" << count << " x i64], ["
-                     << count << " x i64]* " << arr << ", i64 0, i64 0\n";
+                     << count << " x i64]* " << arr << ", i64 0, i64 0" << dbg_tag() << "\n";
             current_val_ = p_ret;
             current_type_ = "i64*";
             current_dim_ = count;
@@ -840,10 +959,11 @@ public:
             std::string z_val = current_val_;
             node.arguments[3]->accept(*this);
             std::string n_val = current_val_;
+            if (node.location.line > 0) current_loc_ = node.location;
 
             std::string res = new_reg();
             fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << c_val << ", i64 "
-                     << p_val << ", i64 " << z_val << ", i64 " << n_val << ")\n";
+                     << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
             current_val_ = res;
             current_type_ = "i64";
         } else {
@@ -854,6 +974,7 @@ public:
 
     void visit(frontend::IfNode& node) override {
         if (block_terminated_) return;
+        if (node.location.line > 0) current_loc_ = node.location;
 
         std::string then_lbl = new_label("if_then");
         std::string else_lbl = new_label("if_else");
@@ -861,16 +982,17 @@ public:
 
         node.condition->accept(*this);
         std::string cond_val = current_val_;
+        if (node.location.line > 0) current_loc_ = node.location;
         if (current_type_ == "double") {
             std::string fcmp = new_reg();
-            fn_body_ << "  " << fcmp << " = fcmp ogt double " << cond_val << ", 0.0\n";
+            fn_body_ << "  " << fcmp << " = fcmp ogt double " << cond_val << ", 0.0" << dbg_tag() << "\n";
             fn_body_ << "  br i1 " << fcmp << ", label %" << then_lbl << ", label %"
-                     << (node.else_block ? else_lbl : exit_lbl) << "\n";
+                     << (node.else_block ? else_lbl : exit_lbl) << dbg_tag() << "\n";
         } else {
             std::string cmp = new_reg();
-            fn_body_ << "  " << cmp << " = icmp sgt i64 " << cond_val << ", 0\n";
+            fn_body_ << "  " << cmp << " = icmp sgt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
             fn_body_ << "  br i1 " << cmp << ", label %" << then_lbl << ", label %"
-                     << (node.else_block ? else_lbl : exit_lbl) << "\n";
+                     << (node.else_block ? else_lbl : exit_lbl) << dbg_tag() << "\n";
         }
 
         // Then block
@@ -879,7 +1001,8 @@ public:
         if (node.then_block) node.then_block->accept(*this);
         bool then_terminated = block_terminated_;
         if (!then_terminated) {
-            fn_body_ << "  br label %" << exit_lbl << "\n";
+            if (node.location.line > 0) current_loc_ = node.location;
+            fn_body_ << "  br label %" << exit_lbl << dbg_tag() << "\n";
         }
 
         // Else block
@@ -890,7 +1013,8 @@ public:
             node.else_block->accept(*this);
             else_terminated = block_terminated_;
             if (!else_terminated) {
-                fn_body_ << "  br label %" << exit_lbl << "\n";
+                if (node.location.line > 0) current_loc_ = node.location;
+                fn_body_ << "  br label %" << exit_lbl << dbg_tag() << "\n";
             }
         }
 
@@ -904,6 +1028,7 @@ public:
     }
 
     void visit(frontend::ExpressionStmtNode& node) override {
+        if (node.location.line > 0) current_loc_ = node.location;
         if (node.expr) node.expr->accept(*this);
     }
 };
@@ -915,8 +1040,10 @@ public:
  */
 class NativeLLVMJIT {
 public:
-    static int execute_program(frontend::ProgramNode& program, bool verbose = false) {
-        LLVMCodeGenVisitor codegen;
+    static int execute_program(frontend::ProgramNode& program, bool verbose = false,
+                               bool enable_debug = false, bool enable_lto = false,
+                               const std::string& filename = "program.bt") {
+        LLVMCodeGenVisitor codegen(enable_debug, filename);
         std::string llvm_ir = codegen.generate(program);
 
         static std::atomic<uint64_t> jit_counter{0};
@@ -936,7 +1063,10 @@ public:
 
         // Build native shared library via Clang
         std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
-                          "clang -O3 -shared -fPIC \"" + tmp_ll_path + "\" -o \"" + tmp_dylib_path + "\"";
+                          "clang -O3 -shared -fPIC -Wno-override-module ";
+        if (enable_debug) cmd += "-g ";
+        if (enable_lto) cmd += "-flto=thin ";
+        cmd += "\"" + tmp_ll_path + "\" -o \"" + tmp_dylib_path + "\"";
         if (!verbose) {
             cmd += " 2>/dev/null";
         }

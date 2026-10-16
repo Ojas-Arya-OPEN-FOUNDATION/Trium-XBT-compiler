@@ -63,6 +63,9 @@ struct CompilerOptions {
     bool runNative{false};
     bool enableKokkos{false};
     size_t kokkosThreads{0};
+    bool emitDebug{false};
+    bool emitBitcode{false};
+    bool enableLTO{false};
 };
 
 // ==============================================================================
@@ -496,6 +499,9 @@ void print_help() {
               << "  --emit-arm64        Emit ARM64 NEON intrinsic C++ source\n"
               << "  --emit-x86          Emit x86_64 AVX-512 intrinsic C++ source\n"
               << "  --emit-llvm         Emit LLVM Intermediate Representation (.ll)\n"
+              << "  --emit-llvm-bc      Emit LLVM Bitcode (.bc)\n"
+              << "  -g, --debug         Emit DWARF 5 source-level debug metadata\n"
+              << "  --lto               Enable ThinLTO optimization (-flto=thin)\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
               << "  --test              Run internal invariant verification suite\n"
               << "  --help              Display this help menu\n";
@@ -527,6 +533,12 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--test") {
             opts.runSelfTest = true;
+        } else if (arg == "-g" || arg == "--debug") {
+            opts.emitDebug = true;
+        } else if (arg == "--emit-llvm-bc") {
+            opts.emitBitcode = true;
+        } else if (arg == "--lto") {
+            opts.enableLTO = true;
         } else if (arg == "--emit-metal") {
             opts.target = TargetArch::APPLE_METAL;
         } else if (arg == "--emit-vulkan") {
@@ -627,7 +639,7 @@ int main(int argc, char** argv) {
             }
 
             auto t_start = std::chrono::high_resolution_clock::now();
-            int exit_code = codegen::NativeLLVMJIT::execute_program(*prog, false);
+            int exit_code = codegen::NativeLLVMJIT::execute_program(*prog, false, opts.emitDebug, opts.enableLTO, opts.inputFile);
             auto t_end = std::chrono::high_resolution_clock::now();
             double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
@@ -670,6 +682,82 @@ int main(int argc, char** argv) {
 
     CompilerPipeline::run_optimization_passes(opts);
 
+    // LLVM Bitcode (.bc) Compilation Pipeline via Clang
+    if (opts.emitBitcode) {
+        std::string triple = opts.targetTriple;
+        if (triple.empty()) {
+            #ifdef __APPLE__
+            triple = "arm64-apple-darwin";
+            #else
+            triple = "aarch64-linux-gnu";
+            #endif
+        }
+
+        std::string datalayout = "e-m:o-i64:64-i128:128-n32:64-S128";
+        if (triple.find("x86") != std::string::npos) {
+            datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128";
+        } else if (triple.find("riscv") != std::string::npos) {
+            datalayout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
+        }
+
+        std::string llvm_ir;
+        if (!opts.inputFile.empty()) {
+            std::ifstream f(opts.inputFile);
+            if (!f.is_open()) {
+                std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+                return 1;
+            }
+            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            frontend::Parser parser(src);
+            auto prog = parser.parse_program();
+            if (!prog) {
+                std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+                return 1;
+            }
+            codegen::LLVMCodeGenVisitor visitor;
+            if (opts.emitDebug) {
+                visitor.set_debug_info(true, opts.inputFile);
+            }
+            llvm_ir = visitor.generate(*prog, triple, datalayout);
+        } else {
+            llvm_ir = CodeEmitter::emit_llvm_ir();
+        }
+
+        std::string out_bc = opts.outputFile;
+        if (out_bc.empty()) {
+            if (!opts.inputFile.empty()) {
+                size_t dot = opts.inputFile.find_last_of('.');
+                out_bc = (dot == std::string::npos ? opts.inputFile : opts.inputFile.substr(0, dot)) + ".bc";
+            } else {
+                out_bc = "bt_output.bc";
+            }
+        }
+
+        char tmp_ir_path[] = "/tmp/bt_bc_ir_XXXXXX.ll";
+        int fd_ir = mkstemps(tmp_ir_path, 3);
+        if (fd_ir == -1) {
+            std::cerr << "Error: Failed to create temporary IR file!\n";
+            return 1;
+        }
+        write(fd_ir, llvm_ir.data(), llvm_ir.size());
+        close(fd_ir);
+
+        std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+                          "clang -O3 -c -emit-llvm -Wno-override-module --target=" + triple + " ";
+        if (opts.emitDebug) cmd += "-g ";
+        if (opts.enableLTO) cmd += "-flto=thin ";
+        cmd += "\"" + std::string(tmp_ir_path) + "\" -o \"" + out_bc + "\" 2>/dev/null";
+
+        int ret = std::system(cmd.c_str());
+        unlink(tmp_ir_path);
+        if (ret != 0) {
+            std::cerr << "Error: LLVM bitcode compilation failed for triple " << triple << "\n";
+            return 1;
+        }
+        std::cout << "[Target Codegen] Successfully emitted LLVM bitcode: " << out_bc << " (Target: " << triple << ")\n";
+        return 0;
+    }
+
     // Cross-Compilation Pipeline for standalone Assembly (-S) or Object (-c) files
     if (opts.outputMode == OutputMode::ASM || opts.outputMode == OutputMode::OBJ) {
         std::string triple = opts.targetTriple;
@@ -700,6 +788,9 @@ int main(int argc, char** argv) {
                 return 1;
             }
             codegen::LLVMCodeGenVisitor visitor;
+            if (opts.emitDebug) {
+                visitor.set_debug_info(true, opts.inputFile);
+            }
             llvm_ir = visitor.generate(*prog, triple, datalayout);
         } else {
             llvm_ir = CodeEmitter::emit_llvm_ir();
@@ -792,8 +883,10 @@ int main(int argc, char** argv) {
             bool use_stdout = opts.outputFile.empty();
             std::string asm_path = use_stdout ? std::string(tmp_ir_path) + ".s" : opts.outputFile;
             std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
-                              "clang -O3 -Wno-override-module --target=" + triple +
-                              " -S \"" + std::string(tmp_ir_path) + "\" -o \"" + asm_path + "\" 2>/dev/null";
+                              "clang -O3 -Wno-override-module --target=" + triple + " ";
+            if (opts.emitDebug) cmd += "-g ";
+            if (opts.enableLTO) cmd += "-flto=thin ";
+            cmd += "-S \"" + std::string(tmp_ir_path) + "\" -o \"" + asm_path + "\" 2>/dev/null";
             int ret = std::system(cmd.c_str());
             unlink(tmp_ir_path);
             if (ret != 0) {
@@ -824,8 +917,10 @@ int main(int argc, char** argv) {
                 }
             }
             std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
-                              "clang -O3 -Wno-override-module --target=" + triple +
-                              " -c \"" + std::string(tmp_ir_path) + "\" -o \"" + out_obj + "\" 2>/dev/null";
+                              "clang -O3 -Wno-override-module --target=" + triple + " ";
+            if (opts.emitDebug) cmd += "-g ";
+            if (opts.enableLTO) cmd += "-flto=thin ";
+            cmd += "-c \"" + std::string(tmp_ir_path) + "\" -o \"" + out_obj + "\" 2>/dev/null";
             int ret = std::system(cmd.c_str());
             unlink(tmp_ir_path);
             if (ret != 0) {
@@ -852,7 +947,41 @@ int main(int argc, char** argv) {
             emitted_code = CodeEmitter::emit_x86_avx512_kernel();
             break;
         case TargetArch::LLVM_IR:
-            emitted_code = CodeEmitter::emit_llvm_ir();
+            if (!opts.inputFile.empty()) {
+                std::string triple = opts.targetTriple;
+                if (triple.empty()) {
+                    #ifdef __APPLE__
+                    triple = "arm64-apple-darwin";
+                    #else
+                    triple = "aarch64-linux-gnu";
+                    #endif
+                }
+                std::string datalayout = "e-m:o-i64:64-i128:128-n32:64-S128";
+                if (triple.find("x86") != std::string::npos) {
+                    datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128";
+                } else if (triple.find("riscv") != std::string::npos) {
+                    datalayout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
+                }
+                std::ifstream f(opts.inputFile);
+                if (!f.is_open()) {
+                    std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+                    return 1;
+                }
+                std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                frontend::Parser parser(src);
+                auto prog = parser.parse_program();
+                if (!prog) {
+                    std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+                    return 1;
+                }
+                codegen::LLVMCodeGenVisitor visitor;
+                if (opts.emitDebug) {
+                    visitor.set_debug_info(true, opts.inputFile);
+                }
+                emitted_code = visitor.generate(*prog, triple, datalayout);
+            } else {
+                emitted_code = CodeEmitter::emit_llvm_ir();
+            }
             break;
         case TargetArch::CPP20_GENERIC:
             emitted_code = "// Generic C++20 Balanced Ternary Pipeline\n#include \"ternary_dense_algebra.hpp\"\n";

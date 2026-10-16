@@ -18,6 +18,8 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <unistd.h>
 
 using namespace bt;
 using namespace bt::frontend;
@@ -487,6 +489,70 @@ void test_kokkos_bridge_fixes() {
 }
 
 // ==============================================================================
+// 11. DWARF-5 Debug Metadata and Auto-Vectorization Loop Metadata
+// ==============================================================================
+
+void test_dwarf_debug_metadata_and_vectorization() {
+    std::cout << "  [11/11] Testing DWARF-5 Debug Metadata and Loop Vectorization Metadata...\n";
+
+    std::string src = "sparse_matrix A(2, 2, 1, 0, 0, -1);\n"
+                      "var x = 1.0;\n"
+                      "var y = 2.0;\n"
+                      "var z = x + y;\n"
+                      "return 0;\n";
+
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    LLVMCodeGenVisitor visitor;
+    visitor.set_debug_info(true, "test_debug.bt");
+    std::string ir = visitor.generate_ir(*prog);
+
+    // Verify DWARF-5 metadata presence
+    assert(ir.find("!llvm.dbg.cu") != std::string::npos);
+    assert(ir.find("!DICompileUnit") != std::string::npos);
+    assert(ir.find("DW_LANG_C99") != std::string::npos);
+    assert(ir.find("!\"Dwarf Version\", i32 5") != std::string::npos);
+    assert(ir.find("!\"Debug Info Version\", i32 3") != std::string::npos);
+    assert(ir.find("!DIFile(filename: \"test_debug.bt\"") != std::string::npos);
+    assert(ir.find("!DISubprogram(name: \"bt_main\"") != std::string::npos);
+    assert(ir.find("!DILocation(") != std::string::npos);
+
+    // Verify auto-vectorization loop metadata presence
+    assert(ir.find("!llvm.loop") != std::string::npos);
+    assert(ir.find("!\"llvm.loop.vectorize.enable\", i1 true") != std::string::npos);
+
+    // Strict Clang compilation verification with -Wall -Werror -Wno-override-module -c -x ir
+    char tmp_ir_path[] = "/tmp/bt_debug_unit_XXXXXX.ll";
+    int fd = mkstemps(tmp_ir_path, 3);
+    assert(fd != -1);
+    ssize_t written = write(fd, ir.data(), ir.size());
+    assert(written == static_cast<ssize_t>(ir.size()));
+    close(fd);
+
+    std::string obj_path = std::string(tmp_ir_path) + ".o";
+    std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+                      "clang -Wall -Werror -Wno-override-module -c -x ir \"" + std::string(tmp_ir_path) + "\" -o \"" + obj_path + "\" 2>&1";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    assert(pipe != nullptr);
+    char buffer[256];
+    std::string output = "";
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    int status = pclose(pipe);
+    unlink(tmp_ir_path);
+    unlink(obj_path.c_str());
+
+    assert(status == 0 && "Clang compilation of IR with DWARF-5 & loop metadata must succeed with 0 warnings/errors!");
+    assert(output.empty() && "Clang compilation produced unexpected warnings/errors!");
+
+    std::cout << "      -> DWARF-5 Debug Metadata & Auto-Vectorization Loop Metadata passed (0 warnings).\n";
+}
+
+// ==============================================================================
 // Main Entry Point
 // ==============================================================================
 
@@ -505,8 +571,9 @@ int main() {
     test_mixed_float_int_expressions();
     test_comparison_precedence();
     test_kokkos_bridge_fixes();
+    test_dwarf_debug_metadata_and_vectorization();
 
-    std::cout << "\n  -> ALL 10 FRONTEND FP & SPARSE MATRIX UNIT TESTS PASSED (100%)\n";
+    std::cout << "\n  -> ALL 11 FRONTEND FP & SPARSE MATRIX UNIT TESTS PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

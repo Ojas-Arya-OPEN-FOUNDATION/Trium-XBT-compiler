@@ -26,6 +26,9 @@ clang++ -std=c++20 -O3 \
     "${SCRIPT_DIR}/tools/bt-opt/bt-opt.cpp" \
     -o "${SCRIPT_DIR}/bt-opt"
 echo "    -> bt-opt built successfully."
+echo ">>> [BUILD] Building shared C-ABI runtime library libbt_runtime.dylib..."
+clang++ -std=c++20 -O3 -shared -fPIC "${SCRIPT_DIR}/lib/Ternary/ternary_c_abi.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/libbt_runtime.dylib"
+echo "    -> libbt_runtime.dylib built successfully."
 
 # Layer 1: Unit Tests
 echo ""
@@ -53,6 +56,12 @@ clang++ -std=c++20 -O3 \
     "${SCRIPT_DIR}/test/Unit/test_unit_bt_opt.cpp" \
     -o "${SCRIPT_DIR}/test/Unit/unit_bt_opt"
 "${SCRIPT_DIR}/test/Unit/unit_bt_opt"
+clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_c_abi_ffi.cpp" -I"${SCRIPT_DIR}" -L"${SCRIPT_DIR}" -lbt_runtime -Wl,-rpath,"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_c_abi_ffi"
+"${SCRIPT_DIR}/test/Unit/unit_c_abi_ffi"
+python3 "${SCRIPT_DIR}/ffi/python/bt_ffi.py"
+clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_bigint_symplectic.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_bigint_symplectic"
+"${SCRIPT_DIR}/test/Unit/unit_bigint_symplectic"
+
 
 
 # Layer 2: Regression Tests

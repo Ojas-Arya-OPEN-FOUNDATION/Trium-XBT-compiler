@@ -1,0 +1,12 @@
+[package]
+name = "bt_runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Antigravity Prime Research & Engineering Engine"]
+description = "Multi-Language Rust FFI Bindings for the Balanced Ternary Engine"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
