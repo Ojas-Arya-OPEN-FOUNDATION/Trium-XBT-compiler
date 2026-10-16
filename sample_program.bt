@@ -1,0 +1,44 @@
+// ==============================================================================
+// Balanced Ternary Compiler Demonstration Program (sample_program.bt)
+// Demonstrating Dual-Rail Arithmetic, 3-Way Select, and Planar Kokkos GEMM
+// ==============================================================================
+
+// 1. Dual-Rail Integer Arithmetic (+, -, *, &, |, ^, <=>)
+var a = 84;
+var b = 27;
+var add_res = a + b;
+var sub_res = a - b;
+var mul_res = a * b;
+
+// 2. Kleene 3-Valued Logic
+var k_and = a & b;
+var k_or  = a | b;
+var k_xor = a ^ b;
+
+// 3. 3-Way Branchless Multiplexing via Spaceship Comparison
+var cmp = a <=> b;
+var sel_result = select(cmp, 999, 0, -999);
+
+// 4. Matrix Operations & Kokkos GEMM
+var A = matrix_init(3, 3,
+    1, -1,  0,
+    0,  1, -1,
+    1,  0,  1
+);
+
+var B = matrix_init(3, 3,
+    1,  1,  0,
+   -1,  1,  1,
+    0, -1,  1
+);
+
+var C = matmul(A, B);
+var R = csa_reduce(A, B);
+
+// 5. Outputs
+print(add_res);
+print(sub_res);
+print(mul_res);
+print(sel_result);
+print(C);
+print(R);

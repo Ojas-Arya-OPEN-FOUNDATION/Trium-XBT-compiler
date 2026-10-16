@@ -1,0 +1,5 @@
+// RUN: %bt-compiler --emit-metal | FileCheck %s
+
+// CHECK: #include <metal_stdlib>
+// CHECK: kernel void bt_gemm_metal
+// CHECK: popcount

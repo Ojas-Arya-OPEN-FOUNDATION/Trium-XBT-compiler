@@ -1,0 +1,36 @@
+# Binaries and executables
+bt-compiler
+bt-opt
+bench_*_runner
+test_*_runner
+simd_bench
+a.out
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.dSYM/
+
+# Build directories
+build/
+bin/
+lib/*.a
+lib/*.so
+lib/*.dylib
+
+# Temporary & runtime files
+*.tmp
+*.log
+/tmp/
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Lean build artifacts
+.lake/
+lake-manifest.json
+test/Unit/unit_*
+test/Unit/test_unit_bt_opt

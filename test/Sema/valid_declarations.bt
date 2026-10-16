@@ -1,0 +1,8 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var x = 42;
+var y = -42;
+var z = x + y;
+print(z);
+
+// CHECK: 0 [trits: 0]

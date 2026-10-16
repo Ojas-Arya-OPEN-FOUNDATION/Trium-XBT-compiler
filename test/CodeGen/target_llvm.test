@@ -1,0 +1,7 @@
+// RUN: %bt-compiler --emit-llvm | FileCheck %s
+
+// CHECK: declare i64 @llvm.ctpop.i64(i64)
+// CHECK: define i64 @bt_dot_product_64
+// CHECK: define void @bt_btha
+// CHECK: define void @bt_unpack5_base243
+// CHECK: define void @bt_gemm_kernel

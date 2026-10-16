@@ -1,0 +1,5 @@
+// RUN: %bt-compiler run %s 2>&1 | FileCheck %s
+
+var a = ;
+
+// CHECK: [Frontend Parse Error] 3:9: Expected expression

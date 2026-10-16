@@ -1,0 +1,6 @@
+// RUN: %bt-compiler --emit-x86 | FileCheck %s
+
+// CHECK: #include <immintrin.h>
+// CHECK: bt_gemm_avx512_step
+// CHECK: _mm512_popcnt_epi64
+// CHECK: _mm512_sub_epi64

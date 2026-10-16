@@ -1,0 +1,17 @@
+// RUN: (%bt-compiler %s --target=aarch64 -S && %bt-compiler %s --target=x86_64 -S && %bt-compiler %s --target=riscv64 -S) | FileCheck %s
+
+var a = 84;
+var b = 27;
+var c = a + b;
+print(c);
+
+// CHECK: Target backend: ARM64 NEON
+// CHECK: _bt_main
+// CHECK: ret
+// CHECK: Target backend: x86_64 AVX-512
+// CHECK: _bt_main
+// CHECK: retq
+// CHECK: Target backend: LLVM Intermediate Representation
+// CHECK: RISC-V 64
+// CHECK: bt_main
+// CHECK: ret

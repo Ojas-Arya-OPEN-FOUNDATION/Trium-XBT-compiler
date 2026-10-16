@@ -1,0 +1,24 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var a = 50;
+var b = 20;
+var cmp_gt = a <=> b;
+var sel_gt = select(cmp_gt, 100, 0, -100);
+
+var c = 10;
+var d = 10;
+var cmp_eq = c <=> d;
+var sel_eq = select(cmp_eq, 100, 0, -100);
+
+var e = -30;
+var f = 5;
+var cmp_lt = e <=> f;
+var sel_lt = select(cmp_lt, 100, 0, -100);
+
+print(sel_gt);
+print(sel_eq);
+print(sel_lt);
+
+// CHECK: 100 [trits: ++-0+]
+// CHECK: 0 [trits: 0]
+// CHECK: -100 [trits: --+0-]

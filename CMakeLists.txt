@@ -1,0 +1,241 @@
+# ==============================================================================
+# Universal Balanced Ternary Compiler & MLIR Dialect Build Infrastructure
+# ==============================================================================
+# Supports both:
+# 1. Out-of-tree LLVM/MLIR monorepo builds via find_package(MLIR / LLVM)
+# 2. Standalone C++20 build target with zero dependencies for reproducible builds
+# ==============================================================================
+
+cmake_minimum_required(VERSION 3.20)
+project(BalancedTernaryCompiler
+    VERSION 1.0.0
+    DESCRIPTION "Universal Balanced Ternary Compiler & MLIR Dialect Infrastructure"
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# macOS ARM64 Apple Silicon Optimization & SDK Configuration
+if(APPLE)
+    if(NOT DEFINED ENV{SDKROOT} AND EXISTS "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")
+        set(ENV{SDKROOT} "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")
+    endif()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Build Options
+option(BT_ENABLE_MLIR "Build with upstream LLVM/MLIR monorepo if found" ON)
+option(BT_BUILD_TESTS "Build complete 7-layer test suite" ON)
+option(BT_ENABLE_ASAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(BT_ENABLE_ASAN)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+# ==============================================================================
+# Out-of-tree LLVM / MLIR Configuration
+# ==============================================================================
+set(BT_HAS_MLIR FALSE)
+
+if(BT_ENABLE_MLIR)
+    find_package(MLIR CONFIG QUIET)
+    find_package(LLVM CONFIG QUIET)
+
+    if(MLIR_FOUND AND LLVM_FOUND)
+        set(BT_HAS_MLIR TRUE)
+        message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION} and LLVM ${LLVM_PACKAGE_VERSION}")
+        message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+        
+        list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+        list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+        
+        include(TableGen)
+        include(AddLLVM)
+        include(AddMLIR)
+        include(HandleLLVMOptions)
+
+        include_directories(${LLVM_INCLUDE_DIRS})
+        include_directories(${MLIR_INCLUDE_DIRS})
+        link_directories(${LLVM_BUILD_LIBRARY_DIR})
+        add_definitions(${LLVM_DEFINITIONS} -DBT_HAS_MLIR=1)
+
+        # TableGen Dialect & Op Target Generation
+        set(LLVM_TARGET_DEFINITIONS include/Ternary/TernaryOps.td)
+        mlir_tablegen(TernaryOpsDialect.h.inc -gen-dialect-decls)
+        mlir_tablegen(TernaryOpsDialect.cpp.inc -gen-dialect-defs)
+        mlir_tablegen(TernaryOps.h.inc -gen-op-decls)
+        mlir_tablegen(TernaryOps.cpp.inc -gen-op-defs)
+        add_public_tablegen_target(TernaryOpsIncGen)
+    else()
+        message(STATUS "Upstream LLVM/MLIR monorepo not detected. Activating standalone C++20 fallback mode.")
+    endif()
+endif()
+
+# ==============================================================================
+# Include Paths
+# ==============================================================================
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/iree
+)
+
+# ==============================================================================
+# Target: TernaryDialect Library
+# ==============================================================================
+add_library(TernaryDialect STATIC
+    lib/Ternary/TernaryDialect.cpp
+    lib/Ternary/TernaryPasses.cpp
+)
+
+target_include_directories(TernaryDialect PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+if(BT_HAS_MLIR)
+    add_dependencies(TernaryDialect TernaryOpsIncGen)
+    target_link_libraries(TernaryDialect PUBLIC
+        MLIRIR
+        MLIRSupport
+        MLIRPass
+        MLIRLinalgDialect
+        MLIRVectorDialect
+    )
+endif()
+
+# ==============================================================================
+# Target: TernaryIREEPlugin Library
+# ==============================================================================
+add_library(TernaryIREEPlugin STATIC
+    iree/TernaryIREEPlugin.cpp
+)
+
+target_include_directories(TernaryIREEPlugin PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/iree
+)
+
+target_link_libraries(TernaryIREEPlugin PUBLIC
+    TernaryDialect
+)
+
+# ==============================================================================
+# Target: bt-compiler (Native Balanced Ternary End-to-End Compiler)
+# ==============================================================================
+add_executable(bt-compiler
+    bt_compiler.cpp
+)
+
+target_include_directories(bt-compiler PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# ==============================================================================
+# Target: bt-opt (MLIR Modular Optimizer Driver for 'bt' Dialect)
+# ==============================================================================
+add_executable(bt-opt
+    tools/bt-opt/bt-opt.cpp
+)
+
+target_include_directories(bt-opt PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/iree
+)
+
+target_link_libraries(bt-opt PRIVATE
+    TernaryDialect
+    TernaryIREEPlugin
+)
+
+# ==============================================================================
+# Testing: 7-Layer Test Suite & CTest Integration
+# ==============================================================================
+if(BT_BUILD_TESTS)
+    enable_testing()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    # Unit Test Binaries
+    add_executable(unit_core test/Unit/test_unit_core.cpp)
+    target_include_directories(unit_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_dense test/Unit/test_unit_dense.cpp)
+    target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_memory test/Unit/test_unit_memory.cpp)
+    target_include_directories(unit_memory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_ast test/Unit/test_unit_ast.cpp)
+    target_include_directories(unit_ast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_mlir test/Unit/test_unit_mlir.cpp)
+    target_include_directories(unit_mlir PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_fp_sparse test/Unit/test_unit_fp_sparse.cpp)
+    target_include_directories(unit_fp_sparse PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_libbt test/Unit/test_unit_libbt.cpp)
+    target_include_directories(unit_libbt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_bt_opt test/Unit/test_unit_bt_opt.cpp)
+    target_include_directories(unit_bt_opt PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/iree
+    )
+    target_link_libraries(unit_bt_opt PRIVATE
+        TernaryDialect
+        TernaryIREEPlugin
+    )
+
+    # CTest Registration: Layer 1 Unit Tests
+    add_test(NAME Layer1_Unit_Core COMMAND unit_core)
+    add_test(NAME Layer1_Unit_Dense COMMAND unit_dense)
+    add_test(NAME Layer1_Unit_Memory COMMAND unit_memory)
+    add_test(NAME Layer1_Unit_AST COMMAND unit_ast)
+    add_test(NAME Layer1_Unit_MLIR COMMAND unit_mlir)
+    add_test(NAME Layer1_Unit_FP_Sparse COMMAND unit_fp_sparse)
+    add_test(NAME Layer1_Unit_LibBT COMMAND unit_libbt)
+    add_test(NAME Layer1_Unit_BT_Opt COMMAND unit_bt_opt)
+
+    # CTest Registration: Layers 2-7
+    add_test(NAME Layer2_Regression
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Regression
+    )
+    add_test(NAME Layer3_WholeProgram
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/WholeProgram
+    )
+    add_test(NAME Layer4_Sanitizers
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/Sanitizers/run_sanitizers.sh
+    )
+    add_test(NAME Layer5_CodeGen
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/CodeGen
+    )
+    add_test(NAME Layer6_Dialect
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Dialect
+    )
+    add_test(NAME Layer7_Sema
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Sema
+    )
+
+    # Custom Target: check-all (Emulates LLVM 'ninja check-all')
+    add_custom_target(check-all
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+        DEPENDS
+            bt-compiler
+            bt-opt
+            unit_core
+            unit_dense
+            unit_memory
+            unit_ast
+            unit_mlir
+            unit_fp_sparse
+            unit_libbt
+            unit_bt_opt
+    )
+endif()

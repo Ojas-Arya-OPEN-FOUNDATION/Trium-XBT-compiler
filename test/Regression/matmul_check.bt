@@ -1,0 +1,18 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var A = matrix_init(2, 2,
+    1, -1,
+    0,  1
+);
+
+var B = matrix_init(2, 2,
+    1,  1,
+   -1,  1
+);
+
+var C = matmul(A, B);
+print(C);
+
+// CHECK: DenseMatrixInt64 [2x2]:
+// CHECK:   [    2,    0 ]
+// CHECK:   [   -1,    1 ]

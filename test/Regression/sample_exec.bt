@@ -1,0 +1,15 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var a = 84;
+var b = 27;
+var add_res = a + b;
+var sub_res = a - b;
+var mul_res = a * b;
+
+print(add_res);
+print(sub_res);
+print(mul_res);
+
+// CHECK: 111 [trits: ++0+0]
+// CHECK: 57 [trits: +-0+0]
+// CHECK: 2268 [trits: +00+0000]

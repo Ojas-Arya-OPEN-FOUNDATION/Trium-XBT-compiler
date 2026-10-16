@@ -1,0 +1,16 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var A = matrix_init(2, 2,
+    1, 0,
+   -1, 1
+);
+
+var B = matrix_init(2, 2,
+    0, 1,
+    1, -1
+);
+
+var R = csa_reduce(A, B);
+print(R);
+
+// CHECK: TernaryMatrix [2x2]:

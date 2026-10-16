@@ -1,0 +1,42 @@
+#version 450
+// Auto-generated Vulkan GLSL Compute Shader for Balanced Ternary GEMM
+// Portable across Qualcomm Adreno, ARM Mali, AMD Radeon, and Intel Arc
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) readonly buffer BufA_P { uint64_t A_pos[]; };
+layout(set = 0, binding = 1) readonly buffer BufA_N { uint64_t A_neg[]; };
+layout(set = 0, binding = 2) readonly buffer BufB_P { uint64_t BT_pos[]; };
+layout(set = 0, binding = 3) readonly buffer BufB_N { uint64_t BT_neg[]; };
+layout(set = 0, binding = 4) writeonly buffer BufC  { int64_t C_out[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint M;
+    uint N;
+    uint wordsPerRow;
+};
+
+void main() {
+    uint i = gl_GlobalInvocationID.y;
+    uint j = gl_GlobalInvocationID.x;
+    if (i >= M || j >= N) return;
+
+    int64_t acc = 0;
+    uint row_offset_A = i * wordsPerRow;
+    uint row_offset_B = j * wordsPerRow;
+
+    for (uint w = 0; w < wordsPerRow; ++w) {
+        uint64_t ap = A_pos[row_offset_A + w];
+        uint64_t an = A_neg[row_offset_A + w];
+        uint64_t bp = BT_pos[row_offset_B + w];
+        uint64_t bn = BT_neg[row_offset_B + w];
+
+        uint64_t p_prod = (ap & bp) | (an & bn);
+        uint64_t n_prod = (ap & bn) | (an & bp);
+
+        // Universal SPIR-V OpBitCount
+        acc += int64_t(bitCount(uvec2(unpackUint2x32(p_prod))).x + bitCount(uvec2(unpackUint2x32(p_prod))).y) -
+               int64_t(bitCount(uvec2(unpackUint2x32(n_prod))).x + bitCount(uvec2(unpackUint2x32(n_prod))).y);
+    }
+
+    C_out[i * N + j] = acc;
+}

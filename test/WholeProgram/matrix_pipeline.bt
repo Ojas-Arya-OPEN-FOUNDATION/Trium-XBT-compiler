@@ -1,0 +1,29 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+// Whole-program test: 4x4 balanced ternary pipeline
+var A = matrix_init(4, 4,
+    1, -1,  0,  1,
+    0,  1, -1,  0,
+   -1,  0,  1, -1,
+    1,  1,  0, -1
+);
+
+var B = matrix_init(4, 4,
+    1,  0, -1,  1,
+   -1,  1,  0,  0,
+    0, -1,  1, -1,
+    1,  1, -1,  0
+);
+
+var C = matmul(A, B);
+print(C);
+
+var R = csa_reduce(A, B);
+print(R);
+
+// CHECK: DenseMatrixInt64 [4x4]:
+// CHECK:   [    3,    0,   -2,    1 ]
+// CHECK:   [   -1,    2,   -1,    1 ]
+// CHECK:   [   -2,   -2,    3,   -2 ]
+// CHECK:   [   -1,    0,    0,    1 ]
+// CHECK: TernaryMatrix [4x4]:

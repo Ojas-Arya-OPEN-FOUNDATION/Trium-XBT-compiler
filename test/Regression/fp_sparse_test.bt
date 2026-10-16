@@ -1,0 +1,27 @@
+// RUN: %bt-compiler run %s | FileCheck %s
+
+var a = 3.5;
+var b = 2.0;
+var sum = a + b;
+var prod = a * b;
+var diff = a - b;
+
+print(sum);
+print(prod);
+print(diff);
+
+var A = sparse_matrix(2, 2,
+    1, 0,
+    0, -1
+);
+
+var v = vector_init(10, 20);
+var y = A * v;
+print(y);
+
+// CHECK: 5.5
+// CHECK: 7
+// CHECK: 1.5
+// CHECK: DenseMatrixInt64 [2x1]:
+// CHECK:   [   10 ]
+// CHECK:   [  -20 ]

@@ -1,0 +1,7 @@
+// RUN: %bt-compiler --emit-arm64 | FileCheck %s
+
+// CHECK: #include <arm_neon.h>
+// CHECK: dot_product_neon
+// CHECK: vcreate_u8
+// CHECK: vcnt_u8
+// CHECK: vaddlv_u8
