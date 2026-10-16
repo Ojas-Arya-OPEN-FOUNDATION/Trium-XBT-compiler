@@ -1,0 +1,15 @@
+// ==============================================================================
+// Example 4: Balanced Ternary Floating-Point (BT-FP32) Calculations
+// Universal Balanced Ternary Programming Language (.bt)
+// ==============================================================================
+
+var x: float = 3.5;
+var y: float = 1.25;
+
+var f_sum = x + y;
+var f_diff = x - y;
+var f_prod = x * y;
+
+print(f_sum);
+print(f_diff);
+print(f_prod);

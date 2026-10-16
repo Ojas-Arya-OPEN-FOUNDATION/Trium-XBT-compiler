@@ -1,0 +1,24 @@
+// ==============================================================================
+// Example 2: 3-Way Branchless select(cond, pos, zero, neg) Multiplexing
+// Universal Balanced Ternary Programming Language (.bt)
+// ==============================================================================
+
+var threshold = 50;
+
+// Scenario 1: Value is less than threshold (42 < 50) => status = -1
+var val1 = 42;
+var status1 = val1 <=> threshold;
+var action1 = select(status1, 100, 0, -100);
+print(action1);
+
+// Scenario 2: Value is equal to threshold (50 == 50) => status = 0
+var val2 = 50;
+var status2 = val2 <=> threshold;
+var action2 = select(status2, 100, 0, -100);
+print(action2);
+
+// Scenario 3: Value is greater than threshold (99 > 50) => status = +1
+var val3 = 99;
+var status3 = val3 <=> threshold;
+var action3 = select(status3, 100, 0, -100);
+print(action3);

@@ -1,0 +1,16 @@
+// ==============================================================================
+// Example 3: While Loops and Variable Mutation (Factorial Calculation)
+// Universal Balanced Ternary Programming Language (.bt)
+// ==============================================================================
+
+var n = 6;
+var fact = 1;
+var i = 1;
+
+while (i <= n) {
+    fact = fact * i;
+    i = i + 1;
+}
+
+print(n);
+print(fact);

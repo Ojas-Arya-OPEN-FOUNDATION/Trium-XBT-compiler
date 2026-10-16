@@ -1,0 +1,25 @@
+// ==============================================================================
+// Example 1: Arithmetic & Ternary Spaceship (<=>) Operator
+// Universal Balanced Ternary Programming Language (.bt)
+// ==============================================================================
+
+var a = 84;
+var b = 27;
+
+// Integer Arithmetic
+var sum = a + b;
+var diff = a - b;
+var prod = a * b;
+
+// Ternary Spaceship Comparisons:
+// Returns +1 if LHS > RHS, 0 if LHS == RHS, -1 if LHS < RHS
+var cmp_gt = a <=> b;
+var cmp_lt = b <=> a;
+var cmp_eq = a <=> a;
+
+print(sum);
+print(diff);
+print(prod);
+print(cmp_gt);
+print(cmp_lt);
+print(cmp_eq);

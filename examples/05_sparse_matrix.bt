@@ -1,0 +1,14 @@
+// ==============================================================================
+// Example 5: Multiplier-Free Sparse Matrix Multiplication (sparse_matrix)
+// Universal Balanced Ternary Programming Language (.bt)
+// ==============================================================================
+
+var S = sparse_matrix(3, 3,
+    1,  0, -1,
+    0,  1,  0,
+   -1,  0,  1
+);
+
+var v = vector_init(10, 20, 30);
+var res = S * v;
+print(res);
