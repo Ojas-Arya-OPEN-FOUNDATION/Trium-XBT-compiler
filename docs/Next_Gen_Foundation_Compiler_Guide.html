@@ -392,7 +392,7 @@
 <p><em>(Answers: 1. $(+1 \times 9) + (-1 \times 3) + (+1 \times 1) = 9 - 3 + 1 = 7$. 2. Flip all signs: <code>- - + 0</code>. 3. $(-1 \times 27) + (-1 \times 9) + (+1 \times 3) + (0 \times 1) = -27 - 9 + 3 = -33$. The original was $+33$. 4. Because the fractional truncation range is perfectly symmetric between $-0.5$ and $+0.5$, meaning positive and negative rounding errors cancel each other out completely).</em></p>
 <hr>
 <h1 id="chapter-2-the-core-bit-slicing-tricks-how-binary-chips-run-ternary">Chapter 2: The Core Bit-Slicing Tricks (How Binary Chips Run Ternary)</h1>
-<p>Welcome back! In <a href="01_number_systems.md">Chapter 1</a>, we discovered the pure mathematical beauty of balanced ternary: zero rounding bias, zero-cost sign negation, and the highest radix economy of any integer base.</p>
+<p>Welcome back! In <a href="#chapter-1-number-systems-from-zero">Chapter 1</a>, we discovered the pure mathematical beauty of balanced ternary: zero rounding bias, zero-cost sign negation, and the highest radix economy of any integer base.</p>
 <p>Now comes the million-dollar engineering challenge: <strong>Every modern silicon chip in the world—from your laptop&#x27;s Intel, AMD, or Apple Silicon CPU to NVIDIA graphics cards—is built entirely out of binary transistors.</strong></p>
 <p>If you tried to simulate balanced ternary naively in C++ using an <code>enum</code> or integer:</p>
 <pre><code class="lang-cpp">// ❌ NAIVE APPROACH: Slow, branching, pipeline-stalling code
@@ -895,7 +895,7 @@ for (int i = 0; i &lt; 16; ++i) {
 </ol>
 <hr>
 <h1 id="chapter-3-repository-map-architectural-layers">Chapter 3: Repository Map &amp; Architectural Layers</h1>
-<p>Welcome! In <a href="01_number_systems.md">Chapter 1</a>, you learned the mathematical elegance of balanced ternary. In <a href="02_core_tricks.md">Chapter 2</a>, you mastered the bit-slicing tricks, carry-save adders, and magic reciprocal multipliers that make ternary fly on binary hardware.</p>
+<p>Welcome! In <a href="#chapter-1-number-systems-from-zero">Chapter 1</a>, you learned the mathematical elegance of balanced ternary. In <a href="#chapter-2-the-core-bit-slicing-tricks-how-binary-chips-run-ternary">Chapter 2</a>, you mastered the bit-slicing tricks, carry-save adders, and magic reciprocal multipliers that make ternary fly on binary hardware.</p>
 <p>Now you might open your terminal, look at the root directory of this codebase, and think:</p>
 <blockquote><em>&quot;Where do I start? There are C++ files, MLIR dialects, Lean 4 proofs, Python scripts, Metal GPU shaders, and Rust FFI bindings. How does all of this fit together?&quot;</em></blockquote>
 <p>Don&#x27;t worry! This chapter is your personal cartographic expedition. We will explore every single directory and file in plain, friendly language. You will see how the entire codebase is organized into <strong>Three Architectural Layers</strong>, and by the end, you will know exactly which file to open whenever you want to inspect a feature or make a modification.</p>
@@ -1379,7 +1379,7 @@ for (int i = 0; i &lt; 16; ++i) {
 </ol>
 <hr>
 <h1 id="chapter-4-the-compiler-from-human-code-to-bare-metal-machine-instructions">Chapter 4: The Compiler (From Human Code to Bare-Metal Machine Instructions)</h1>
-<p>Welcome to the engine room! In <a href="01_number_systems.md">Chapter 1</a> and <a href="02_core_tricks.md">Chapter 2</a>, we explored the mathematical elegance of balanced ternary and the bit-slicing tricks that allow binary transistors to process trits in parallel.</p>
+<p>Welcome to the engine room! In <a href="#chapter-1-number-systems-from-zero">Chapter 1</a> and <a href="#chapter-2-the-core-bit-slicing-tricks-how-binary-chips-run-ternary">Chapter 2</a>, we explored the mathematical elegance of balanced ternary and the bit-slicing tricks that allow binary transistors to process trits in parallel.</p>
 <p>Now, we answer a practical question that every curious programmer asks:</p>
 <blockquote><strong>How does a text file filled with readable code—like <code>var a = 84; var b = 27; var c = a + b;</code>—actually get transformed into microscopic bursts of electrical voltage running on your laptop&#x27;s CPU at 3 billion cycles per second?</strong></blockquote>
 <p>If you have never built or studied a compiler before, fear not! Compilers are often treated as mystical, impenetrable black boxes reserved for academic computer scientists with thirty years of experience. In reality, <strong>a compiler is simply a master translator and an orchestra conductor.</strong> </p>
@@ -2668,7 +2668,7 @@ for (size_t w = 0; w &lt; NumWords; ++w) {
 </ol>
 <hr>
 <h1 id="chapter-6-mlir-dialect-gpu-acceleration-cross-language-ffi-and-formal-verification">Chapter 6: MLIR Dialect, GPU Acceleration, Cross-Language FFI, and Formal Verification</h1>
-<p>Welcome to Chapter 6! In <a href="05_numerics_and_memory.md">Chapter 5</a>, we explored the mathematical heights of balanced ternary numerics: unbiased floating-point math in <code>ternary_fp.hpp</code>, 32x memory compression in <code>ternary_sparse.hpp</code>, and time-reversible phase-space mechanics in <code>symplectic_ternary_engine.hpp</code>.</p>
+<p>Welcome to Chapter 6! In <a href="#chapter-5-advanced-numerics-memory-arenas-and-reversible-computing">Chapter 5</a>, we explored the mathematical heights of balanced ternary numerics: unbiased floating-point math in <code>ternary_fp.hpp</code>, 32x memory compression in <code>ternary_sparse.hpp</code>, and time-reversible phase-space mechanics in <code>symplectic_ternary_engine.hpp</code>.</p>
 <p>Now, we tackle the crowning engineering achievement of this project: <strong>taking balanced ternary out of isolated C++ headers and embedding it into the entire modern computing ecosystem</strong>.</p>
 <p>A revolutionary computer architecture is useless if it only runs on one machine or inside one programming language. To change the world, our compiler must:</p>
 <ol>

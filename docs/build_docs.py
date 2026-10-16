@@ -26,6 +26,8 @@ ROOT = DOCS.parent
 CHAPTERS = DOCS / "chapters"
 OUT_MD = DOCS / "Next_Gen_Foundation_Compiler_Guide.md"
 OUT_HTML = DOCS / "Next_Gen_Foundation_Compiler_Guide.html"
+ROOT_MD = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.md"
+ROOT_HTML = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.html"
 
 TITLE = "Next-Gen Foundation Compiler: The Complete Guide"
 SUBTITLE = "From zero knowledge to rebuilding the whole project"
@@ -94,7 +96,26 @@ def collect_headings(md: str):
 
 
 def build_markdown(chapters) -> str:
-    body = "\n\n---\n\n".join(text.strip() for _, text in chapters)
+    # Map chapter file names to their top-level heading anchor slugs
+    chapter_slug_map: dict[str, str] = {}
+    for path, text in chapters:
+        for line in text.splitlines():
+            m = HEADING_RE.match(line)
+            if m and len(m.group(1)) == 1:
+                slug = slugify(m.group(2))
+                chapter_slug_map[path.name] = slug
+                chapter_slug_map[f"./{path.name}"] = slug
+                break
+
+    # Resolve inter-chapter links like (01_number_systems.md) -> (#chapter-1-number-systems-from-zero)
+    processed_chapters = []
+    for path, text in chapters:
+        c_text = text.strip()
+        for c_file, slug in chapter_slug_map.items():
+            c_text = c_text.replace(f"({c_file})", f"(#{slug})")
+        processed_chapters.append((path, c_text))
+
+    body = "\n\n---\n\n".join(text for _, text in processed_chapters)
     toc_lines = ["## Table of Contents", ""]
     seen: dict[str, int] = {}
     for level, title in collect_headings(body):
@@ -224,8 +245,11 @@ def main() -> int:
     chapters = load_chapters()
     problems, stats = validate(chapters)
     md = build_markdown(chapters)
+    html_content = HTML_TEMPLATE.format(title=html.escape(TITLE), body=md_to_html_body(md))
     OUT_MD.write_text(md, encoding="utf-8")
-    OUT_HTML.write_text(HTML_TEMPLATE.format(title=html.escape(TITLE), body=md_to_html_body(md)), encoding="utf-8")
+    OUT_HTML.write_text(html_content, encoding="utf-8")
+    ROOT_MD.write_text(md, encoding="utf-8")
+    ROOT_HTML.write_text(html_content, encoding="utf-8")
 
     print(f"Chapters : {len(chapters)}")
     for p, t in chapters:
@@ -235,6 +259,8 @@ def main() -> int:
           f"{stats['codeblocks']} code blocks, {stats['paths']} file references checked")
     print(f"Wrote    : {OUT_MD.relative_to(ROOT)}  ({OUT_MD.stat().st_size // 1024} KiB)")
     print(f"Wrote    : {OUT_HTML.relative_to(ROOT)}  ({OUT_HTML.stat().st_size // 1024} KiB)")
+    print(f"Wrote    : {ROOT_MD.name}  ({ROOT_MD.stat().st_size // 1024} KiB) [Project Root Single File]")
+    print(f"Wrote    : {ROOT_HTML.name}  ({ROOT_HTML.stat().st_size // 1024} KiB) [Project Root Single File]")
     if problems:
         print(f"\n{len(problems)} problem(s):")
         for p in problems:

@@ -448,7 +448,7 @@ Since computers must use whole numbers:
 
 # Chapter 2: The Core Bit-Slicing Tricks (How Binary Chips Run Ternary)
 
-Welcome back! In [Chapter 1](01_number_systems.md), we discovered the pure mathematical beauty of balanced ternary: zero rounding bias, zero-cost sign negation, and the highest radix economy of any integer base.
+Welcome back! In [Chapter 1](#chapter-1-number-systems-from-zero), we discovered the pure mathematical beauty of balanced ternary: zero rounding bias, zero-cost sign negation, and the highest radix economy of any integer base.
 
 Now comes the million-dollar engineering challenge: **Every modern silicon chip in the world—from your laptop's Intel, AMD, or Apple Silicon CPU to NVIDIA graphics cards—is built entirely out of binary transistors.**
 
@@ -1025,7 +1025,7 @@ To prove why balanced ternary outperforms binary on silicon, look at `CycleCostM
 
 # Chapter 3: Repository Map & Architectural Layers
 
-Welcome! In [Chapter 1](01_number_systems.md), you learned the mathematical elegance of balanced ternary. In [Chapter 2](02_core_tricks.md), you mastered the bit-slicing tricks, carry-save adders, and magic reciprocal multipliers that make ternary fly on binary hardware.
+Welcome! In [Chapter 1](#chapter-1-number-systems-from-zero), you learned the mathematical elegance of balanced ternary. In [Chapter 2](#chapter-2-the-core-bit-slicing-tricks-how-binary-chips-run-ternary), you mastered the bit-slicing tricks, carry-save adders, and magic reciprocal multipliers that make ternary fly on binary hardware.
 
 Now you might open your terminal, look at the root directory of this codebase, and think:
 > *"Where do I start? There are C++ files, MLIR dialects, Lean 4 proofs, Python scripts, Metal GPU shaders, and Rust FFI bindings. How does all of this fit together?"*
@@ -1418,7 +1418,7 @@ If you are short on time and want to understand 80% of how this entire compiler 
 
 # Chapter 4: The Compiler (From Human Code to Bare-Metal Machine Instructions)
 
-Welcome to the engine room! In [Chapter 1](01_number_systems.md) and [Chapter 2](02_core_tricks.md), we explored the mathematical elegance of balanced ternary and the bit-slicing tricks that allow binary transistors to process trits in parallel.
+Welcome to the engine room! In [Chapter 1](#chapter-1-number-systems-from-zero) and [Chapter 2](#chapter-2-the-core-bit-slicing-tricks-how-binary-chips-run-ternary), we explored the mathematical elegance of balanced ternary and the bit-slicing tricks that allow binary transistors to process trits in parallel.
 
 Now, we answer a practical question that every curious programmer asks:
 
@@ -3012,7 +3012,7 @@ Test your understanding of Chapter 5 with these questions:
 
 # Chapter 6: MLIR Dialect, GPU Acceleration, Cross-Language FFI, and Formal Verification
 
-Welcome to Chapter 6! In [Chapter 5](05_numerics_and_memory.md), we explored the mathematical heights of balanced ternary numerics: unbiased floating-point math in `ternary_fp.hpp`, 32x memory compression in `ternary_sparse.hpp`, and time-reversible phase-space mechanics in `symplectic_ternary_engine.hpp`.
+Welcome to Chapter 6! In [Chapter 5](#chapter-5-advanced-numerics-memory-arenas-and-reversible-computing), we explored the mathematical heights of balanced ternary numerics: unbiased floating-point math in `ternary_fp.hpp`, 32x memory compression in `ternary_sparse.hpp`, and time-reversible phase-space mechanics in `symplectic_ternary_engine.hpp`.
 
 Now, we tackle the crowning engineering achievement of this project: **taking balanced ternary out of isolated C++ headers and embedding it into the entire modern computing ecosystem**.
 
