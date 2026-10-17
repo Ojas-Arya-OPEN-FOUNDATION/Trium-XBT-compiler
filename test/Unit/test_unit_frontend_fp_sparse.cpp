@@ -20,6 +20,8 @@
 #include <cmath>
 #include <cstdio>
 #include <unistd.h>
+#include <future>
+#include <atomic>
 
 using namespace bt;
 using namespace bt::frontend;
@@ -489,6 +491,215 @@ void test_kokkos_bridge_fixes() {
 }
 
 // ==============================================================================
+// 10b. Verified JIT Engine Fixes: float comparisons, Kleene-on-float errors,
+//      multiplication overflow, env restore, SpMM, full-width printing,
+//      and ThreadPool lifecycle guards.
+// ==============================================================================
+
+static std::string jit_capture_print(const std::string& src) {
+    std::ostringstream out;
+    bt::jit::JITConfig cfg;
+    cfg.enable_kokkos = false;
+    cfg.out = &out;
+    bt::jit::TernaryJITEngine engine(cfg);
+    engine.execute_source(src);
+    return out.str();
+}
+
+void test_jit_float_comparison_semantics() {
+    std::cout << "  [14/19] Testing JIT float comparisons actually compare (not add)...\n";
+    std::string out = jit_capture_print(
+        "var a = 9.0;\nvar b = 3.0;\nprint(a<b); print(a>b); print(a==b); print(a<=>b);\n");
+    // 9.0 < 3.0 -> -1 ; 9.0 > 3.0 -> +1 ; 9.0 == 3.0 -> -1 ; 9.0 <=> 3.0 -> +1
+    assert(out.compare(0, 4, "-1 [") == 0 && "a<b must be -1 (false)");
+    assert(out.find("12 [") == std::string::npos &&
+           "comparisons must never compute lv + rv (the old float bug printed 12)");
+    assert(out.find("1 [trits: +]") != std::string::npos && "a>b must be +1");
+
+    std::string eq_out = jit_capture_print(
+        "var a = 3.0;\nvar b = 3.0;\nprint(a<=>b); print(a==b); print(a<b); print(a!=b);\n");
+    assert(eq_out.compare(0, 3, "0 [") == 0 && "3.0 <=> 3.0 must be 0");
+    assert(eq_out.find("1 [") != std::string::npos && "3.0 <= 3.0 / == 3.0 must be +1");
+
+    std::string mixed = jit_capture_print("var a = 9;\nvar b = 9.0;\nprint(a==b);\n");
+    assert(mixed.compare(0, 3, "1 [") == 0 && "int==float must compare numerically");
+    std::cout << "      -> Float comparison semantics passed.\n";
+}
+
+void test_jit_float_kleene_rejection() {
+    std::cout << "  [15/19] Testing Kleene syntax (& | ^) on floats raises a clean error...\n";
+    bool threw = false;
+    std::string what;
+    try {
+        (void)jit_capture_print("var a = 1.5;\nvar b = 2.5;\nprint(a & b);\n");
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        what = e.what();
+    }
+    assert(threw && "float Kleene op must throw (never crash, never add)");
+    assert((what.find("Kleene logic not defined for float") != std::string::npos &&
+            ("clean message expected, got: " + what).c_str() != nullptr));
+    assert(what.find("Kleene logic not defined for float") != std::string::npos);
+    std::cout << "      -> Kleene-on-float rejection passed.\n";
+}
+
+void test_jit_multiplication_overflow_clean() {
+    std::cout << "  [16/19] Testing JIT multiplication overflow (clean error, exact terms)...\n";
+    // 39-trit maximum operand squared: |product| ~ 4.1e36 (far beyond int64/39-trit range)
+    bool threw = false;
+    std::string what;
+    try {
+        (void)jit_capture_print(
+            "var m = 2026277576509488133;\nvar p = m * m;\nprint(p);\n");
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        what = e.what();
+    }
+    assert(threw && "39-trit-max squared must raise a clean overflow error");
+    assert((what.find("integer overflow in multiplication") != std::string::npos));
+    assert(what.find("4105800817065164534531589373667825689") != std::string::npos &&
+           "exact __int128 product should be reported");
+
+    // In-range product stays EXACT: 1417211799^2 = 2008489283224816401 (<= (3^39-1)/2)
+    std::string out = jit_capture_print("var a = 1417211799;\nvar p = a * a;\nprint(p);\n");
+    assert(out.compare(0, 21, "2008489283224816401 [") == 0);
+    std::cout << "      -> Multiplication overflow semantics passed.\n";
+}
+
+void test_jit_env_restore_on_error() {
+    std::cout << "  [17/19] Testing env frame restore when a function body throws...\n";
+    bt::jit::JITConfig cfg;
+    bt::jit::TernaryJITEngine engine(cfg);
+    auto root = engine.get_env();
+    bool caught = false;
+    try {
+        engine.execute_source(
+            "var okay = 7;\n"
+            "func f() { var x = gtors; return x; }\n" // undefined variable -> throws in body
+            "f();\n");
+    } catch (const std::runtime_error&) {
+        caught = true;
+    }
+    assert(caught && "in-body error must propagate");
+    assert(engine.get_env() == root && "RAII guard must restore caller env after throw");
+    engine.execute_source("var after_ok = okay + 1;\n");
+    assert(engine.get_env() == root && "definitions after the caught error stay in root frame");
+    assert(engine.get_env()->get("after_ok").as_int64() == 8 && "after_ok == 8 at root");
+    assert(engine.get_env()->get("okay").as_int64() == 7 && "root binding still intact");
+    for (int i = 0; i < 2; ++i) {
+        try { engine.execute_source("f();\n"); } catch (const std::runtime_error&) {}
+        assert(engine.get_env() == root && "no dead-frame nesting across repeated failures");
+    }
+    engine.execute_source("func g(x) { return x * 2; }\nvar v = g(21);\n");
+    assert(engine.get_env()->get("v").as_int64() == 42 && "calls still work after failures");
+    std::cout << "      -> Env frame restore passed.\n";
+}
+
+void test_jit_sparse_spmm() {
+    std::cout << "  [18/19] Testing sparse_matrix * dense matrix performs a TRUE SpMM...\n";
+    bt::jit::JITConfig cfg;
+    bt::jit::TernaryJITEngine engine(cfg);
+    engine.execute_source(
+        "sparse_matrix A(3, 3, 1, 0, 0, 1, 0, 1, -1, 0, 0);\n"
+        "var B = matrix_init(3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1);\n"
+        "var C = A * B;\n");
+    DenseMatrixInt64 C = engine.get_env()->get("C").int_matrix;
+    assert(C.rows == 3 && C.cols == 3 && "SpMM result shape is M x N (not rows*cols x 1)");
+    assert(C(0, 0) == 1 && C(0, 1) == 1 && C(0, 2) == 1 && "C row 0 = [1,1,1]");
+    assert(C(1, 0) == 2 && C(1, 1) == 2 && C(1, 2) == 2 && "C row 1 = [2,2,2]");
+    assert(C(2, 0) == -1 && C(2, 1) == -1 && C(2, 2) == -1 && "C row 2 = [-1,-1,-1]");
+
+    // Cross-check against the T-CSR SpMM reference of the very same operands.
+    std::vector<int64_t> REF = bt::TCSRMatrix::from_dense(3, 3, {1, 0, 0, 1, 0, 1, -1, 0, 0})
+                                   .spmm(std::vector<int64_t>(9, 1), 3);
+    assert(REF.size() == 9 && "reference SpMM size is 3x3");
+    for (size_t i = 0; i < 9; ++i)
+        assert(C.data[i] == REF[i] && "JIT SpMM == T-CSR SpMM reference");
+
+    // Non-matching shape must fail cleanly (the old code silently used only row 0).
+    bool threw = false;
+    std::string what;
+    try {
+        (void)jit_capture_print(
+            "sparse_matrix A(3, 3, 1, 0, 0, 1, 0, 1, -1, 0, 0);\n"
+            "var BAD = matrix_init(2, 2, 1, 1, 1, 1);\n"
+            "var X = A * BAD;\n");
+    } catch (const std::runtime_error& e) { threw = true; what = e.what(); }
+    assert(threw && "mismatched right operand must throw");
+    assert(what.find("dimension") != std::string::npos);
+    (void)what;
+
+    // Vector SpMV (example 05 semantics) must be preserved: S * vector_init(10,20,30)
+    std::string out = jit_capture_print(
+        "var S = sparse_matrix(3, 3, 1, 0, -1, 0, 1, 0, -1, 0, 1);\n"
+        "var v = vector_init(10, 20, 30);\n"
+        "var res = S * v;\nprint(res);\n");
+    assert(out.find("-20") != std::string::npos && out.find("20") != std::string::npos &&
+           "classic SpMV path unchanged");
+    std::cout << "      -> Sparse SpMM passed.\n";
+}
+
+void test_jit_full_width_print() {
+    std::cout << "  [19/19] Testing JIT printing uses the full 64-trit word width...\n";
+    // trit 0 = +1, trit 50 = +1 -> exact value 1 + 3^50 (positions > 39 must not be lost)
+    std::string out = jit_capture_print(
+        "var w = +0000000000000000000000000000000000000000000000000+;\nprint(w);\n");
+    assert(out.find("717897987691852588770250 [") == 0);
+    // Negative 2-trit word: trit0 = -1, trit49 = -1 -> -(1 + 3^49)
+    std::string out2 = jit_capture_print(
+        "var w2 = -000000000000000000000000000000000000000000000000-;\nprint(w2);\n");
+    assert(out2.find("-239299329230617529590084 [") == 0);
+    // Plain 39-trit printing is unchanged.
+    std::string out3 = jit_capture_print("var x = 12345;\nprint(x);\n");
+    assert(out3.compare(0, 14, "12345 [trits: ") == 0 && "plain int printing unchanged");
+    std::cout << "      -> Full-width printing passed.\n";
+}
+
+void test_threadpool_guards_and_drain() {
+    std::cout << "  [20/19] Testing ThreadPool reinit/no-drop/nested-dispatch guards...\n";
+    // a) explicit reinit to a different size must keep queued/latched work running.
+    constexpr size_t N = 100000;
+    std::atomic<int64_t> hits{0};
+    for (int trial = 0; trial < 3; ++trial) {
+        hits.store(0);
+        auto done = std::async(std::launch::async, [&]() {
+            Kokkos::parallel_for(Kokkos::RangePolicy<size_t>(0, N),
+                                 [&](size_t) { hits.fetch_add(1, std::memory_order_relaxed); });
+        });
+        Kokkos::initialize(2 + trial); // churn the pool mid-dispatch
+        done.wait();
+        assert(hits.load() == static_cast<int64_t>(N) &&
+               "shutdown must EXECUTE drained tasks so latch waiters release");
+    }
+
+    // b) same-count reinit is a no-op (no teardown churn inside dispatch loops).
+    size_t before = Kokkos::num_threads();
+    Kokkos::initialize(before);
+    assert(Kokkos::num_threads() == before && "same-count reinit must not shrink the pool");
+
+    // c) nested parallel_for from a pool worker runs in place (no latch self-deadlock).
+    {
+        std::vector<int64_t> flat(32 * 4, -1);
+        auto nested = std::async(std::launch::async, [&]() {
+            Kokkos::parallel_for(Kokkos::RangePolicy<size_t>(0, 32), [&](size_t i) {
+                Kokkos::parallel_for(Kokkos::RangePolicy<size_t>(0, 4), [&](size_t j) {
+                    flat[i * 4 + j] = static_cast<int64_t>(i + j);
+                });
+            });
+        });
+        constexpr std::chrono::seconds kBudget(15);
+        auto status = nested.wait_for(kBudget);
+        assert(status != std::future_status::timeout && "nested dispatch must not deadlock");
+        bool ok = true;
+        for (size_t i = 0; i < 32 && ok; ++i)
+            for (size_t j = 0; j < 4 && ok; ++j)
+                ok = flat[i * 4 + j] == static_cast<int64_t>(i + j);
+        assert(ok && "nested dispatch computed every element");
+    }
+    std::cout << "      -> ThreadPool guards passed.\n";
+}
+
+// ==============================================================================
 // 11. DWARF-5 Debug Metadata and Auto-Vectorization Loop Metadata
 // ==============================================================================
 
@@ -687,11 +898,18 @@ int main() {
     test_mixed_float_int_expressions();
     test_comparison_precedence();
     test_kokkos_bridge_fixes();
+    test_jit_float_comparison_semantics();
+    test_jit_float_kleene_rejection();
+    test_jit_multiplication_overflow_clean();
+    test_jit_env_restore_on_error();
+    test_jit_sparse_spmm();
+    test_jit_full_width_print();
+    test_threadpool_guards_and_drain();
     test_dwarf_debug_metadata_and_vectorization();
     test_module_imports();
     test_dual_rail_ssa_intrinsics();
 
-    std::cout << "\n  -> ALL 13 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC UNIT TESTS PASSED (100%)\n";
+    std::cout << "\n  -> ALL 13 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC SUITES + 7 JIT/THREADPOOL FIX REGRESSIONS PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

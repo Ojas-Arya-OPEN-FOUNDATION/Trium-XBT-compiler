@@ -137,10 +137,31 @@ constexpr inline __int128_t round_div3_128(__int128_t val) noexcept {
  */
 constexpr inline int64_t round_div_pow3_fast64(int64_t val, int k) noexcept {
     if (k <= 0 || val == 0) return val;
-    if (k >= 40) return 0;
-    int64_t p3 = POW3_64[k];
-    int64_t half = HALF_POW3_64[k];
-    return (val >= 0) ? ((val + half) / p3) : -((-val + half) / p3);
+    // Primary stage: exact one-shot symmetric division by 3^min(k, 39).
+    // Unsigned arithmetic is required: (INT64_MAX) + (3^39-1)/2 = 1.125e19 < 2^64,
+    // so no wrap occurs. The old signed add overflowed with UB and flipped the sign
+    // for |val| within ~(3^k-1)/2 of INT64_MAX.
+    const int k1 = (k < 40) ? k : 39;
+    const uint64_t p3   = static_cast<uint64_t>(POW3_64[k1]);
+    const uint64_t half = static_cast<uint64_t>(HALF_POW3_64[k1]);
+    if (val > 0) {
+        const uint64_t u = static_cast<uint64_t>(val) + half;
+        int64_t q = static_cast<int64_t>(u / p3);
+        // Tail for k >= 40: function composition r3^k = r3^(k-39) o r3^39.
+        // Residual after 39 stages is <= +/-2, so the tail is at most ~2 steps.
+        for (int i = 40; i <= k; ++i) {
+            if (q == 0) break;
+            q = round_div3(q);
+        }
+        return q;
+    }
+    // val < 0: negate in the unsigned domain (no UB even for INT64_MIN).
+    // Max magnitude: 2^63 + (3^39-1)/2 = 1.125e19 < 2^64; quotient always fits int64.
+    const uint64_t mag = 0ULL - static_cast<uint64_t>(val);
+    const uint64_t u = mag + half;
+    int64_t q = -static_cast<int64_t>(u / p3);
+    for (int i = 40; i <= k; ++i) q = round_div3(q);
+    return q;
 }
 
 /**
@@ -149,10 +170,27 @@ constexpr inline int64_t round_div_pow3_fast64(int64_t val, int k) noexcept {
  */
 constexpr inline __int128_t round_div_pow3_fast128(__int128_t val, int k) noexcept {
     if (k <= 0 || val == 0) return val;
-    if (k >= 60) return 0;
-    __int128_t p3 = POW3_128[k];
-    __int128_t half = HALF_POW3_128[k];
-    return (val >= 0) ? ((val + half) / p3) : -((-val + half) / p3);
+    // Primary stage: exact one-shot symmetric division by 3^min(k, 59).
+    // Unsigned __int128 arithmetic: (2^127-1) + (3^59-1)/2 = 1.7016e38 < 2^128, no wrap.
+    const int k1 = (k < 60) ? k : 59;
+    const unsigned __int128 p3   = static_cast<unsigned __int128>(POW3_128[k1]);
+    const unsigned __int128 half = static_cast<unsigned __int128>(HALF_POW3_128[k1]);
+    if (val > 0) {
+        const unsigned __int128 u = static_cast<unsigned __int128>(val) + half;
+        __int128_t q = static_cast<__int128_t>(u / p3);
+        // Tail for k >= 60: composition r3^k = r3^(k-59) o r3^59.
+        for (int i = 60; i <= k; ++i) {
+            if (q == 0) break;
+            q = round_div3_128(q);
+        }
+        return q;
+    }
+    // val < 0: negate in the unsigned domain (no UB even for INT128_MIN).
+    const unsigned __int128 mag = static_cast<unsigned __int128>(0) - static_cast<unsigned __int128>(val);
+    const unsigned __int128 u = mag + half;
+    __int128_t q = -static_cast<__int128_t>(u / p3);
+    for (int i = 60; i <= k; ++i) q = round_div3_128(q);
+    return q;
 }
 
 /**
@@ -183,6 +221,12 @@ constexpr inline __int128_t round_div_pow3_128(__int128_t val, int k) noexcept {
  */
 template <int MantissaTrits = 10, int ExponentTrits = 0>
 class BTFP {
+    // int64_t mantissa storage: |M| <= (3^40-1)/2 = 6.08e18 < 2^63; W = 41 would overflow.
+    // Also guards normalize_128 and add()/div() 128-bit scaling (M_trits + 4 <= 59).
+    static_assert(MantissaTrits >= 0 && MantissaTrits <= 40,
+                  "BTFP: MantissaTrits must be in [0, 40] to fit int64_t mantissa storage");
+    static_assert(ExponentTrits >= 0 && ExponentTrits <= 62,
+                  "BTFP: ExponentTrits must be in [0, 62]");
 public:
     static constexpr int M_TRITS = MantissaTrits;
     static constexpr int E_TRITS = ExponentTrits;
@@ -364,10 +408,42 @@ public:
         if constexpr (ExponentTrits > 0) {
             constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
             if (m_exponent > max_e) {
+                // Renormalize instead of losing value silently: push the exponent
+                // delta into the mantissa as far as it fits, then symmetric-round
+                // the remainder so |M| stays within [min_m, max_m] at the clamped E.
+                int64_t delta = m_exponent - max_e;
                 m_exponent = static_cast<int32_t>(max_e);
+                while (delta > 0) {
+                    if (m_mantissa != 0 &&
+                        m_mantissa <= max_m / 3 && m_mantissa >= -max_m / 3) {
+                        m_mantissa *= 3;
+                        --delta;
+                    } else if (m_mantissa == 0) {
+                        m_exponent = 0;
+                        break;
+                    } else {
+                        // Cannot push delta into the mantissa anymore: symmetric-round
+                        // the excess (zero-bias representation approximation).
+                        m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, static_cast<int>(delta));
+                        delta = 0;
+                    }
+                }
             } else if (m_exponent < -max_e) {
+                // Exponent too negative: clamp it UP, so the mantissa must shrink by
+                // 3^delta (value compression with zero-bias symmetric rounding).
+                int64_t delta = -max_e - m_exponent;
                 m_exponent = static_cast<int32_t>(-max_e);
+                if (m_mantissa != 0) {
+                    m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, static_cast<int>(delta));
+                } else {
+                    m_exponent = 0;
+                }
             }
+        }
+
+        // Canonical zero: rounding-to-zero during clamping must reset E.
+        if (m_mantissa == 0) {
+            m_exponent = 0;
         }
     }
 
@@ -418,7 +494,10 @@ public:
     }
 
     /**
-     * @brief Zero-Bias Truncation: truncates k fractional trits in O(1), achieving exact 0 mean error.
+     * @brief Zero-Bias Trit-Boundary Rounding: symmetric-rounds at the k-th fractional
+     * trit boundary in O(1), achieving exact mean-0 error (E[error] = 0).
+     * Note: this is nearest-value rounding at the boundary, not literal truncation;
+     * both operations share the zero-mean property.
      */
     constexpr BTFP truncate_fractional(int trits_to_discard) const noexcept {
         if (trits_to_discard <= 0 || is_zero()) return *this;
@@ -677,17 +756,22 @@ public:
     // --------------------------------------------------------------------------
 
     /**
-     * @brief Computes the empirical mean truncation error when discarding k trits
-     * across all 3^k symmetric remainders in [-(3^k - 1)/2, +(3^k - 1)/2].
-     * Mathematically proven to evaluate to exactly 0.0.
+     * @brief Computes the empirical mean rounding error at the k-trit boundary across all
+     * 3^k symmetric remainders in [-(3^k-1)/2, +(3^k-1)/2]. The signed partial sums stay
+     * within int64 range exactly for 1 <= k <= 10, so larger k is clamped to 10
+     * (the mean is 0.0 for every k by symmetric-pair cancellation; running 3^k iterations
+     * for large k would both hang and overflow the accumulator).
      */
     static double verify_zero_bias_mean(int k_trits = 4) noexcept {
+        if (k_trits < 1) k_trits = 1;
+        if (k_trits > 10) k_trits = 10; // 3^10 = 59049 states; partial sums <= ~4.4e8, UB-free
         int64_t p3 = static_cast<int64_t>(fp_detail::pow3_128(k_trits));
         int64_t max_r = (p3 - 1) / 2;
         int64_t sum_r = 0;
         int64_t count = 0;
         for (int64_t r = -max_r; r <= max_r; ++r) {
             // Discarding r from (Q * 3^k + r) yields an error of -r / 3^k
+            // NOTE: the +-r terms cancel in exact pairs; accumulated sum stays bounded.
             sum_r += (-r);
             count++;
         }

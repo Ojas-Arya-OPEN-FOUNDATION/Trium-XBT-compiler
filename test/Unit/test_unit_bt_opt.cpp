@@ -14,13 +14,65 @@
 #include <fstream>
 #include <sstream>
 #include <cassert>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <array>
 #include <random>
+#include <unistd.h>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 using namespace mlir::bt;
 using namespace mlir::iree_compiler;
+
+// ==============================================================================
+// Project root resolution (works from ANY working directory).
+// bt-opt unit tests historically opened "include/Ternary/TernaryDialect.td"
+// relative to the CWD, silently passing or failing depending on where they
+// were launched from. Resolve once from a -D macro fallback or argv[0].
+// ==============================================================================
+
+static std::string g_projectRoot;
+
+static bool looksLikeProjectRoot(const std::string& dir) {
+    if (dir.empty()) return false;
+    std::ifstream probe(dir + "/include/Ternary/TernaryDialect.td");
+    return probe.good();
+}
+
+static std::string resolveProjectRoot(const char* argv0) {
+    // 1. Compile-time macro (set for this target in CMakeLists.txt).
+#if defined(BT_UNIT_PROJECT_ROOT)
+    if (looksLikeProjectRoot(BT_UNIT_PROJECT_ROOT)) return BT_UNIT_PROJECT_ROOT;
+#endif
+    // 2. argv[0]-relative: ascend from the executable's directory.
+    std::string exePath(argv0 ? argv0 : "");
+    if (!exePath.empty() && exePath[0] != '/') {
+        char buf[4096];
+        if (getcwd(buf, sizeof(buf))) exePath = std::string(buf) + "/" + exePath;
+    }
+#ifdef __APPLE__
+    {
+        char real[4096];
+        uint32_t size = sizeof(real);
+        if (_NSGetExecutablePath(real, &size) == 0) {
+            exePath = real; // most robust against exec-argv shenanigans
+        }
+    }
+#endif
+    // dirname
+    std::string dir = exePath.substr(0, exePath.find_last_of('/'));
+    for (int up = 0; up < 8 && !dir.empty(); ++up) {
+        if (looksLikeProjectRoot(dir)) return dir;
+        size_t slash = dir.find_last_of('/');
+        if (slash == std::string::npos) break;
+        dir = dir.substr(0, slash);
+    }
+    return "";
+}
 
 // ==============================================================================
 // 1. Test Dialect Registration & Invariant Verifiers
@@ -84,10 +136,12 @@ void test_dialect_registration() {
 // ==============================================================================
 
 void test_tablegen_definitions() {
-    std::cout << "  [bt-opt 2/6] Testing TableGen Specification Files...\n";
+    std::cout << "  [bt-opt 2/9] Testing TableGen Specification Files (CWD-independent)...\n";
+    assert(!g_projectRoot.empty() &&
+           "Project root could not be resolved (launched outside the repo tree)!");
 
     // Check include/Ternary/TernaryDialect.td
-    std::ifstream dialectFile("include/Ternary/TernaryDialect.td");
+    std::ifstream dialectFile(g_projectRoot + "/include/Ternary/TernaryDialect.td");
     assert(dialectFile.is_open() && "Could not open include/Ternary/TernaryDialect.td!");
     std::stringstream dialectBuf;
     dialectBuf << dialectFile.rdbuf();
@@ -100,7 +154,7 @@ void test_tablegen_definitions() {
     assert(dialectContent.find("def BT_TensorType") != std::string::npos);
 
     // Check include/Ternary/TernaryOps.td
-    std::ifstream opsFile("include/Ternary/TernaryOps.td");
+    std::ifstream opsFile(g_projectRoot + "/include/Ternary/TernaryOps.td");
     assert(opsFile.is_open() && "Could not open include/Ternary/TernaryOps.td!");
     std::stringstream opsBuf;
     opsBuf << opsFile.rdbuf();
@@ -122,20 +176,78 @@ void test_tablegen_definitions() {
 // ==============================================================================
 
 void test_pass_pipelining() {
-    std::cout << "  [bt-opt 3/6] Testing Pass Pipelining & Transformations...\n";
+    std::cout << "  [bt-opt 3/9] Testing Pass Pipelining & Input-Aware Transformations...\n";
+
+    // 1. The canonical pipeline is input-aware: on an empty module it must be
+    //    an honest no-op (no canned functions are appended).
+    ::bt::mlir::MLIRModule emptyMod;
+    emptyMod.name = "bt_opt_empty_module";
+
+    ::bt::mlir::MLIRPassManager emptyPm;
+    buildTernaryCanonicalPipeline(emptyPm, 4);
+    assert(emptyPm.passes.size() == 5 && "Expected 5 passes in canonical pipeline!");
+    assert(emptyPm.run(emptyMod) && "Pipeline must not fail on an empty module!");
+    assert(emptyMod.functions.empty() &&
+           "Passes must not append canned lowerings to a module without bt.* ops!");
+    std::cout << "    -> Passes are input-aware: empty module => no canned lowering output.\n";
+
+    // 2. Real input ingestion: parse a module text and lower its bt.* sites.
+    const std::string sample = R"MLIR(module @bt_opt_pipeline_test {
+
+  func.func @sample_gemm(%A_P: !bt.tensor<4x4x64>, %A_N: !bt.tensor<4x4x64>, %B_P: !bt.tensor<4x4x64>, %B_N: !bt.tensor<4x4x64>) -> !bt.tensor<4x4x64> {
+    %r = bt.matmul %A_P, %A_N, %B_P, %B_N : (!bt.tensor<4x4x64>, !bt.tensor<4x4x64>, !bt.tensor<4x4x64>, !bt.tensor<4x4x64>) -> !bt.tensor<4x4x64>
+    return %r : !bt.tensor<4x4x64>
+  }
+
+  func.func @sample_dot(%ap: i64, %an: i64, %bp: i64, %bn: i64) -> i64 {
+    %d = bt.planar_dot %ap, %an, %bp, %bn : (i64, i64, i64, i64) -> i64
+    return %d : i64
+  }
+
+  func.func @sample_adder(%ap: i64, %an: i64, %bp: i64, %bn: i64) -> i64 {
+    %s = bt.btha %ap, %an, %bp, %bn : (i64, i64, i64, i64) -> i64
+    return %s : i64
+  }
+
+  func.func @sample_unpack(%b: i32) -> i32 {
+    %t = bt.base243_unpack %b : (i32) -> i32
+    return %t : i32
+  }
+
+  func.func @sample_csa(%sp: i64, %sn: i64, %cp: i64, %cn: i64) -> i64 {
+    %w = bt.csa_reduce %sp, %sn, %cp, %cn : (i64, i64, i64, i64) -> i64
+    return %w : i64
+  }
+})MLIR";
 
     ::bt::mlir::MLIRModule mod;
-    mod.name = "bt_opt_pipeline_test";
+    mod.name = "bt_opt_pipeline_test"; // overridden by `module @bt_opt_pipeline_test` above
+
+    std::string parseError;
+    mlir::bt::loadMLIRModuleFromString(mod, sample, parseError);
+    assert(parseError.empty() && "Sample module text must parse cleanly!");
+    assert(strcmp(mod.name.c_str(), "bt_opt_pipeline_test") == 0 && "Module symbol must be ingested!");
+    assert(mod.functions.size() == 5 && "Expected 5 input functions after parsing!");
+    // Ingested bodies must faithfully carry the input op sites.
+    {
+        bool foundSite = false;
+        for (const auto& fn : mod.functions) {
+            if (fn.name == "sample_gemm" && fn.rawCustomBody.find("bt.matmul") != std::string::npos) {
+                foundSite = true;
+            }
+        }
+        assert(foundSite && "Parsed function body must preserve the bt.matmul site!");
+    }
 
     ::bt::mlir::MLIRPassManager pm;
     buildTernaryCanonicalPipeline(pm, 4);
-
-    assert(pm.passes.size() == 5 && "Expected 5 passes in canonical pipeline!");
-
     bool success = pm.run(mod);
     assert(success && "Canonical pass pipeline failed to execute!");
-    assert(mod.functions.size() == 5 && "Expected 5 lowered functions!");
+    // 5 input functions + 5 lowered functions (one per recognized op kind).
+    assert(mod.functions.size() == 10 && "Expected 5 input + 5 lowered functions!");
     assert(mod.affineMaps.size() == 3 && "Expected 3 affine maps!");
+    assert(mod.to_string().find("module @bt_opt_pipeline_test") != std::string::npos &&
+           "Emitted module must keep the input module symbol!");
 
     // Verify presence of all lowering functions
     std::vector<std::string> expectedFns = {
@@ -166,7 +278,18 @@ void test_pass_pipelining() {
         assert(found && "Expected lowered function not found in module!");
     }
 
-    std::cout << "    -> PASSED: All 5 dialect lowerings executed into MLIR module (iterative CSA carry loop verified).\n";
+    // Each lowered site in the input bodies must be annotated.
+    bool annotated = false;
+    for (const auto& fn : mod.functions) {
+        if (fn.name == "sample_gemm" &&
+            fn.rawCustomBody.find("/* lowered-by: TernaryToLinalgPass -> @bt_gemm_planar_linalg */") !=
+                std::string::npos) {
+            annotated = true;
+        }
+    }
+    assert(annotated && "Lowered call sites must carry pass annotations!");
+
+    std::cout << "    -> PASSED: All 5 dialect lowerings executed on the ingested module (iterative CSA carry loop verified).\n";
 }
 
 // ==============================================================================
@@ -294,7 +417,7 @@ void test_iree_plugin_initialization() {
     auto cpu = plugin.getBackend(TargetBackendKind::CPULLVM);
     assert(cpu != nullptr);
     std::string cpuShader = cpu->emitShaderKernel("bt.matmul", 32, 32, 128);
-    assert(cpuShader.find("@llvm.intr.ctpop.i64") != std::string::npos);
+    assert(cpuShader.find("@llvm.ctpop.i64") != std::string::npos);
 
     // Test Flow dispatch bridging
     std::string flowModule = plugin.buildFlowDispatchModule("bt_gemm_tile", 64, 64, 256);
@@ -449,7 +572,7 @@ void test_autotune_tile() {
     assert(scf_ir.find("math.ctpop") != std::string::npos);
 
     // 2. Verify tools/bt-opt/bt-opt.cpp CLI --autotune-tile flag presence
-    std::ifstream btOptFile("tools/bt-opt/bt-opt.cpp");
+    std::ifstream btOptFile(g_projectRoot + "/tools/bt-opt/bt-opt.cpp");
     assert(btOptFile.is_open() && "Could not open tools/bt-opt/bt-opt.cpp!");
     std::stringstream btOptBuf;
     btOptBuf << btOptFile.rdbuf();
@@ -460,7 +583,8 @@ void test_autotune_tile() {
     std::cout << "    -> PASSED: --autotune-tile SCF lowering & L1d/L2 cache annotation verified.\n";
 }
 
-int main() {
+int main(int argc, char** argv) {
+    g_projectRoot = resolveProjectRoot(argc > 0 ? argv[0] : nullptr);
     std::cout << "======================================================================\n";
     std::cout << "  [LLVM Unit Test Layer 1] bt-opt MLIR Optimizer & IREE Plugin Suite\n";
     std::cout << "======================================================================\n";

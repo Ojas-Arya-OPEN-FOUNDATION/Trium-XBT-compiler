@@ -189,6 +189,37 @@ struct Select3Op {
     }
 };
 
+/**
+ * @brief Parses MLIR text into the standalone MLIRModule representation.
+ *
+ * The standalone (out-of-tree fallback) build has no upstream MLIR parser, so
+ * bt-opt must ingest real input text with this loader instead of running the
+ * pass pipeline over an empty canned module. The loader:
+ *   1. validates structure (balanced braces, well-formed func.func records),
+ *   2. verifies every referenced bt.* operation / !bt.* type is registered,
+ *   3. extracts the module symbol name, top-level #map definitions, function
+ *      signatures and function bodies into `mod` so that emitted output
+ *      faithfully reflects the input text.
+ *
+ * @param mod    Target module (its `name` is overwritten only when the input
+ *               text carries an explicit `module @symbol` heading).
+ * @param text   Raw MLIR text (comments are tolerated and remain preserved in
+ *               function bodies).
+ * @param error  On failure, receives a human-readable diagnostic.
+ * @return true if the text parsed cleanly; false otherwise.
+ */
+bool loadMLIRModuleFromString(::bt::mlir::MLIRModule& mod, const std::string& text, std::string& error);
+
+/**
+ * @brief True if `opName` (e.g. "bt.matmul") is registered by TernaryDialect.
+ */
+bool isKnownBtOpName(const std::string& opName);
+
+/**
+ * @brief True if `typeName` (e.g. "bt.trit") is registered by TernaryDialect.
+ */
+bool isKnownBtTypeName(const std::string& typeName);
+
 // Registration functions
 void registerTernaryDialect(::mlir::DialectRegistry &registry);
 void registerTernaryDialect();

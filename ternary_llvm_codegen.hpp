@@ -433,9 +433,17 @@ public:
         if (node.location.line > 0) current_loc_ = node.location;
 
         VarInfo info;
-        info.ptr_reg = ptr_reg;
         info.type = v_type;
         info.dim = current_dim_;
+        if (v_type == "sparse_matrix") {
+            // No alloca is emitted for sparse_matrix values (they live in the
+            // global T-CSR constants referenced through sparse_matrices_); the
+            // variable resolves by name, so point the descriptor at the name
+            // instead of an undefined SSA register.
+            info.ptr_reg = node.name;
+        } else {
+            info.ptr_reg = ptr_reg;
+        }
 
         if (v_type == "double") {
             fn_body_ << "  " << ptr_reg << " = alloca double, align 8" << dbg_tag() << "\n";
@@ -452,6 +460,12 @@ public:
         } else if (v_type == "sparse_matrix") {
             if (current_type_ == "sparse_matrix") {
                 sparse_matrices_[node.name] = sparse_matrices_[current_val_];
+            } else if (node.init_expr) {
+                // Only a sparse_matrix constructor may initialize a sparse_matrix
+                // variable; scalar/vector initializers are a codegen error.
+                throw std::runtime_error("[Codegen Error] " + node.location.to_string() +
+                                         ": cannot initialize sparse_matrix variable '" + node.name +
+                                         "' from a '" + current_type_ + "' value");
             }
         } else if (v_type == "i64*") {
             info.ptr_reg = current_val_;
@@ -481,7 +495,20 @@ public:
             if (node.location.line > 0) current_loc_ = node.location;
             VarInfo* var = lookup_var_mut(node.target);
             if (var) {
-                if (var->type == "double") {
+                if (var->type == "sparse_matrix") {
+                    // sparse_matrix assignment routes through the T-CSR map
+                    // (reference copy), like the declaration does. There is no
+                    // alloca behind a sparse_matrix variable, so storing an
+                    // arbitrary i64 through its name would be invalid IR.
+                    if (current_type_ == "sparse_matrix") {
+                        sparse_matrices_[node.target] = sparse_matrices_[current_val_];
+                    } else {
+                        throw std::runtime_error("[Codegen Error] " + node.location.to_string() +
+                                                 ": cannot assign a '" + current_type_ +
+                                                 "' value to sparse_matrix variable '" + node.target +
+                                                 "' (only another sparse_matrix may be assigned)");
+                    }
+                } else if (var->type == "double") {
                     if (current_type_ == "i64") {
                         std::string cast = new_reg();
                         fn_body_ << "  " << cast << " = sitofp i64 " << current_val_ << " to double" << dbg_tag() << "\n";
@@ -763,20 +790,44 @@ public:
     }
 
     void visit(frontend::SelectNode& node) override {
+        if (block_terminated_) return;
         if (node.location.line > 0) current_loc_ = node.location;
         node.condition->accept(*this);
         std::string cond_val = current_val_;
 
+        // Track branch termination: if any branch returns, emitting the
+        // remaining branch bodies (and the @bt_select call) would produce
+        // instructions after a terminator (invalid IR).
+        bool any_terminated = false;
+        std::string p_val = "0";
+        std::string z_val = "0";
+        std::string n_val = "0";
+
         node.pos_branch->accept(*this);
-        std::string p_val = current_val_;
+        p_val = current_val_;
+        any_terminated = block_terminated_;
 
-        node.zero_branch->accept(*this);
-        std::string z_val = current_val_;
+        if (!any_terminated) {
+            node.zero_branch->accept(*this);
+            z_val = current_val_;
+            any_terminated = block_terminated_;
+        }
 
-        node.neg_branch->accept(*this);
-        std::string n_val = current_val_;
+        if (!any_terminated) {
+            node.neg_branch->accept(*this);
+            n_val = current_val_;
+            any_terminated = block_terminated_;
+        }
+
+        if (any_terminated) {
+            // A branch terminated the block (e.g. early return); leave
+            // block_terminated_ set so the enclosing block stops emitting.
+            current_val_ = "0";
+            current_type_ = "i64";
+            return;
+        }
+
         if (node.location.line > 0) current_loc_ = node.location;
-
         std::string res = new_reg();
         fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << cond_val << ", i64 "
                  << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
@@ -863,7 +914,10 @@ public:
 
     void visit(frontend::FloatLiteralExprAST& node) override {
         std::ostringstream ss;
-        ss << std::scientific << std::setprecision(10) << node.value;
+        // 17 significant decimal digits guarantee an exact IEEE-754 double
+        // round-trip when the LLVM IR parser re-reads the literal (precision 10
+        // can round DBL_MAX-sized literals past the maximum and clamp to inf).
+        ss << std::scientific << std::setprecision(17) << node.value;
         current_val_ = ss.str();
         current_type_ = "double";
     }

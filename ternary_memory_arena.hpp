@@ -573,14 +573,67 @@ public:
     ~Base243Arena() = default;
     Base243Arena(const Base243Arena&) = delete;
     Base243Arena& operator=(const Base243Arena&) = delete;
-    Base243Arena(Base243Arena&&) noexcept = default;
-    Base243Arena& operator=(Base243Arena&&) noexcept = default;
+
+    // Explicit move: the moved-from arena must be left with INVALID bump state
+    // (nullptr pointers, no chunk index). The defaulted move kept the source's
+    // current_ptr_/end_ptr_/current_chunk_idx_ pointing into chunk storage that now
+    // belongs to (and can be freed through) the destination — a dangling-alias hazard.
+    // A moved-from arena is valid only until reallocation is attempted: calling
+    // allocate_* on it is a programming error and will crash inside the bump fast path.
+    Base243Arena(Base243Arena&& o) noexcept
+        : default_chunk_size_(o.default_chunk_size_),
+          chunks_(std::move(o.chunks_)),
+          current_chunk_idx_(o.current_chunk_idx_),
+          current_ptr_(o.current_ptr_),
+          end_ptr_(o.end_ptr_),
+          total_allocated_bytes_(o.total_allocated_bytes_),
+          total_committed_bytes_(o.total_committed_bytes_),
+          peak_committed_bytes_(o.peak_committed_bytes_),
+          allocation_count_(o.allocation_count_) {
+        // Invalidate the source: nothing must alias the moved chunk storage.
+        o.current_ptr_ = nullptr;
+        o.end_ptr_ = nullptr;
+        o.current_chunk_idx_ = 0;
+        o.chunks_.clear();
+        o.total_allocated_bytes_ = 0;
+        o.total_committed_bytes_ = 0;
+        o.peak_committed_bytes_ = 0;
+        o.allocation_count_ = 0;
+    }
+
+    Base243Arena& operator=(Base243Arena&& o) noexcept {
+        if (this != &o) {
+            // Take over the source chunks (drops our existing chunks).
+            chunks_ = std::move(o.chunks_);
+            default_chunk_size_ = o.default_chunk_size_;
+            current_chunk_idx_ = o.current_chunk_idx_;
+            current_ptr_ = o.current_ptr_;
+            end_ptr_ = o.end_ptr_;
+            total_allocated_bytes_ = o.total_allocated_bytes_;
+            total_committed_bytes_ = o.total_committed_bytes_;
+            peak_committed_bytes_ = o.peak_committed_bytes_;
+            allocation_count_ = o.allocation_count_;
+            // Invalidate the source: nullptr/0/0, no dangling alias into our chunks.
+            o.current_ptr_ = nullptr;
+            o.end_ptr_ = nullptr;
+            o.current_chunk_idx_ = 0;
+            o.chunks_.clear();
+            o.total_allocated_bytes_ = 0;
+            o.total_committed_bytes_ = 0;
+            o.peak_committed_bytes_ = 0;
+            o.allocation_count_ = 0;
+        }
+        return *this;
+    }
 
     /**
      * @brief High-throughput bump allocation for arbitrary byte requests.
      * Takes ~2-4 CPU cycles on fast path.
+     *
+     * NOT noexcept: the slow path can fail a chunk allocation (std::bad_alloc); the
+     * noexcept the old signature carried would have turned that OOM into std::terminate.
      */
-    [[nodiscard]] inline void* allocate_bytes(size_t bytes, size_t alignment = 1) noexcept {
+    [[nodiscard]] inline void* allocate_bytes(size_t bytes, size_t alignment = 1) {
         uintptr_t curr = reinterpret_cast<uintptr_t>(current_ptr_);
         uintptr_t aligned = (curr + alignment - 1) & ~(alignment - 1);
         size_t padding = aligned - curr;
@@ -600,16 +653,19 @@ public:
 
     /**
      * @brief Type-safe bump allocation.
+     * NOT noexcept: forwards to allocate_bytes, which can throw std::bad_alloc.
      */
     template <typename T>
-    [[nodiscard]] T* allocate(size_t count = 1, size_t alignment = alignof(T)) noexcept {
+    [[nodiscard]] T* allocate(size_t count = 1, size_t alignment = alignof(T)) {
         return static_cast<T*>(allocate_bytes(count * sizeof(T), alignment));
     }
 
     /**
-     * @brief High-density trit block allocation (1.6 bits/trit, 0 byte fragmentation).
+     * @brief High-density trit block allocation (Base-243 encoding: 1.6 bits/trit,
+     * 0 byte fragmentation — this density claim is specific to Base243Arena).
+     * NOT noexcept: allocate_bytes can throw std::bad_alloc on chunk growth.
      */
-    [[nodiscard]] Base243Block allocate_trits(size_t num_trits) noexcept {
+    [[nodiscard]] Base243Block allocate_trits(size_t num_trits) {
         size_t bytes_needed = (num_trits + 4) / 5;
         uint8_t* ptr = static_cast<uint8_t*>(allocate_bytes(bytes_needed, 1));
         // In offset-1 Base-243, Trit::Zero is 1, so all 5 trits zero = 121 (0x79)
@@ -690,11 +746,15 @@ public:
  * Represents massive all-zero balanced ternary spaces (e.g. 1 GB virtual matrix)
  * using < 1 KB of physical RAM.
  *
- * Architecture:
- * - Level 1 (Root): 64 directory pointers (covering 16 MB each = 1 GB).
+ * NOTE ON DENSITY: the leaf substrate stores ONE BYTE PER TRIT
+ * (Pos = 0x01, Neg = 0xFF = -1, Zero = 0x00 — the raw int8_t encoding of bt::Trit).
+ * The 1.6 bits/trit (5 trits per byte) claim belongs to bt::Base243Arena only.
+ *
+ * Architecture (capacities are TRIT counts; virtual_capacity_ counts trits):
+ * - Level 1 (Root): 64 directory pointers (each covering 16 MB of trits = 1 GB span).
  *   Embedded root table: 64 * 8 bytes = 512 bytes physical RAM.
  * - Level 2 (Directory): 256 page pointers (2048 bytes), allocated lazily on write.
- * - Leaf Page: 64 KB (65,536 bytes) aligned to 64 bytes for SIMD, allocated lazily on write.
+ * - Leaf Page: 64 KB (65,536 trits @ 1 byte per trit) aligned to 64 bytes, allocated lazily on write.
  * - Zero read cost: reads from unmaterialized pages return 0 with 0 physical allocations.
  * - Copy-on-Write (CoW): writing non-zero trits materializes only the touched leaf page.
  */
@@ -979,27 +1039,32 @@ public:
     // ==========================================================================
     // TritWord64 Virtual Memory Access (CoW)
     // ==========================================================================
+    // The substrate is ONE BYTE PER TRIT (trit index i == byte offset i), and
+    // virtual_capacity_ counts TRITS (== physical byte span). A 64-trit word therefore
+    // occupies the 64 bytes at byte offset 64 * word_index, i.e. word w covers trits
+    // [64*w, 64*w + 64). set_word/get_word encode/decode the byte-per-trit trits of the
+    // word — they never reinterpret raw bytes as dual-rail bitplane structs (that was the
+    // corrupting old behavior, which also used the wrong 16-byte width).
 
     [[nodiscard]] TritWord64 get_word(size_t word_index) const {
-        size_t byte_offset = word_index * sizeof(TritWord64);
-        if (byte_offset + sizeof(TritWord64) > virtual_capacity_) {
+        if (virtual_capacity_ < 64 || word_index > (virtual_capacity_ - 64) / 64) {
             throw std::out_of_range("HierarchicalZeroPage: word offset exceeds virtual capacity");
         }
+        const size_t trit_offset = word_index * 64; // word w covers trits [64w, 64w+64)
         TritWord64 w{0, 0};
-        for (size_t i = 0; i < sizeof(TritWord64); ++i) {
-            reinterpret_cast<uint8_t*>(&w)[i] = get_byte(byte_offset + i);
+        for (size_t i = 0; i < 64; ++i) {
+            w.setTrit(i, get_trit(trit_offset + i));
         }
         return w;
     }
 
     void set_word(size_t word_index, const TritWord64& w) {
-        size_t byte_offset = word_index * sizeof(TritWord64);
-        if (byte_offset + sizeof(TritWord64) > virtual_capacity_) {
+        if (virtual_capacity_ < 64 || word_index > (virtual_capacity_ - 64) / 64) {
             throw std::out_of_range("HierarchicalZeroPage: word offset exceeds virtual capacity");
         }
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(&w);
-        for (size_t i = 0; i < sizeof(TritWord64); ++i) {
-            set_byte(byte_offset + i, src[i]);
+        const size_t trit_offset = word_index * 64; // word w covers trits [64w, 64w+64)
+        for (size_t i = 0; i < 64; ++i) {
+            set_trit(trit_offset + i, w.getTrit(i));
         }
     }
 
@@ -1071,8 +1136,27 @@ private:
     HierarchicalZeroPage page_manager_;
 
 public:
+    /**
+     * @brief Checked virtual capacity computation: rows * cols with overflow detection.
+     * Uses __int128 for the product and throws std::overflow_error when the result
+     * exceeds the usable virtual span (SIZE_MAX / 2 trits), guaranteeing the heartbeats
+     * of indexing arithmetic (r * cols + c, allocator byte rounding) stay well-defined.
+     */
+    static size_t checked_virtual_capacity(size_t rows, size_t cols) {
+        const unsigned __int128 total =
+            static_cast<unsigned __int128>(rows) * static_cast<unsigned __int128>(cols);
+        constexpr unsigned __int128 kLimit =
+            static_cast<unsigned __int128>(std::numeric_limits<size_t>::max() / 2);
+        if (total > kLimit) {
+            throw std::overflow_error(
+                "HierarchicalZeroMatrix: rows*cols overflows the virtual capacity limit "
+                "(rows*cols > SIZE_MAX/2 trits)");
+        }
+        return static_cast<size_t>(total);
+    }
+
     HierarchicalZeroMatrix(size_t rows, size_t cols)
-        : rows_(rows), cols_(cols), page_manager_(rows * cols) {}
+        : rows_(rows), cols_(cols), page_manager_(checked_virtual_capacity(rows, cols)) {}
 
     [[nodiscard]] constexpr size_t rows() const noexcept { return rows_; }
     [[nodiscard]] constexpr size_t cols() const noexcept { return cols_; }

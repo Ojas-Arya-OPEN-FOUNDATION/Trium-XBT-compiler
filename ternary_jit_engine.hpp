@@ -30,6 +30,9 @@
 #include <stdexcept>
 #include <random>
 #include <chrono>
+#include <cstdint>
+#include <cstddef>
+#include <algorithm>
 
 namespace bt {
 namespace jit {
@@ -37,6 +40,48 @@ namespace jit {
 // ==============================================================================
 // 1. Runtime Value Representation
 // ==============================================================================
+
+/**
+ * @brief Chunk-wise exact decode of a full 64-trit word into a signed 128-bit integer.
+ * swar_to_int64() throws for num_trits > 39 (3^39 already saturates int64_t), so words
+ * with live trits in positions 40..63 cannot go through it. Instead each 16-trit SWAR
+ * chunk is converted independently by bct_to_bin_swar32 (value < 3^16 fits in int64_t)
+ * and the chunks are combined with exact powers of 3^16 in __int128 arithmetic, giving
+ * the exact value of all 64 trits with no truncation and no overflow.
+ */
+inline __int128 word_to_i128(const TritWord64& w) noexcept {
+    constexpr __int128 k3_16 = 43046721; // 3^16
+    __int128 total = 0;
+    __int128 chunk_scale = 1; // 3^(16 * chunk)
+    for (size_t chunk = 0; chunk < 4; ++chunk) {
+        const uint32_t p = bct_to_bin_swar32(
+            spread_16_to_32(static_cast<uint16_t>((w.P >> (chunk * 16)) & 0xFFFFU)));
+        const uint32_t n = bct_to_bin_swar32(
+            spread_16_to_32(static_cast<uint16_t>((w.N >> (chunk * 16)) & 0xFFFFU)));
+        total += static_cast<__int128>(static_cast<int64_t>(p) - static_cast<int64_t>(n)) * chunk_scale;
+        chunk_scale *= k3_16;
+    }
+    return total;
+}
+
+/**
+ * @brief Exact decimal rendering of a signed 128-bit integer.
+ * std::ostringstream has no __int128 overload in libc++, hence this manual formatter.
+ */
+inline std::string i128_to_string(__int128 v) {
+    if (v == 0) return "0";
+    const bool negative = v < 0;
+    unsigned __int128 magnitude = static_cast<unsigned __int128>(v);
+    if (negative) magnitude = (~magnitude) + 1; // safe even for the most negative i128
+    std::string digits;
+    while (magnitude > 0) {
+        digits.push_back(static_cast<char>('0' + static_cast<int>(magnitude % 10)));
+        magnitude /= 10;
+    }
+    if (negative) digits.push_back('-');
+    std::reverse(digits.begin(), digits.end());
+    return digits;
+}
 
 class JITValue {
 public:
@@ -115,17 +160,22 @@ public:
     std::string to_string() const {
         std::ostringstream ss;
         if (kind == Kind::Scalar) {
-            int64_t val = as_int64();
+            // Print with the FULL 64-trit word width (multi-word BigInt values are not
+            // held by JITValue, so one word is the whole value). The value is decoded
+            // chunk-wise into __int128 via word_to_i128(); the old Codec::to_int64(39)
+            // path silently truncated (and therefore mis-rendered) any word whose live
+            // trits extend beyond position 39.
+            __int128 full_val = word_to_i128(scalar);
             std::string trits;
             size_t width = 0;
-            for (size_t i = 0; i < 39; ++i) {
+            for (size_t i = 0; i < 64; ++i) {
                 if (scalar.getTrit(i) != Trit::Zero) width = i + 1;
             }
             if (width == 0) width = 1;
             for (int i = static_cast<int>(width) - 1; i >= 0; --i) {
                 trits.push_back(trit_to_char(scalar.getTrit(i)));
             }
-            ss << val << " [trits: " << trits << "]";
+            ss << i128_to_string(full_val) << " [trits: " << trits << "]";
         } else if (kind == Kind::Float) {
             ss << float_val << " [BTFP32: M=" << btfp_val.mantissa() << ", E=" << btfp_val.exponent() << "]";
         } else if (kind == Kind::SparseMat) {
@@ -254,6 +304,22 @@ private:
     std::shared_ptr<Environment> env;
     JITValue last_eval_result;
 
+    // RAII call-frame scope: pushes a new lexical environment and always restores the
+    // previous one when the scope ends. Function bodies that throw exceptions other than
+    // ReturnException (user errors, dimension mismatches, ...) unwind through this guard,
+    // so this->env can never stay pinned to a dead call frame after an error.
+    struct EnvironmentFrameGuard {
+        TernaryJITEngine& engine;
+        std::shared_ptr<Environment> previous;
+        EnvironmentFrameGuard(TernaryJITEngine& eng, std::shared_ptr<Environment> frame)
+            : engine(eng), previous(eng.env) {
+            engine.env = std::move(frame);
+        }
+        ~EnvironmentFrameGuard() { engine.env = previous; }
+        EnvironmentFrameGuard(const EnvironmentFrameGuard&) = delete;
+        EnvironmentFrameGuard& operator=(const EnvironmentFrameGuard&) = delete;
+    };
+
     static inline TritWord64 add_words(const TritWord64& A, const TritWord64& B) noexcept {
         BT_CSATree csa(A, TritWord64(0, 0));
         csa.add(B);
@@ -264,10 +330,26 @@ private:
         return add_words(A, -B);
     }
 
-    static inline TritWord64 mul_words(const TritWord64& A, const TritWord64& B) noexcept {
+    // Exact multiplication in __int128 with a clean overflow error; removing noexcept is
+    // required because this operation CAN throw (a noexcept wrapper would std::terminate).
+    static inline TritWord64 mul_words(const TritWord64& A, const TritWord64& B) {
         int64_t a_val = Codec::to_int64(A);
         int64_t b_val = Codec::to_int64(B);
-        return Codec::from_int64(a_val * b_val);
+        // Operands come from the 39-trit domain (|v| <= (3^39 - 1) / 2 ~= 2.03e18), so the
+        // true product can reach ~4.1e36 and overflow int64_t. Compute the product exactly
+        // in __int128; if it fits within the representable 39-trit range, return the exact
+        // word, otherwise throw a clean runtime_error (never silently wrap like the old
+        // Codec::from_int64(a_val * b_val) did, which was signed-overflow UB).
+        constexpr int64_t kMax39Trit = 2026277576509488133LL; // (3^39 - 1) / 2
+        const __int128 product = static_cast<__int128>(a_val) * static_cast<__int128>(b_val);
+        if (product > static_cast<__int128>(kMax39Trit) || product < static_cast<__int128>(-kMax39Trit)) {
+            throw std::runtime_error("integer overflow in multiplication: " +
+                                     std::to_string(a_val) + " * " + std::to_string(b_val) +
+                                     " = " + i128_to_string(product) +
+                                     " exceeds the representable balanced-ternary range [-" +
+                                     std::to_string(kMax39Trit) + ", " + std::to_string(kMax39Trit) + "]");
+        }
+        return Codec::from_int64(static_cast<int64_t>(product));
     }
 
 public:
@@ -338,7 +420,7 @@ public:
         node.right->accept(*this);
         JITValue right = last_eval_result;
 
-        // Case 0a: Float arithmetic
+        // Case 0a: Float arithmetic & comparison
         if (left.kind == JITValue::Kind::Float || right.kind == JITValue::Kind::Float) {
             double lv = (left.kind == JITValue::Kind::Float) ? left.float_val : static_cast<double>(left.as_int64());
             double rv = (right.kind == JITValue::Kind::Float) ? right.float_val : static_cast<double>(right.as_int64());
@@ -352,33 +434,97 @@ public:
                 case bt::frontend::BinaryOp::Mul:
                     last_eval_result = JITValue::make_float(lv * rv);
                     return;
-                default:
-                    last_eval_result = JITValue::make_float(lv + rv);
+                // Comparisons and the 3-way spaceship must actually COMPARE (the old
+                // default arm computed lv + rv instead, turning every comparison into
+                // an addition). The integer path below returns the ternary convention
+                // make_scalar_int(+1 / 0 / -1): +1 = true, -1 = false for predicate ops;
+                // <=> returns the balanced-ternary sign of (lv - rv): +1 / 0 / -1.
+                case bt::frontend::BinaryOp::Spaceship:
+                    last_eval_result = JITValue::make_scalar_int(
+                        (lv > rv) ? 1 : ((lv < rv) ? -1 : 0));
                     return;
+                case bt::frontend::BinaryOp::Equal:
+                    last_eval_result = JITValue::make_scalar_int(lv == rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::NotEqual:
+                    last_eval_result = JITValue::make_scalar_int(lv != rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::LessThan:
+                    last_eval_result = JITValue::make_scalar_int(lv < rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::GreaterThan:
+                    last_eval_result = JITValue::make_scalar_int(lv > rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::LessEqual:
+                    last_eval_result = JITValue::make_scalar_int(lv <= rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::GreaterEqual:
+                    last_eval_result = JITValue::make_scalar_int(lv >= rv ? 1 : -1);
+                    return;
+                case bt::frontend::BinaryOp::KleeneAnd:
+                case bt::frontend::BinaryOp::KleeneOr:
+                case bt::frontend::BinaryOp::TernaryXor:
+                    // & | ^ are trit-level dual-rail ops with no IEEE-754 semantics.
+                    throw std::runtime_error("Kleene logic not defined for float");
             }
         }
 
-        // Case 0b: SpMV (T-CSR sparse_matrix * vector/matrix)
-        if (node.op == bt::frontend::BinaryOp::Mul && left.kind == JITValue::Kind::SparseMat) {
+        // Case 0b: T-CSR left operand (A = sparse_matrix).
+        //  - A * same-length vector        -> multiplier-free SpMV (unchanged behavior)
+        //  - A * matching dense MxN matrix -> TRUE SpMM:  C = A * B with
+        //                  C[i][j] = sum_k A[i][k] * B[k][j], yielding a DenseIntMat.
+        // The old code flattened the right matrix into rows*cols entries and fed that into
+        // spmv(), which only indexes x[col] for col < A.cols — i.e. it silently multiplyed
+        // A by just the FIRST ROW (or threw a dimension error for square inputs).
+        if (node.op == bt::frontend::BinaryOp::Mul && left.kind == JITValue::Kind::SparseMat &&
+            (right.kind == JITValue::Kind::DenseIntMat || right.kind == JITValue::Kind::TernaryMat)) {
+            const auto& A = left.sparse_matrix;
+
+            // Materialize the right operand as a row-major int64 buffer.
+            std::vector<int64_t> B_data;
+            size_t B_rows = 0;
+            size_t B_cols = 0;
             if (right.kind == JITValue::Kind::DenseIntMat) {
-                auto y = left.sparse_matrix.spmv(right.int_matrix.data);
-                DenseMatrixInt64 out_mat(y.size(), 1);
-                out_mat.data = std::move(y);
-                last_eval_result = JITValue::make_int_matrix(std::move(out_mat));
-                return;
-            } else if (right.kind == JITValue::Kind::TernaryMat) {
-                std::vector<int64_t> vec_data(right.matrix.rows * right.matrix.cols);
-                for (size_t r = 0; r < right.matrix.rows; ++r) {
-                    for (size_t c = 0; c < right.matrix.cols; ++c) {
-                        vec_data[r * right.matrix.cols + c] = to_int(right.matrix.get(r, c));
+                B_rows = right.int_matrix.rows;
+                B_cols = right.int_matrix.cols;
+                B_data = right.int_matrix.data;
+            } else {
+                B_rows = right.matrix.rows;
+                B_cols = right.matrix.cols;
+                B_data.assign(B_rows * B_cols, 0);
+                for (size_t r = 0; r < B_rows; ++r) {
+                    for (size_t c = 0; c < B_cols; ++c) {
+                        B_data[r * B_cols + c] = to_int(right.matrix.get(r, c));
                     }
                 }
-                auto y = left.sparse_matrix.spmv(vec_data);
+            }
+
+            // Vector SpMV: right operand is a length-A.cols vector stored as an
+            // Mx1 or 1xN (row/col vector) dense matrix.
+            if ((B_cols == 1 || B_rows == 1) && B_rows * B_cols == A.cols) {
+                auto y = A.spmv(B_data);
                 DenseMatrixInt64 out_mat(y.size(), 1);
                 out_mat.data = std::move(y);
                 last_eval_result = JITValue::make_int_matrix(std::move(out_mat));
                 return;
             }
+
+            // Matching matrix product: right rows == A.cols -> true SpMM (C is A.rows x B_cols).
+            if (B_rows == A.cols && B_rows > 0 && B_cols > 0) {
+                auto C_data = A.spmm(B_data, B_cols);
+                DenseMatrixInt64 out_mat(A.rows, B_cols);
+                out_mat.data = std::move(C_data);
+                last_eval_result = JITValue::make_int_matrix(std::move(out_mat));
+                return;
+            }
+
+            throw std::runtime_error(
+                "sparse_matrix dimension mismatch: T-CSR is " + std::to_string(A.rows) +
+                "x" + std::to_string(A.cols) + " (nnz=" + std::to_string(A.nnz) +
+                "), right operand is " + std::to_string(B_rows) + "x" + std::to_string(B_cols) +
+                "; expected right.rows == " + std::to_string(A.cols) +
+                " for a matrix product (SpMM), or a length-" + std::to_string(A.cols) +
+                " vector for matrix-vector SpMV");
         }
 
         // Case 1: Both operands are scalars
@@ -830,15 +976,16 @@ public:
                 fn_env->define(func_def->params[i].name, std::move(evaluated_args[i]));
             }
 
-            auto prev_env = env;
-            env = fn_env;
+            last_eval_result = JITValue::make_void();
             JITValue return_val = JITValue::make_void();
+            // The guard restores this->env on EVERY exit path: normal return, caught
+            // ReturnException, and any exception propagating out of the body.
+            EnvironmentFrameGuard frame_guard(*this, fn_env);
             try {
                 if (func_def->body) func_def->body->accept(*this);
             } catch (const ReturnException& ret) {
                 return_val = ret.value;
             }
-            env = prev_env;
             last_eval_result = return_val;
             return;
         }

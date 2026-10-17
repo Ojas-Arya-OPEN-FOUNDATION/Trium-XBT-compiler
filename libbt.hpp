@@ -62,21 +62,37 @@ struct Rational {
     constexpr Rational() noexcept : num(0), den(1) {}
     constexpr Rational(int64_t n) noexcept : num(n), den(1) {}
 
+    // Build from an already-reduced __int128 pair with strict range enforcement.
+    // Throws instead of silently wrapping (the old static_cast<int64_t> created
+    // wrong values like Rational(2^40)*Rational(2^40) -> 0).
+    static Rational from_reduced(__int128_t n, __int128_t d) {
+        // precondition: d > 0, gcd(|n|, d) == 1, both reduced by caller
+        if (n > INT64_MAX || n < INT64_MIN || d > INT64_MAX) {
+            throw std::overflow_error(
+                "Rational: result has no exact int64 representation (exceeds 64-bit range)");
+        }
+        Rational r;
+        r.num = static_cast<int64_t>(n);
+        r.den = static_cast<int64_t>(d);
+        return r;
+    }
+
+    // Normalize a (n, d) pair to canonical reduced form with d > 0.
+    static void reduce_128(__int128_t& n, __int128_t& d) {
+        if (d < 0) { n = -n; d = -d; }
+        __int128_t an = (n < 0) ? -n : n;
+        __int128_t g = std::gcd(an, d);
+        if (g > 1) { n /= g; d /= g; }
+    }
+
     Rational(int64_t n, int64_t d) {
         if (d == 0) {
             throw std::invalid_argument("Rational: denominator cannot be zero");
         }
         __int128_t n128 = n;
         __int128_t d128 = d;
-        if (d128 < 0) {
-            n128 = -n128;
-            d128 = -d128;
-        }
-        __int128_t an = (n128 < 0) ? -n128 : n128;
-        __int128_t ad = d128;
-        __int128_t g = std::gcd(an, ad);
-        num = static_cast<int64_t>(n128 / g);
-        den = static_cast<int64_t>(d128 / g);
+        reduce_128(n128, d128);
+        *this = from_reduced(n128, d128);
     }
 
     constexpr bool is_zero() const noexcept {
@@ -91,7 +107,10 @@ struct Rational {
     }
 
     Rational abs() const noexcept {
-        return Rational(num < 0 ? -num : num, den);
+        // INT64_MIN-safe: negate via 128-bit domain.
+        __int128_t n = num;
+        if (n < 0) n = -n;
+        return from_reduced(n, static_cast<__int128_t>(den));
     }
 
     double to_double() const noexcept {
@@ -102,29 +121,26 @@ struct Rational {
         return to_double();
     }
 
-    // Arithmetic Operators with 128-bit internal precision
+    // Arithmetic Operators: 128-bit internal precision, strictly range-checked results.
     Rational operator+(const Rational& o) const {
         __int128_t n = static_cast<__int128_t>(num) * o.den + static_cast<__int128_t>(o.num) * den;
         __int128_t d = static_cast<__int128_t>(den) * o.den;
-        __int128_t an = (n < 0) ? -n : n;
-        __int128_t g = std::gcd(an, d);
-        return Rational(static_cast<int64_t>(n / g), static_cast<int64_t>(d / g));
+        reduce_128(n, d);
+        return from_reduced(n, d);
     }
 
     Rational operator-(const Rational& o) const {
         __int128_t n = static_cast<__int128_t>(num) * o.den - static_cast<__int128_t>(o.num) * den;
         __int128_t d = static_cast<__int128_t>(den) * o.den;
-        __int128_t an = (n < 0) ? -n : n;
-        __int128_t g = std::gcd(an, d);
-        return Rational(static_cast<int64_t>(n / g), static_cast<int64_t>(d / g));
+        reduce_128(n, d);
+        return from_reduced(n, d);
     }
 
     Rational operator*(const Rational& o) const {
         __int128_t n = static_cast<__int128_t>(num) * o.num;
         __int128_t d = static_cast<__int128_t>(den) * o.den;
-        __int128_t an = (n < 0) ? -n : n;
-        __int128_t g = std::gcd(an, d);
-        return Rational(static_cast<int64_t>(n / g), static_cast<int64_t>(d / g));
+        reduce_128(n, d);
+        return from_reduced(n, d);
     }
 
     Rational operator/(const Rational& o) const {
@@ -133,21 +149,15 @@ struct Rational {
         }
         __int128_t n = static_cast<__int128_t>(num) * o.den;
         __int128_t d = static_cast<__int128_t>(den) * o.num;
-        if (d < 0) {
-            n = -n;
-            d = -d;
-        }
-        __int128_t an = (n < 0) ? -n : n;
-        __int128_t g = std::gcd(an, d);
-        return Rational(static_cast<int64_t>(n / g), static_cast<int64_t>(d / g));
+        reduce_128(n, d);
+        return from_reduced(n, d);
     }
 
-    Rational operator-() const noexcept {
-        Rational r;
-        r.num = -num;
-        r.den = den;
-        return r;
+    // INT64_MIN-safe negation computed in the 128-bit domain.
+    Rational operator-() const {
+        return from_reduced(-static_cast<__int128_t>(num), static_cast<__int128_t>(den));
     }
+
 
     Rational& operator+=(const Rational& o) { *this = *this + o; return *this; }
     Rational& operator-=(const Rational& o) { *this = *this - o; return *this; }
@@ -192,14 +202,22 @@ struct Rational {
      * Generates integer trits, decimal point, and fractional trits up to precision.
      */
     std::string to_balanced_ternary(size_t precision = 10) const {
-        // Compute integer part using symmetric rounding
-        double val = to_double();
-        int64_t int_part = std::llround(val);
-        TritWord64 int_word = Codec::from_int64(int_part, 32);
-        
+        if (precision > 20) precision = 20; // keep fractional expansion sane
+
+        // Exact integer part via 128-bit symmetric rounding (no double/log drift, no
+        // llround out-of-range UB, and 41 trits cover the full int64 range instead of
+        // silently dropping high trits at 32).
+        __int128_t n128 = num;
+        __int128_t d128 = den; // invariant: den > 0
+        // Symmetric half-away rounding: q = round(n/d)
+        __int128_t q = (n128 >= 0) ? ((n128 * 2 + d128) / (2 * d128))
+                                   : -(((-n128) * 2 + d128) / (2 * d128));
+        int64_t int_part = static_cast<int64_t>(q);
+        TritWord64 int_word = Codec::from_int64(int_part, 41);
+
         // Find most significant trit of integer part
         size_t msb = 0;
-        for (size_t i = 31; i > 0; --i) {
+        for (size_t i = 40; i > 0; --i) {
             if (int_word.getTrit(i) != Trit::Zero) {
                 msb = i;
                 break;
@@ -214,14 +232,21 @@ struct Rational {
 
         if (precision > 0) {
             s.push_back('.');
-            double rem = val - static_cast<double>(int_part);
+            // Exact fractional expansion in 128-bit:
+            // rem = num - q * den (in [?, ?)) scaled digit-by-digit:
+            // digit_i = round( rem_i * 3 / den ), rem_{i+1} = rem_i * 3 - digit_i * den
+            __int128_t rem = num - static_cast<__int128_t>(static_cast<int64_t>(q)) * den;
             for (size_t i = 0; i < precision; ++i) {
-                rem *= 3.0;
-                int8_t trit_val = static_cast<int8_t>(std::llround(rem));
+                __int128_t twice = rem * 3;
+                // symmetric rounding of twice/d to nearest integer (ties half-away)
+                __int128_t trit128 = (twice >= 0) ? ((twice * 2 + d128) / (2 * d128))
+                                                  : -(((-twice) * 2 + d128) / (2 * d128));
+                // balanced digit constraint: |trit| <= 1 after first residual step
+                int8_t trit_val = static_cast<int8_t>(trit128);
                 if (trit_val > 1) trit_val = 1;
                 if (trit_val < -1) trit_val = -1;
                 s.push_back(trit_to_char(from_int(trit_val)));
-                rem -= trit_val;
+                rem = twice - static_cast<__int128_t>(trit_val) * d128;
             }
         }
         return s;
@@ -460,6 +485,18 @@ public:
         Matrix<T> A = *this;
         T det{1};
 
+        // Scale-relative pivot threshold (see inverse() for rationale).
+        double scale_base = 0.0;
+        if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+            for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
+                for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
+                    scale_base = std::abs(static_cast<double>(A(r, c)));
+                }
+            }
+            if (scale_base == 0.0) scale_base = 1.0;
+        }
+        const double singular_threshold = scale_base * 1e-15;
+
         for (size_t i = 0; i < n; ++i) {
             size_t pivot = i;
             if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
@@ -471,7 +508,7 @@ public:
                         pivot = r;
                     }
                 }
-                if (max_val < 1e-15) return T{0};
+                if (max_val < singular_threshold) return T{0};
             } else {
                 while (pivot < n && A(pivot, i) == T{0}) {
                     ++pivot;
@@ -514,6 +551,21 @@ public:
         Matrix<T> A = *this;
         Matrix<T> inv = Matrix<T>::identity(n);
 
+        // Scale-relative singularity threshold: an absolute 1e-15 cutoff
+        // misclassifies legitimately invertible matrices whose entries are tiny
+        // (e.g. scaled SI units). Pivot is singular only when it is ~1e-15 of the
+        // matrix's own magnitude.
+        double scale_base = 0.0;
+        if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+            for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
+                for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
+                    scale_base = std::abs(static_cast<double>(A(r, c)));
+                }
+            }
+            if (scale_base == 0.0) scale_base = 1.0;
+        }
+        const double singular_threshold = scale_base * 1e-15;
+
         for (size_t i = 0; i < n; ++i) {
             size_t pivot = i;
             if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
@@ -525,7 +577,7 @@ public:
                         pivot = r;
                     }
                 }
-                if (max_val < 1e-15) {
+                if (max_val < singular_threshold) {
                     if (invertible) *invertible = false;
                     else throw std::runtime_error("Matrix is singular (non-invertible)");
                     return Matrix<T>();
@@ -1093,10 +1145,11 @@ inline uint64_t hamming_distance(const TernaryMatrix& a, const TernaryMatrix& b)
  * into 2 redundant words (Sum, Carry), then resolves into a single canonical TritWord64.
  * Complexity: O(log_{1.5} M) logic depth, completely eliminating ripple-carry stalls.
  */
-inline TritWord64 reduce_csa_tree(std::span<const TritWord64> words) noexcept {
-    if (words.empty()) return TritWord64(0, 0);
-    if (words.size() == 1) return words[0];
+inline TritWord64 reduce_csa_tree(std::span<const TritWord64> words, bool* overflow_out = nullptr) noexcept {
+    if (words.empty()) { if (overflow_out) *overflow_out = false; return TritWord64(0, 0); }
+    if (words.size() == 1) { if (overflow_out) *overflow_out = false; return words[0]; }
 
+    bool overflow = false;
     std::vector<TritWord64> curr(words.begin(), words.end());
 
     while (curr.size() > 2) {
@@ -1109,6 +1162,7 @@ inline TritWord64 reduce_csa_tree(std::span<const TritWord64> words) noexcept {
             AdderOutput fa = BTFA(curr[i], curr[i+1], curr[i+2]);
             next_lvl.push_back(fa.Sum);
             // Shift carry by 1 trit (multiplying by 3)
+            if ((fa.Carry.P >> 63) || (fa.Carry.N >> 63)) overflow = true;
             next_lvl.push_back(TritWord64(fa.Carry.P << 1, fa.Carry.N << 1));
         }
 
@@ -1116,6 +1170,7 @@ inline TritWord64 reduce_csa_tree(std::span<const TritWord64> words) noexcept {
         if (i + 1 < curr.size()) {
             AdderOutput ha = BTHA(curr[i], curr[i+1]);
             next_lvl.push_back(ha.Sum);
+            if ((ha.Carry.P >> 63) || (ha.Carry.N >> 63)) overflow = true;
             next_lvl.push_back(TritWord64(ha.Carry.P << 1, ha.Carry.N << 1));
             i += 2;
         } else if (i < curr.size()) {
@@ -1129,10 +1184,13 @@ inline TritWord64 reduce_csa_tree(std::span<const TritWord64> words) noexcept {
 
     if (curr.size() == 2) {
         AdderOutput ha = BTHA(curr[0], curr[1]);
+        if ((ha.Carry.P >> 63) || (ha.Carry.N >> 63)) overflow = true;
         BT_CSA csa(ha.Sum, ha.Carry);
+        if (overflow_out) *overflow_out = overflow;
         return csa.canonicalize();
     }
 
+    if (overflow_out) *overflow_out = overflow;
     return curr[0];
 }
 

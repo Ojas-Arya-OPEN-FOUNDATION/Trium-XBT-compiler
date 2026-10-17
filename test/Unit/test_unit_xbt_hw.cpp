@@ -119,9 +119,27 @@ static void test_coprocessor_execution() {
 }
 
 static void test_systemverilog_rtl_presence() {
-    std::ifstream sv_file("hw/riscv_xbt_extension.sv");
+    std::ifstream sv_file;
+    // Resolve path independent of CWD: try a few candidates, then __FILE__-relative.
+    const char* candidates[] = {
+        "hw/riscv_xbt_extension.sv",
+        "../../hw/riscv_xbt_extension.sv",
+        "../hw/riscv_xbt_extension.sv"
+    };
+    for (const char* c : candidates) { sv_file.open(c); if (sv_file.is_open()) break; sv_file.clear(); }
     if (!sv_file.is_open()) {
-        sv_file.open("../../hw/riscv_xbt_extension.sv");
+        std::string here = __FILE__;
+        size_t slash = here.find_last_of("/\\");
+        std::string dir = (slash == std::string::npos) ? std::string() : here.substr(0, slash);
+        // ascend until we find hw/riscv_xbt_extension.sv
+        for (int up = 0; up < 8 && !dir.empty(); ++up) {
+            sv_file.open(dir + "/hw/riscv_xbt_extension.sv");
+            if (sv_file.is_open()) break;
+            sv_file.clear();
+            size_t s = dir.find_last_of("/\\");
+            if (s == std::string::npos) break;
+            dir = dir.substr(0, s);
+        }
     }
     assert(sv_file.is_open() && "hw/riscv_xbt_extension.sv must exist!");
 

@@ -25,6 +25,8 @@
 #include <optional>
 #include <cstdint>
 #include <utility>
+#include <limits>
+#include <cmath>
 #include <initializer_list>
 #include <iomanip>
 #include <unordered_set>
@@ -208,6 +210,18 @@ struct Token {
     }
 };
 
+// A non-fatal lexer diagnostic (e.g. numeric literal overflow). Recorded
+// alongside the token stream so callers/tools can surface it without aborting
+// the parse.
+struct LexerDiagnostic {
+    SourceLocation loc;
+    std::string message;
+
+    std::string to_string() const {
+        return "[Lexer Warning] " + loc.to_string() + ": " + message;
+    }
+};
+
 // ==============================================================================
 // 2. C++20 Lexer for Balanced Ternary Language
 // ==============================================================================
@@ -219,6 +233,7 @@ private:
     size_t line_{1};
     size_t col_{1};
     Token prev_token_{TokenType::Eof, "", {0, 0}};
+    std::vector<LexerDiagnostic> diagnostics_;
 
     char peek(size_t offset = 0) const {
         if (pos_ + offset < source_.size()) {
@@ -243,6 +258,13 @@ private:
 
     bool had_whitespace_{false};
 
+    // Pending lexer diagnostic. Set while skipping whitespace/comments when e.g.
+    // a block comment is never closed; surfaced as an ERROR token on the next
+    // next_token() call so a clean diagnostic is produced instead of a silent
+    // EOF accept.
+    std::string pending_diag_;
+    bool has_pending_diag_{false};
+
     void skip_whitespace_and_comments() {
         had_whitespace_ = false;
         while (pos_ < source_.size()) {
@@ -260,11 +282,21 @@ private:
                 had_whitespace_ = true;
                 // Block comment
                 advance(); advance();
-                while (pos_ < source_.size() && !(peek() == '*' && peek(1) == '/')) {
+                bool closed = false;
+                while (pos_ < source_.size()) {
+                    if (peek() == '*' && peek(1) == '/') {
+                        closed = true;
+                        advance(); advance(); // consume '*/'
+                        break;
+                    }
                     advance();
                 }
-                if (pos_ < source_.size()) {
-                    advance(); advance(); // consume '*/'
+                if (!closed) {
+                    // Unterminated block comment: queue a diagnostic token so
+                    // the parser reports a clean error (instead of silently
+                    // accepting the rest of the file as comment).
+                    pending_diag_ = "unterminated block comment";
+                    has_pending_diag_ = true;
                 }
             } else {
                 break;
@@ -274,6 +306,27 @@ private:
 
     static bool is_trit_char(char c) {
         return c == '+' || c == '-' || c == '0' || c == 'T' || c == 't';
+    }
+
+    static bool is_word_char(char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    }
+
+    // During a multi-trit literal scan, 't'/'T' is only treated as a trit when
+    // the following character cannot extend an identifier. If the character
+    // after 't'/'T' is a word character ([A-Za-z0-9_]), an identifier such as
+    // 'total'/'Type' begins there and the scan must stop; the caller then emits
+    // the pending sign as a normal +/- operator and lets the identifier lexer
+    // run (e.g. `var x = -total;`).
+    bool continues_trit_scan(size_t offset) const {
+        char c = peek(offset);
+        if (c == 't' || c == 'T') {
+            char after = peek(offset + 1);
+            if (is_word_char(after)) {
+                return false;
+            }
+        }
+        return is_trit_char(c);
     }
 
     static int8_t char_to_trit(char c) {
@@ -298,6 +351,10 @@ private:
     }
 
 public:
+    // Non-fatal lexer diagnostics (numeric literal overflow, etc.). Populated
+    // during tokenize_all()/next_token().
+    const std::vector<LexerDiagnostic>& diagnostics() const { return diagnostics_; }
+
     bool is_float_ahead(size_t offset = 0) const {
         size_t cur = pos_ + offset;
         if (cur < source_.size() && (source_[cur] == '+' || source_[cur] == '-')) {
@@ -356,6 +413,24 @@ public:
         double val = 0.0;
         try {
             val = std::stod(text);
+            // libc++ strtod returns +/-HUGE_VAL (not an exception) for float
+            // overflow; normalize to the finite double maximum and report a
+            // diagnostic (previously it silently became 0.0).
+            if (std::isinf(val) || std::isnan(val)) {
+                bool negative = (text[0] == '-');
+                val = negative ? -std::numeric_limits<double>::max()
+                               : std::numeric_limits<double>::max();
+                diagnostics_.push_back(LexerDiagnostic{loc,
+                    "float literal '" + text + "' is out of 64-bit floating point range; value saturated"});
+            }
+        } catch (const std::out_of_range&) {
+            // Float literal does not fit in a double: saturate instead of
+            // silently producing 0.0, and record the diagnostic.
+            bool negative = (text[0] == '-');
+            val = negative ? -std::numeric_limits<double>::max()
+                           : std::numeric_limits<double>::max();
+            diagnostics_.push_back(LexerDiagnostic{loc,
+                "float literal '" + text + "' is out of 64-bit floating point range; value saturated"});
         } catch (...) {
             val = 0.0;
         }
@@ -384,6 +459,15 @@ public:
         skip_whitespace_and_comments();
 
         SourceLocation loc{line_, col_};
+
+        if (has_pending_diag_) {
+            std::string msg = pending_diag_;
+            pending_diag_.clear();
+            has_pending_diag_ = false;
+            Token tok{TokenType::Error, msg, loc};
+            prev_token_ = tok;
+            return tok;
+        }
 
         if (pos_ >= source_.size()) {
             Token tok{TokenType::Eof, "", loc};
@@ -421,10 +505,15 @@ public:
             std::string text = source_.substr(start, pos_ - start);
             if (pos_ < source_.size() && peek() == '"') {
                 advance(); // consume closing '"'
+                Token tok{TokenType::StringLiteral, text, loc};
+                prev_token_ = tok;
+                return tok;
             }
-            Token tok{TokenType::StringLiteral, text, loc};
-            prev_token_ = tok;
-            return tok;
+            // Unterminated string literal: emit an ERROR token so the parser
+            // reports a clean diagnostic (instead of silently accepting EOF).
+            Token err{TokenType::Error, "unterminated string literal", loc};
+            prev_token_ = err;
+            return err;
         }
 
         // 1. Identifiers and Keywords
@@ -474,6 +563,12 @@ public:
             int64_t val = 0;
             try {
                 val = std::stoll(text);
+            } catch (const std::out_of_range&) {
+                // Integer literal does not fit in 64 bits: saturate instead of
+                // silently producing 0, and record the diagnostic.
+                val = std::numeric_limits<int64_t>::max();
+                diagnostics_.push_back(LexerDiagnostic{loc,
+                    "integer literal '" + text + "' is out of 64-bit integer range; value saturated"});
             } catch (...) {
                 val = 0;
             }
@@ -486,10 +581,10 @@ public:
         if (c == '0') {
             // Check if multi-trit like 0+-, 0-+
             char next = peek(1);
-            if (next == '+' || next == '-' || next == 'T' || next == 't') {
+            if (is_trit_char(next) && continues_trit_scan(1)) {
                 size_t start = pos_;
                 std::vector<int8_t> trits;
-                while (pos_ < source_.size() && is_trit_char(peek())) {
+                while (pos_ < source_.size() && continues_trit_scan(0)) {
                     trits.push_back(char_to_trit(peek()));
                     advance();
                 }
@@ -507,6 +602,12 @@ public:
                 int64_t val = 0;
                 try {
                     val = std::stoll(text);
+                } catch (const std::out_of_range&) {
+                    // 0-prefixed integer literal out of 64-bit range: saturate
+                    // instead of silently producing 0, and record the diagnostic.
+                    val = std::numeric_limits<int64_t>::max();
+                    diagnostics_.push_back(LexerDiagnostic{loc,
+                        "integer literal '" + text + "' is out of 64-bit integer range; value saturated"});
                 } catch (...) {
                     val = 0;
                 }
@@ -537,10 +638,10 @@ public:
             }
 
             // Case 4a: multi-trit literal (+-0+, ++-, +-, etc.)
-            if (is_trit_char(next)) {
+            if (is_trit_char(next) && continues_trit_scan(1)) {
                 size_t start = pos_;
                 std::vector<int8_t> trits;
-                while (pos_ < source_.size() && is_trit_char(peek())) {
+                while (pos_ < source_.size() && continues_trit_scan(0)) {
                     trits.push_back(char_to_trit(peek()));
                     advance();
                 }
@@ -587,10 +688,10 @@ public:
             }
 
             // Case 5a: multi-trit literal (--+, -+0, --, etc.)
-            if (is_trit_char(next)) {
+            if (is_trit_char(next) && continues_trit_scan(1)) {
                 size_t start = pos_;
                 std::vector<int8_t> trits;
-                while (pos_ < source_.size() && is_trit_char(peek())) {
+                while (pos_ < source_.size() && continues_trit_scan(0)) {
                     trits.push_back(char_to_trit(peek()));
                     advance();
                 }
@@ -878,6 +979,17 @@ public:
 };
 
 // 8. Select Node (3-way Branch: Pos Block/Expr, Zero Block/Expr, Neg Block/Expr)
+//
+// NOTE ON SEMANTICS (frontend contract): the parsed form is a pure 3-way branch
+// selector. However, the LLVM codegen lowering evaluates all three branch bodies
+// EAGERLY and sequentially (pos, then zero, then neg) and muxes the last
+// computed values through the branchless helper @bt_select(cond, p, z, n).
+// Consequently:
+//   * side effects in one branch are visible to branches written after it, and
+//   * a `return` inside a branch stops further branch evaluation (and emits no
+//     dangling instructions after the return terminator).
+// This eager execution is by design of the current codegen; do not rely on
+// laziness of unselected branches.
 class SelectNode : public ASTNode {
 public:
     ASTNodePtr condition;
@@ -1351,6 +1463,23 @@ public:
             visited = &local_visited;
         }
 
+        // Content-identity keys: the top-level source is resolved without a
+        // filesystem path, so register its content fingerprint here. Nested
+        // imports of a file whose content is already expanded (e.g. the cycle
+        // A imports B imports A, where A is the entry file) are then skipped,
+        // preventing duplicated declarations.
+        auto content_key_fn = [](const std::string& content) -> std::string {
+            uint64_t h = 1469598103934665603ULL; // FNV-1a 64 offset basis
+            for (char ch : content) {
+                h ^= static_cast<unsigned char>(ch);
+                h *= 1099511628211ULL; // FNV-1a 64 prime
+            }
+            std::ostringstream ks;
+            ks << "bt-import-content::" << content.size() << "::" << std::hex << h;
+            return ks.str();
+        };
+        visited->insert(content_key_fn(source));
+
         std::ostringstream out;
         size_t pos = 0;
         const size_t n = source.size();
@@ -1449,6 +1578,17 @@ public:
                             }
                             std::string imported_content((std::istreambuf_iterator<char>(ifs)),
                                                           std::istreambuf_iterator<char>());
+
+                            // Import-cycle guard on content identity: identical
+                            // content is expanded at most once per resolve pass,
+                            // so a module cycling back to its importer does not
+                            // duplicate its declarations.
+                            std::string imported_ck = content_key_fn(imported_content);
+                            if (visited->find(imported_ck) != visited->end()) {
+                                continue;
+                            }
+                            visited->insert(imported_ck);
+
                             std::string child_dir = full_p.parent_path().empty()
                                 ? base_dir
                                 : full_p.parent_path().string();

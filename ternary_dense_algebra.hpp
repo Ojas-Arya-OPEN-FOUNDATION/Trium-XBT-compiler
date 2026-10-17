@@ -154,17 +154,22 @@ public:
         C = comp.Carry;
     }
 
-    // Resolves redundant state (S, C) to canonical non-redundant TritWord64
-    inline TritWord64 resolve() const noexcept {
+    // Resolves redundant state (S, C) to canonical non-redundant TritWord64.
+    // `overflow_out` (if non-null) is set to true if a carry was dropped at the
+    // most-significant trit (modular wrap at 3^64), false otherwise.
+    inline TritWord64 resolve(bool* overflow_out = nullptr) const noexcept {
         TritWord64 curr_S = S;
         TritWord64 curr_C = C;
+        bool overflow = false;
 
         while (curr_C.P != 0 || curr_C.N != 0) {
+            if ((curr_C.P >> 63) || (curr_C.N >> 63)) overflow = true;
             TritWord64 sh(curr_C.P << 1, curr_C.N << 1);
             AdderOutput ha = BTHA(curr_S, sh);
             curr_S = ha.Sum;
             curr_C = ha.Carry;
         }
+        if (overflow_out) *overflow_out = overflow;
         return curr_S;
     }
 };
@@ -616,11 +621,13 @@ public:
         ss << "    %tileN = arith.constant " << cfg.tile_N << " : index\n";
         ss << "    %tileK = arith.constant " << cfg.tile_K_words << " : index\n";
         ss << "    scf.for %k0 = %c0 to %K step %tileK {\n";
+        ss << "      %k0_plus_tile = arith.addi %k0, %tileK : index\n";
+        ss << "      %k_end = arith.minui %k0_plus_tile, %K : index\n";
         ss << "      scf.for %i0 = %c0 to %M step %tileM {\n";
         ss << "        scf.for %j0 = %c0 to %N step %tileN {\n";
         ss << "          scf.for %i = %i0 to %tileM step %c1 {\n";
         ss << "            scf.for %j = %j0 to %tileN step %c1 {\n";
-        ss << "              scf.for %w = %k0 to %tileK step %c1 {\n";
+        ss << "              scf.for %w = %k0 to %k_end step %c1 {\n";
         ss << "                %ap = memref.load %A_P[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
         ss << "                %an = memref.load %A_N[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
         ss << "                %bp = memref.load %BT_P[%j, %w] : memref<" << N << "x" << K_words << "xi64>\n";
@@ -860,6 +867,9 @@ inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, D
     }
 
     for (size_t idx = 0; idx < C.data.size(); ++idx) {
+        if (accum[idx] > INT64_MAX || accum[idx] < INT64_MIN) {
+            throw std::overflow_error("gemm_multitrit: accumulated result overflows int64");
+        }
         C.data[idx] = static_cast<int64_t>(accum[idx]);
     }
 }
@@ -923,11 +933,26 @@ struct Codec {
         if (fractional_trits < 0) {
             fractional_trits = 0;
         }
-        trits.resize(fractional_trits + 16, Trit::Zero);
-        // Scale by 3^fractional_trits
+        const size_t width = static_cast<size_t>(fractional_trits) + 16;
+        // Representable magnitude in the available `width` balanced trits.
+        __int128_t pow3 = 1;
+        for (int i = 0; i < fractional_trits + 16; ++i) pow3 *= 3;
+        const __int128_t representable = (pow3 - 1) / 2;
+
         double scale = std::pow(3.0, fractional_trits);
+        // Guard llround against out-of-range double before it can invoke UB.
+        if (std::fabs(val) * scale >= static_cast<double>(INT64_MAX)) {
+            throw std::overflow_error("float_to_trits: value too large to round to int64");
+        }
         int64_t scaled_int = std::llround(val * scale);
-        
+        // Guard against silent high-trit truncation: every scaled value must fit.
+        if (static_cast<__int128_t>(scaled_int) > representable ||
+            static_cast<__int128_t>(scaled_int) < -representable) {
+            throw std::overflow_error("float_to_trits: value does not fit in " +
+                                     std::to_string(width) + " balanced trits");
+        }
+
+        trits.resize(width, Trit::Zero);
         TritWord64 w = from_int64(scaled_int, std::min<size_t>(trits.size(), 64));
         for (size_t i = 0; i < trits.size() && i < 64; ++i) {
             trits[i] = w.getTrit(i);

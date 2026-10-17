@@ -1,4 +1,13 @@
-// RUN: cat %s | FileCheck %s
+// RUN: %bt-opt %s | FileCheck %s
+
+// This module is ingested by bt-opt and re-emitted through the real module
+// representation. The CHECKs below must match the *tool output*, which cannot
+// contain this file's own CHECK comment lines (CHECK-NOT enforces that), so
+// this test can no longer pass by echoing itself.
+
+// CHECK: Processed by bt-opt
+// CHECK-NOT: // CHECK
+// CHECK-LABEL: module @test_ternary_dialect
 
 //===----------------------------------------------------------------------===//
 // Layer 6: MLIR Dialect Operations & Lowering Pattern Tests
@@ -11,6 +20,7 @@ module @test_ternary_dialect {
     // CHECK: arith.andi
     // CHECK: arith.xori
     // CHECK: arith.ori
+    // CHECK: arith.constant -1
     %pc = arith.andi %ap, %bp : i64
     %nc = arith.andi %an, %bn : i64
 
@@ -36,6 +46,7 @@ module @test_ternary_dialect {
     // CHECK: arith.ori
     // CHECK: "llvm.intr.ctpop"
     // CHECK: arith.subi
+    // CHECK: return %res : i64
     %pp1 = arith.andi %ap, %bp : i64
     %pp2 = arith.andi %an, %bn : i64
     %p_prod = arith.ori %pp1, %pp2 : i64

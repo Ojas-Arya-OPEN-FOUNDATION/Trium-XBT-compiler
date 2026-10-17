@@ -98,6 +98,12 @@ public:
             row_ptr[m_current_build_row] = static_cast<uint32_t>(nnz);
         }
 
+        // Enforce row-major sorted column order (get() relies on it via lower_bound).
+        if (nnz > row_ptr[m_current_build_row] && !col_indices.empty() &&
+            c < col_indices.back()) {
+            throw std::invalid_argument("push_element: columns within a row must be strictly increasing");
+        }
+
         col_indices.push_back(static_cast<uint32_t>(c));
         size_t word_idx = nnz / 64;
         size_t bit_idx = nnz % 64;

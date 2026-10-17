@@ -125,6 +125,24 @@ target_link_libraries(TernaryIREEPlugin PUBLIC
 )
 
 # ==============================================================================
+# Target: ternary_clibi (Shared Runtime Library for C ABI / FFI)
+# ==============================================================================
+add_library(ternary_clibi SHARED
+    lib/Ternary/ternary_c_abi.cpp
+)
+
+target_include_directories(ternary_clibi PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+set_target_properties(ternary_clibi PROPERTIES
+    OUTPUT_NAME bt_runtime
+    BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
+    INSTALL_RPATH "@loader_path"
+)
+
+# ==============================================================================
 # Target: bt-compiler (Native Balanced Ternary End-to-End Compiler)
 # ==============================================================================
 add_executable(bt-compiler
@@ -188,10 +206,29 @@ if(BT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/iree
     )
+    target_compile_definitions(unit_bt_opt PRIVATE
+        BT_UNIT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     target_link_libraries(unit_bt_opt PRIVATE
         TernaryDialect
         TernaryIREEPlugin
     )
+
+    add_executable(unit_frontend_fp_sparse test/Unit/test_unit_frontend_fp_sparse.cpp)
+    target_include_directories(unit_frontend_fp_sparse PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_c_abi_ffi test/Unit/test_unit_c_abi_ffi.cpp)
+    target_include_directories(unit_c_abi_ffi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(unit_c_abi_ffi PRIVATE ternary_clibi)
+    set_target_properties(unit_c_abi_ffi PROPERTIES
+        BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(unit_bigint_symplectic test/Unit/test_unit_bigint_symplectic.cpp)
+    target_include_directories(unit_bigint_symplectic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_xbt_hw test/Unit/test_unit_xbt_hw.cpp)
+    target_include_directories(unit_xbt_hw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
     # CTest Registration: Layer 1 Unit Tests
     add_test(NAME Layer1_Unit_Core COMMAND unit_core)
@@ -202,6 +239,10 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer1_Unit_FP_Sparse COMMAND unit_fp_sparse)
     add_test(NAME Layer1_Unit_LibBT COMMAND unit_libbt)
     add_test(NAME Layer1_Unit_BT_Opt COMMAND unit_bt_opt)
+    add_test(NAME Layer1_Unit_Frontend_FP_Sparse COMMAND unit_frontend_fp_sparse)
+    add_test(NAME Layer1_Unit_C_ABI_FFI COMMAND unit_c_abi_ffi)
+    add_test(NAME Layer1_Unit_BigInt_Symplectic COMMAND unit_bigint_symplectic)
+    add_test(NAME Layer1_Unit_XBT_HW COMMAND unit_xbt_hw)
 
     # CTest Registration: Layers 2-7
     add_test(NAME Layer2_Regression

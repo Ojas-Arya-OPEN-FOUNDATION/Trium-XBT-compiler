@@ -71,8 +71,12 @@ struct PlanarTensorView {
 
 /**
  * @brief Host-Side Factory for wrapping TernaryMatrix into a Kokkos-compatible PlanarTensorView.
+ *
+ * NOT noexcept: the host rail storage is heap-allocated via std::make_shared and can throw
+ * std::bad_alloc; the noexcept the old signature carried would have turned that OOM into
+ * std::terminate.
  */
-inline PlanarTensorView<void> make_host_view(TernaryMatrix& mat) noexcept {
+inline PlanarTensorView<void> make_host_view(TernaryMatrix& mat) {
     PlanarTensorView<void> view;
     view.rows = mat.rows;
     view.cols = mat.cols;
@@ -183,15 +187,31 @@ public:
 
 /**
  * @brief Persistent Multi-Core Worker Pool for C++20 Kokkos Execution.
+ *
+ * Concurrency contract:
+ * - Queue/dequeue state and liveness flags are std::atomic where they are read from
+ *   non-owning threads (active_threads/stop_flag), preventing torn reads during reinit.
+ * - shutdown() never drops queued work: after joining the workers it DRAINS the task
+ *   queue and EXECUTES every remaining task inline, so any latch a queued task was
+ *   going to count down still gets counted and waiting latches always release.
+ * - shutdown()/init() are serialized by a lifecycle mutex (no concurrent double-join).
+ * - Calls made FROM a pool worker thread are guarded: nested parallel_for/reduce run
+ *   in-place serially (a nested latch self-join deadlocks the pool), and reinit from a
+ *   worker never tears the pool down (a worker cannot join the pool it runs inside).
  */
 class ThreadPool {
 private:
+    // Tracks threads that run pool worker lambdas; used to guard nested dispatch and
+    // nested shutdown/reinit from deadlocking on self-join / self-teardown.
+    inline static thread_local bool s_is_pool_worker{false};
+
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> task_queue;
     std::mutex queue_mutex;
     std::condition_variable cv_task;
     std::atomic<bool> stop_flag{false};
-    size_t active_threads{0};
+    std::atomic<size_t> active_threads{0};
+    std::mutex lifecycle_mutex; // serializes init()/shutdown() (no concurrent double-join)
 
     ThreadPool() {
         size_t hw = std::thread::hardware_concurrency();
@@ -199,20 +219,22 @@ private:
     }
 
     void init(size_t threads) {
-        shutdown();
-        stop_flag = false;
-        active_threads = threads;
+        shutdown(); // joins all workers, then drains & executes any still-queued tasks
+        stop_flag.store(false, std::memory_order_release);
+        active_threads.store(threads, std::memory_order_release);
         workers.reserve(threads);
         for (size_t t = 0; t < threads; ++t) {
             workers.emplace_back([this]() {
+                s_is_pool_worker = true;
                 while (true) {
                     std::function<void()> task;
                     {
                         std::unique_lock<std::mutex> lock(this->queue_mutex);
                         this->cv_task.wait(lock, [this]() {
-                            return this->stop_flag.load() || !this->task_queue.empty();
+                            return this->stop_flag.load(std::memory_order_acquire) ||
+                                   !this->task_queue.empty();
                         });
-                        if (this->stop_flag.load() && this->task_queue.empty()) {
+                        if (this->stop_flag.load(std::memory_order_acquire) && this->task_queue.empty()) {
                             return;
                         }
                         task = std::move(this->task_queue.front());
@@ -224,19 +246,49 @@ private:
         }
     }
 
-    void shutdown() {
-        if (workers.empty()) return;
+    std::vector<std::function<void()>> drain_queue() {
+        std::vector<std::function<void()>> remaining;
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
-            stop_flag = true;
+            while (!task_queue.empty()) {
+                remaining.push_back(std::move(task_queue.front()));
+                task_queue.pop();
+            }
+        }
+        return remaining;
+    }
+
+    void shutdown() {
+        std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex);
+
+        // A pool worker calling shutdown() would self-join its own std::thread
+        // (std::system_error / deadlock). Stop everything, detach ONLY our own worker
+        // object, join the others, and finish the drain inline below.
+        const bool from_worker = s_is_pool_worker;
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            stop_flag.store(true, std::memory_order_release);
         }
         cv_task.notify_all();
+
         for (auto& th : workers) {
-            if (th.joinable()) th.join();
+            if (!th.joinable()) continue;
+            if (from_worker && th.get_id() == std::this_thread::get_id()) {
+                th.detach(); // cannot join self; thread exits when it observes stop+empty
+            } else {
+                th.join();
+            }
         }
         workers.clear();
-        std::queue<std::function<void()>> empty;
-        std::swap(task_queue, empty);
+
+        // Drain and EXECUTE remaining queued tasks on the caller thread. This is what
+        // guarantees latch waiters release: every drained task runs (and counts its
+        // latch down) instead of being destroyed with the queue.
+        active_threads.store(0, std::memory_order_release); // drained work runs serially
+        auto remaining = drain_queue();
+        for (auto& task : remaining) {
+            if (task) task();
+        }
     }
 
 public:
@@ -249,14 +301,28 @@ public:
         return pool;
     }
 
+    [[nodiscard]] static bool is_worker_thread() noexcept {
+        return s_is_pool_worker;
+    }
+
     void reinit(size_t threads) {
         if (threads == 0) threads = std::thread::hardware_concurrency();
-        if (threads == active_threads && !workers.empty()) return;
+        if (is_worker_thread()) {
+            // Reject teardown requests originating from a pool worker: that worker cannot
+            // join or tear down the pool it is running inside. The existing pool is kept;
+            // dispatches from a worker already run in-place serially.
+            return;
+        }
+        if (threads == active_threads.load(std::memory_order_acquire) && !workers.empty()) {
+            // Already initialized with the same worker count: skip full teardown so
+            // per-dispatch initialize() calls (e.g. parallel_gemm) do not churn the pool.
+            return;
+        }
         init(threads);
     }
 
     size_t get_thread_count() const noexcept {
-        return active_threads;
+        return active_threads.load(std::memory_order_acquire);
     }
 
     void enqueue(std::function<void()> task) {
@@ -297,6 +363,11 @@ inline bool is_initialized() noexcept {
 
 /**
  * @brief Kokkos::parallel_for dispatch across CPU threads with chunk-level static scheduling.
+ *
+ * Nested-dispatch guard: when invoked FROM a pool worker thread (nested parallel_for),
+ * the range is executed serially in-place on that worker. Enqueueing nested chunks and
+ * waiting on the chunk latch would deadlock the pool — the worker would block forever
+ * waiting for chunks that can only be picked up by workers that are themselves blocked.
  */
 template <typename IndexType, typename Functor>
 inline void parallel_for(const RangePolicy<IndexType>& policy, const Functor& func) {
@@ -304,7 +375,7 @@ inline void parallel_for(const RangePolicy<IndexType>& policy, const Functor& fu
     if (total == 0) return;
 
     size_t nthreads = ThreadPool::instance().get_thread_count();
-    if (nthreads <= 1 || total == 1) {
+    if (nthreads <= 1 || total == 1 || ThreadPool::is_worker_thread()) {
         for (IndexType i = policy.begin(); i < policy.end(); ++i) {
             func(i);
         }
@@ -356,6 +427,9 @@ inline void parallel_for(const MDRangePolicy<RankTag, IndexType>& policy, const 
 
 /**
  * @brief Kokkos::parallel_reduce dispatch with thread-local accumulators.
+ *
+ * Same nested-dispatch guard as parallel_for: ranges invoked from a pool worker run
+ * serially in-place to avoid latch self-deadlock inside the pool.
  */
 template <typename IndexType, typename Functor, typename ValueType, typename Reducer = std::plus<ValueType>>
 inline void parallel_reduce(const RangePolicy<IndexType>& policy, const Functor& func,
@@ -364,7 +438,7 @@ inline void parallel_reduce(const RangePolicy<IndexType>& policy, const Functor&
     if (total == 0) return;
 
     size_t nthreads = ThreadPool::instance().get_thread_count();
-    if (nthreads <= 1 || total == 1) {
+    if (nthreads <= 1 || total == 1 || ThreadPool::is_worker_thread()) {
         for (IndexType i = policy.begin(); i < policy.end(); ++i) {
             func(i, result);
         }

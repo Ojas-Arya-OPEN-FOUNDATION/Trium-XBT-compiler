@@ -527,11 +527,29 @@ int main(int argc, char** argv) {
         } else if (arg == "--kokkos") {
             opts.enableKokkos = true;
         } else if (arg.rfind("--threads=", 0) == 0) {
+            std::string val = arg.substr(10);
+            // Only non-negative integer digits are accepted ('-', letters, and
+            // other characters produce a hard error, not a silent fallback).
+            bool digits_only = !val.empty();
+            for (char ch : val) {
+                if (ch < '0' || ch > '9') {
+                    digits_only = false;
+                    break;
+                }
+            }
             try {
-                opts.kokkosThreads = std::stoul(arg.substr(10));
-            } catch (...) {
-                std::cerr << "Warning: Invalid thread count '" << arg.substr(10) << "', using hardware default.\n";
-                opts.kokkosThreads = 0;
+                if (!digits_only) {
+                    throw std::invalid_argument("expected a non-negative integer");
+                }
+                size_t parsed = 0;
+                opts.kokkosThreads = static_cast<size_t>(std::stoul(val, &parsed));
+                if (parsed != val.size()) {
+                    throw std::invalid_argument("trailing characters");
+                }
+            } catch (const std::exception&) {
+                std::cerr << "Error: Invalid thread count '" << val
+                          << "'. Expected a non-negative integer: --threads=<N>\n";
+                return 1;
             }
         } else if (arg == "--test") {
             opts.runSelfTest = true;
@@ -641,15 +659,32 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            frontend::Parser parser(src);
-            auto prog = parser.parse_program();
+            std::shared_ptr<frontend::ProgramNode> prog;
+            try {
+                frontend::Parser parser(src);
+                prog = parser.parse_program();
+            } catch (const frontend::ParseError& e) {
+                std::cerr << "Error: " << e.what() << " (input file: " << opts.inputFile << ")\n";
+                return 1;
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Failed to parse input file " << opts.inputFile
+                          << ": " << e.what() << "\n";
+                return 1;
+            }
             if (!prog) {
                 std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
                 return 1;
             }
 
             auto t_start = std::chrono::high_resolution_clock::now();
-            int exit_code = codegen::NativeLLVMJIT::execute_program(*prog, false, opts.emitDebug, opts.enableLTO, opts.inputFile);
+            int exit_code = 0;
+            try {
+                exit_code = codegen::NativeLLVMJIT::execute_program(*prog, false, opts.emitDebug, opts.enableLTO, opts.inputFile);
+            } catch (const std::exception& e) {
+                std::cerr << "\nError: Native JIT execution failed for " << opts.inputFile
+                          << ": " << e.what() << "\n";
+                return 1;
+            }
             auto t_end = std::chrono::high_resolution_clock::now();
             double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
@@ -718,8 +753,18 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            frontend::Parser parser(src);
-            auto prog = parser.parse_program();
+            std::shared_ptr<frontend::ProgramNode> prog;
+            try {
+                frontend::Parser parser(src);
+                prog = parser.parse_program();
+            } catch (const frontend::ParseError& e) {
+                std::cerr << "Error: " << e.what() << " (input file: " << opts.inputFile << ")\n";
+                return 1;
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Failed to parse input file " << opts.inputFile
+                          << ": " << e.what() << "\n";
+                return 1;
+            }
             if (!prog) {
                 std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
                 return 1;
@@ -749,7 +794,16 @@ int main(int argc, char** argv) {
             std::cerr << "Error: Failed to create temporary IR file!\n";
             return 1;
         }
-        write(fd_ir, llvm_ir.data(), llvm_ir.size());
+        {
+            ssize_t written = write(fd_ir, llvm_ir.data(), llvm_ir.size());
+            if (written < 0 || static_cast<size_t>(written) != llvm_ir.size()) {
+                std::cerr << "Error: Short write while buffering temporary IR file ("
+                          << tmp_ir_path << ")!\n";
+                close(fd_ir);
+                unlink(tmp_ir_path);
+                return 1;
+            }
+        }
         close(fd_ir);
 
         std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
@@ -791,8 +845,18 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            frontend::Parser parser(src);
-            auto prog = parser.parse_program();
+            std::shared_ptr<frontend::ProgramNode> prog;
+            try {
+                frontend::Parser parser(src);
+                prog = parser.parse_program();
+            } catch (const frontend::ParseError& e) {
+                std::cerr << "Error: " << e.what() << " (input file: " << opts.inputFile << ")\n";
+                return 1;
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Failed to parse input file " << opts.inputFile
+                          << ": " << e.what() << "\n";
+                return 1;
+            }
             if (!prog) {
                 std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
                 return 1;
@@ -879,6 +943,10 @@ int main(int argc, char** argv) {
                     }
                 }
                 std::ofstream obj_f(out_obj, std::ios::binary);
+                if (!obj_f.is_open()) {
+                    std::cerr << "Error: Cannot open output object file: " << out_obj << "\n";
+                    return 1;
+                }
                 uint8_t elf64_hdr[64] = {
                     0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     1, 0,
@@ -892,8 +960,16 @@ int main(int argc, char** argv) {
                     0, 0, 0, 0, 64, 0, 0, 0
                 };
                 obj_f.write(reinterpret_cast<char*>(elf64_hdr), sizeof(elf64_hdr));
+                if (!obj_f.good()) {
+                    std::cerr << "Error: Failed writing ELF stub header to " << out_obj << "\n";
+                    obj_f.close();
+                    return 1;
+                }
                 obj_f.close();
-                std::cout << "[Target Codegen] Successfully emitted object file: " << out_obj << " (Target: " << triple << ")\n";
+                std::cout << "[Target Codegen] Wrote ELF64 stub header to: " << out_obj
+                          << " (Target: " << triple << ")\n"
+                          << "  NOTE: object emission is a stub; sections are not implemented. "
+                          << "Use -S to emit assembly instead.\n";
                 return 0;
             }
         }
@@ -905,7 +981,16 @@ int main(int argc, char** argv) {
             std::cerr << "Error: Failed to create temporary IR file!\n";
             return 1;
         }
-        write(fd_ir, llvm_ir.data(), llvm_ir.size());
+        {
+            ssize_t written = write(fd_ir, llvm_ir.data(), llvm_ir.size());
+            if (written < 0 || static_cast<size_t>(written) != llvm_ir.size()) {
+                std::cerr << "Error: Short write while buffering temporary IR file ("
+                          << tmp_ir_path << ")!\n";
+                close(fd_ir);
+                unlink(tmp_ir_path);
+                return 1;
+            }
+        }
         close(fd_ir);
 
         if (opts.outputMode == OutputMode::ASM) {
@@ -929,6 +1014,9 @@ int main(int argc, char** argv) {
                     std::string asm_code((std::istreambuf_iterator<char>(asm_file)), std::istreambuf_iterator<char>());
                     std::cout << asm_code;
                     asm_file.close();
+                } else {
+                    std::cerr << "Error: Emitted assembly file could not be opened: " << asm_path << "\n";
+                    return 1;
                 }
                 unlink(asm_path.c_str());
             } else {
@@ -997,8 +1085,18 @@ int main(int argc, char** argv) {
                     return 1;
                 }
                 std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-                frontend::Parser parser(src);
-                auto prog = parser.parse_program();
+                std::shared_ptr<frontend::ProgramNode> prog;
+                try {
+                    frontend::Parser parser(src);
+                    prog = parser.parse_program();
+                } catch (const frontend::ParseError& e) {
+                    std::cerr << "Error: " << e.what() << " (input file: " << opts.inputFile << ")\n";
+                    return 1;
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Failed to parse input file " << opts.inputFile
+                              << ": " << e.what() << "\n";
+                    return 1;
+                }
                 if (!prog) {
                     std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
                     return 1;

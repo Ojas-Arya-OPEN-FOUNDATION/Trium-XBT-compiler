@@ -173,9 +173,9 @@ def verify_all():
                     s_l1 = st2_s2
 
                     # Level 2: BTFA(S_l1, C_l1, D)
-                    # Notice: in radix-3 carry-save trees, shifting carry by 1 trit (power of 3)
-                    # means 3*c_l1 + s_l1 = va + vb + vc.
-                    assert 3 * c_l1 + s_l1 == va + vb + vc, f"BTFA failed on {va},{vb},{vc}"
+                    # Level 2 combines S_l1, the shifted carry (3*c_l1) and D, so the
+                    # full integer invariant must include vd.
+                    assert s_l1 + vd + 3 * c_l1 == total_in, f"4-to-2 CSA failed on {va},{vb},{vc},{vd}"
 
     print("  -> PASSED: 4-to-2 BT-CSA Compressor tree algebraically verified for all 81 states.")
 

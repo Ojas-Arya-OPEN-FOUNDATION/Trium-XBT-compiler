@@ -143,7 +143,7 @@ std::string CUDAPTXBackend::emitShaderKernel(const std::string& opName, size_t M
 std::string CPULLVMBackend::emitShaderKernel(const std::string& opName, size_t M, size_t N, size_t K) const {
     std::ostringstream ss;
     ss << "; IREE CPU LLVM Dispatch for " << opName << " (" << M << "x" << N << "x" << K << ")\n";
-    ss << "declare i64 @llvm.intr.ctpop.i64(i64)\n";
+    ss << "declare i64 @llvm.ctpop.i64(i64)\n";
     ss << "define void @bt_iree_cpu_dispatch(i64* %A_P, i64* %A_N, i64* %B_P, i64* %B_N, i64* %C) {\n";
     ss << "    ; Vectorized AVX-512 / ARM64 NEON ctpop loop\n";
     ss << "    ret void\n";

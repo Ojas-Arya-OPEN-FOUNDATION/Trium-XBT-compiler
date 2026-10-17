@@ -212,6 +212,16 @@ public:
 
     // Conversion to int64_t using SWAR on word 0
     int64_t to_int64(size_t num_trits = 39) const {
+        if (num_trits > 39) {
+            throw std::invalid_argument("TritBigInt::to_int64: num_trits must be <= 39");
+        }
+        // Refuse silent truncation: any non-zero trit above num_trits means the
+        // value does not fit in the requested width (and likely not in int64).
+        for (size_t i = num_trits; i < 64 * NumWords; ++i) {
+            if (getTrit(i) != Trit::Zero) {
+                throw std::overflow_error("TritBigInt::to_int64: value has non-zero trits above num_trits");
+            }
+        }
         return swar_to_int64(words[0], num_trits);
     }
 
