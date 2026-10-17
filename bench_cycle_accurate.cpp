@@ -580,6 +580,81 @@ BenchmarkResult bench_btfp32_mul() {
     return res;
 }
 
+BenchmarkResult bench_kogge_stone_64() {
+    const uint64_t ITERS = 5000000;
+    const uint64_t freq = HardwareCycleTimer::read_frequency();
+    bt::TritWord64 a(0xFFFFFFFFFFFFFFFFULL, 0ULL); // worst-case 64-trit ripple!
+    bt::TritWord64 b(1ULL, 0ULL);
+
+    bt::TritWord64 dummy;
+    for (uint64_t i = 0; i < 100000; ++i) {
+        dummy = bt::kogge_stone_add64(a, b);
+    }
+    doNotOptimize(dummy);
+
+    uint64_t c_start = HardwareCycleTimer::read_counter();
+    bt::TritWord64 out;
+    for (uint64_t i = 0; i < ITERS; ++i) {
+        out = bt::kogge_stone_add64(a, b);
+        doNotOptimize(out);
+    }
+    uint64_t c_end = HardwareCycleTimer::read_counter();
+
+    uint64_t total_cycles = c_end - c_start;
+    double elapsed_sec = static_cast<double>(total_cycles) / static_cast<double>(freq);
+
+    BenchmarkResult res;
+    res.name = "7. Kogge-Stone 64-Trit Prefix Add";
+    res.iterations = ITERS;
+    res.work_units = ITERS * 64;
+    res.unit_label = "trits";
+    res.total_cycles = total_cycles;
+    res.elapsed_seconds = elapsed_sec;
+    res.cycles_per_op = static_cast<double>(total_cycles) / static_cast<double>(ITERS);
+    res.cycles_per_unit = res.cycles_per_op / 64.0;
+    res.ns_per_op = (elapsed_sec / static_cast<double>(ITERS)) * 1e9;
+    res.giga_ops_sec = (static_cast<double>(res.work_units) / elapsed_sec) / 1e9;
+    return res;
+}
+
+BenchmarkResult bench_base243_word64_unpack() {
+    const uint64_t ITERS = 5000000;
+    const uint64_t freq = HardwareCycleTimer::read_frequency();
+    bt::TritWord64 src(0x5555555555555555ULL, 0xAAAAAAAAAAAAAAAAULL);
+    uint8_t packed[13];
+    bt::pack_base243_word64(src, packed);
+
+    bt::TritWord64 dummy;
+    for (uint64_t i = 0; i < 100000; ++i) {
+        dummy = bt::unpack_base243_word64(packed);
+    }
+    doNotOptimize(dummy);
+
+    uint64_t c_start = HardwareCycleTimer::read_counter();
+    bt::TritWord64 out;
+    for (uint64_t i = 0; i < ITERS; ++i) {
+        out = bt::unpack_base243_word64(packed);
+        doNotOptimize(out);
+    }
+    uint64_t c_end = HardwareCycleTimer::read_counter();
+
+    uint64_t total_cycles = c_end - c_start;
+    double elapsed_sec = static_cast<double>(total_cycles) / static_cast<double>(freq);
+
+    BenchmarkResult res;
+    res.name = "8. Block Base-243 -> Dual-Rail 64t";
+    res.iterations = ITERS;
+    res.work_units = ITERS * 64;
+    res.unit_label = "trits";
+    res.total_cycles = total_cycles;
+    res.elapsed_seconds = elapsed_sec;
+    res.cycles_per_op = static_cast<double>(total_cycles) / static_cast<double>(ITERS);
+    res.cycles_per_unit = res.cycles_per_op / 64.0;
+    res.ns_per_op = (elapsed_sec / static_cast<double>(ITERS)) * 1e9;
+    res.giga_ops_sec = (static_cast<double>(res.work_units) / elapsed_sec) / 1e9;
+    return res;
+}
+
 // ==============================================================================
 // Main Driver & Report Table Generator
 // ==============================================================================
@@ -627,22 +702,30 @@ int main() {
     results.push_back(bench_btfp32_mul());
     print_result_row(results.back());
 
+    results.push_back(bench_kogge_stone_64());
+    print_result_row(results.back());
+
+    results.push_back(bench_base243_word64_unpack());
+    print_result_row(results.back());
+
     std::cout << "+-----------------------------------+-------------+-----------+-----------+-----------+--------------+\n\n";
 
     std::cout << "==========================================================================================================\n";
     std::cout << "  MICROARCHITECTURAL PERFORMANCE HIGHLIGHTS:\n";
     std::cout << "  1. Dual-Rail Planar Dot Product: " << std::fixed << std::setprecision(3) << results[0].cycles_per_unit
-              << " cycles/trit (" << std::setprecision(2) << results[0].giga_ops_sec << " GTOPS peak throughput).\n";
+              << " cycles/trit (" << std::setprecision(2) << results[1].giga_ops_sec << " GTOPS peak throughput).\n";
     std::cout << "  2. Balanced Ternary Half-Adder:  " << std::setprecision(3) << results[2].cycles_per_unit
               << " cycles/trit addition (6 bitwise instructions in single cycle).\n";
-    std::cout << "  3. Base-243 Reciprocal Unpack:   " << std::setprecision(3) << results[3].cycles_per_unit
-              << " cycles/trit (division-free 1.6 bits/trit compression unpack).\n";
+    std::cout << "  3. Base-243 Reciprocal Unpack:   " << std::setprecision(3) << results[10].cycles_per_unit
+              << " cycles/trit (" << std::setprecision(2) << results[10].giga_ops_sec << " GTrits/sec block Dual-Rail unpack).\n";
     std::cout << "  4. Radix-3 Cooley-Tukey FFT:     " << std::setprecision(2) << results[4].giga_ops_sec
               << " GFLOPS peak butterfly performance (" << std::setprecision(1) << results[5].ns_per_op / 1e3 << " us for N=729 FFT).\n";
     std::cout << "  5. Multiplier-Free T-CSR SpMV:   " << std::setprecision(3) << results[6].cycles_per_unit
               << " cycles/NNZ (" << std::setprecision(2) << results[6].giga_ops_sec << " Giga-NNZ/sec).\n";
-    std::cout << "  6. BT-FP32 Arithmetic:           " << std::setprecision(2) << results[7].giga_ops_sec
-              << " GAdd/s addition, " << results[8].giga_ops_sec << " GMul/s multiplication.\n";
+    std::cout << "  6. BT-FP32 Arithmetic (v2 O(1)): " << std::setprecision(2) << results[7].giga_ops_sec
+              << " GAdd/s addition, " << results[8].giga_ops_sec << " GMul/s multiplication (" << results[8].ns_per_op << " ns/mul).\n";
+    std::cout << "  7. Kogge-Stone 64t Prefix Adder: " << std::setprecision(2) << results[9].ns_per_op
+              << " ns/word (" << results[9].giga_ops_sec << " GTrits/sec branchless worst-case ripple).\n";
     std::cout << "==========================================================================================================\n";
 
     return 0;

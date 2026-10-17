@@ -199,6 +199,141 @@ void test_swar_tree_reduction() {
     std::cout << "    -> Douglas W. Jones SWAR reduction verified bit-exact 100% across all cases.\n";
 }
 
+void test_kogge_stone_add64() {
+    std::cout << "  [Core] Testing Branchless 6-Step Kogge-Stone Parallel Prefix Adder...\n";
+
+    // 1. Worst-case 64-trit positive carry ripple: (all +1s) + 1 -> all -1s, cout_msb = +1
+    {
+        TritWord64 all_pos(~0ULL, 0ULL);
+        TritWord64 one(1ULL, 0ULL);
+        int8_t cout = 0;
+        TritWord64 sum = kogge_stone_add64(all_pos, one, 0, &cout);
+        assert(sum.isValid());
+        assert(sum.P == 0ULL && sum.N == ~0ULL);
+        assert(cout == 1);
+
+        // Also test via cin = +1 with b = 0
+        int8_t cout2 = 0;
+        TritWord64 sum2 = kogge_stone_add64(all_pos, TritWord64(0, 0), 1, &cout2);
+        assert(sum2.P == 0ULL && sum2.N == ~0ULL);
+        assert(cout2 == 1);
+    }
+
+    // 2. Worst-case 64-trit negative carry ripple: (all -1s) + (-1) -> all +1s, cout_msb = -1
+    {
+        TritWord64 all_neg(0ULL, ~0ULL);
+        TritWord64 neg_one(0ULL, 1ULL);
+        int8_t cout = 0;
+        TritWord64 sum = kogge_stone_add64(all_neg, neg_one, 0, &cout);
+        assert(sum.isValid());
+        assert(sum.P == ~0ULL && sum.N == 0ULL);
+        assert(cout == -1);
+
+        int8_t cout2 = 0;
+        TritWord64 sum2 = kogge_stone_add64(all_neg, TritWord64(0, 0), -1, &cout2);
+        assert(sum2.P == ~0ULL && sum2.N == 0ULL);
+        assert(cout2 == -1);
+    }
+
+    // 3. Cancellation: a + (-a) == 0 with cout = 0
+    uint32_t seed = 0xCAFEBABEU;
+    auto lcg = [&seed]() {
+        seed = seed * 1664525U + 1013904223U;
+        return seed;
+    };
+
+    for (int iter = 0; iter < 5000; ++iter) {
+        TritWord64 a, b;
+        for (size_t i = 0; i < 64; ++i) {
+            a.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+            b.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+        }
+
+        // Reference sequential ripple-carry adder across 64 trits
+        for (int8_t cin : {static_cast<int8_t>(-1), static_cast<int8_t>(0), static_cast<int8_t>(1)}) {
+            TritWord64 ref_sum;
+            int8_t c = cin;
+            for (size_t i = 0; i < 64; ++i) {
+                int s = static_cast<int>(to_int(a.getTrit(i))) + static_cast<int>(to_int(b.getTrit(i))) + static_cast<int>(c);
+                int8_t next_c = 0;
+                if (s >= 2) {
+                    s -= 3;
+                    next_c = 1;
+                } else if (s <= -2) {
+                    s += 3;
+                    next_c = -1;
+                }
+                ref_sum.setTrit(i, from_int(static_cast<int8_t>(s)));
+                c = next_c;
+            }
+
+            int8_t ks_cout = 0;
+            TritWord64 ks_sum = kogge_stone_add64(a, b, cin, &ks_cout);
+            assert(ks_sum.isValid());
+            assert(ks_sum.P == ref_sum.P && ks_sum.N == ref_sum.N);
+            assert(ks_cout == c);
+        }
+    }
+    std::cout << "    -> Kogge-Stone 64-trit parallel prefix adder verified bit-exact across 15,000 random & boundary cases.\n";
+}
+
+void test_base243_word64_block_transpose() {
+    std::cout << "  [Core] Testing Direct Block Base-243 <-> Dual-Rail 64-Trit Transpose...\n";
+
+    // Edge cases: all 0s, all +1s, all -1s, alternating
+    std::vector<TritWord64> edge_words = {
+        TritWord64(0ULL, 0ULL),
+        TritWord64(~0ULL, 0ULL),
+        TritWord64(0ULL, ~0ULL),
+        TritWord64(0x5555555555555555ULL, 0xAAAAAAAAAAAAAAAAULL),
+        TritWord64(0xAAAAAAAAAAAAAAAAULL, 0x5555555555555555ULL)
+    };
+
+    for (const auto& w : edge_words) {
+        uint8_t packed[13]{};
+        pack_base243_word64(w, packed);
+        for (int k = 0; k < 13; ++k) {
+            assert(packed[k] < 243);
+        }
+        TritWord64 unpacked = unpack_base243_word64(packed);
+        assert(unpacked.isValid());
+        assert(unpacked.P == w.P && unpacked.N == w.N);
+    }
+
+    // 10,000 random 64-trit words roundtrip + cross-check with Base243Codec::pack5 / unpack5_fast
+    uint32_t seed = 0x13579BDFU;
+    auto lcg = [&seed]() {
+        seed = seed * 1664525U + 1013904223U;
+        return seed;
+    };
+
+    for (int iter = 0; iter < 10000; ++iter) {
+        TritWord64 w;
+        for (size_t i = 0; i < 64; ++i) {
+            w.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+        }
+        uint8_t packed[13]{};
+        pack_base243_word64(w, packed);
+
+        // Verify each byte matches Base243Codec::pack5
+        for (int k = 0; k < 12; ++k) {
+            std::array<Trit, 5> grp = {
+                w.getTrit(5 * k + 0),
+                w.getTrit(5 * k + 1),
+                w.getTrit(5 * k + 2),
+                w.getTrit(5 * k + 3),
+                w.getTrit(5 * k + 4)
+            };
+            assert(packed[k] == Base243Codec::pack5(grp));
+        }
+
+        TritWord64 unpacked = unpack_base243_word64(packed);
+        assert(unpacked.isValid());
+        assert(unpacked.P == w.P && unpacked.N == w.N);
+    }
+    std::cout << "    -> Base-243 64-trit block transpose verified 100% lossless across 10,000 random words.\n";
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Core Primitives Tests...\n";
     test_primitives();
@@ -208,6 +343,8 @@ int main() {
     test_stream_codec();
     test_bounds_and_overflow();
     test_swar_tree_reduction();
+    test_kogge_stone_add64();
+    test_base243_word64_block_transpose();
     std::cout << "  -> PASSED: All Core Unit Tests Verified.\n";
     return 0;
 }

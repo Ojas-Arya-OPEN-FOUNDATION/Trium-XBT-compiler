@@ -27,6 +27,10 @@
 #include <utility>
 #include <initializer_list>
 #include <iomanip>
+#include <unordered_set>
+#include <unordered_map>
+#include <fstream>
+#include <filesystem>
 
 namespace bt::frontend {
 
@@ -53,8 +57,10 @@ enum class TokenType {
     Number,          // integer constants: 0, 42, 100
     FloatLiteral,    // floating point constants: 3.5, 0.75, 1.2e-3, -0.5
     TritLiteral,     // +1, -1, 0, +, -, or multi-trit words (+-0+)
+    StringLiteral,   // string literals: "module.bt"
 
     // Keywords
+    KwImport,        // @import or import
     KwFunc,          // func
     KwVar,           // var
     KwTrit,          // trit
@@ -112,6 +118,8 @@ inline std::string token_type_name(TokenType t) {
         case TokenType::Number:       return "NUMBER";
         case TokenType::FloatLiteral: return "FLOAT_LITERAL";
         case TokenType::TritLiteral:  return "TRIT_LITERAL";
+        case TokenType::StringLiteral:return "STRING_LITERAL";
+        case TokenType::KwImport:     return "KEYWORD(import)";
         case TokenType::KwFunc:       return "KEYWORD(func)";
         case TokenType::KwVar:        return "KEYWORD(var)";
         case TokenType::KwTrit:       return "KEYWORD(trit)";
@@ -385,6 +393,40 @@ public:
 
         char c = peek();
 
+        // 0a. '@import' directive
+        if (c == '@') {
+            size_t start = pos_;
+            advance(); // consume '@'
+            while (pos_ < source_.size() && (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_')) {
+                advance();
+            }
+            std::string text = source_.substr(start, pos_ - start);
+            if (text == "@import") {
+                Token tok{TokenType::KwImport, text, loc};
+                prev_token_ = tok;
+                return tok;
+            }
+            Token tok{TokenType::Error, text, loc};
+            prev_token_ = tok;
+            return tok;
+        }
+
+        // 0b. String literals ("path.bt")
+        if (c == '"') {
+            advance(); // consume opening '"'
+            size_t start = pos_;
+            while (pos_ < source_.size() && peek() != '"') {
+                advance();
+            }
+            std::string text = source_.substr(start, pos_ - start);
+            if (pos_ < source_.size() && peek() == '"') {
+                advance(); // consume closing '"'
+            }
+            Token tok{TokenType::StringLiteral, text, loc};
+            prev_token_ = tok;
+            return tok;
+        }
+
         // 1. Identifiers and Keywords
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
             size_t start = pos_;
@@ -394,7 +436,8 @@ public:
             std::string text = source_.substr(start, pos_ - start);
             TokenType type = TokenType::Ident;
 
-            if (text == "func")               type = TokenType::KwFunc;
+            if (text == "import")             type = TokenType::KwImport;
+            else if (text == "func")          type = TokenType::KwFunc;
             else if (text == "var")           type = TokenType::KwVar;
             else if (text == "trit")          type = TokenType::KwTrit;
             else if (text == "tritword")      type = TokenType::KwTritWord;
@@ -947,6 +990,8 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
+using FunctionCallNode = CallNode;
+
 // 14. If Node
 class IfNode : public ASTNode {
 public:
@@ -1292,10 +1337,142 @@ public:
           loc(l) {}
 };
 
+// ==============================================================================
+// 4b. Multi-File Module Preprocessor (@import "path.bt" / import "path.bt")
+// ==============================================================================
+
+class Preprocessor {
+public:
+    static std::string resolve_imports(const std::string& source,
+                                       const std::string& base_dir = ".",
+                                       std::unordered_set<std::string>* visited = nullptr) {
+        std::unordered_set<std::string> local_visited;
+        if (!visited) {
+            visited = &local_visited;
+        }
+
+        std::ostringstream out;
+        size_t pos = 0;
+        const size_t n = source.size();
+        size_t line = 1;
+
+        auto is_ident_char = [](char ch) -> bool {
+            return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+        };
+
+        while (pos < n) {
+            char c = source[pos];
+
+            // Preserve line comments
+            if (c == '/' && pos + 1 < n && source[pos + 1] == '/') {
+                while (pos < n && source[pos] != '\n') {
+                    out << source[pos++];
+                }
+                continue;
+            }
+
+            // Preserve block comments
+            if (c == '/' && pos + 1 < n && source[pos + 1] == '*') {
+                out << source[pos++];
+                out << source[pos++];
+                while (pos < n && !(source[pos] == '*' && pos + 1 < n && source[pos + 1] == '/')) {
+                    if (source[pos] == '\n') line++;
+                    out << source[pos++];
+                }
+                if (pos + 1 < n) {
+                    out << source[pos++];
+                    out << source[pos++];
+                }
+                continue;
+            }
+
+            // Preserve string literals not part of import
+            if (c == '"') {
+                out << source[pos++];
+                while (pos < n && source[pos] != '"') {
+                    if (source[pos] == '\n') line++;
+                    out << source[pos++];
+                }
+                if (pos < n) out << source[pos++];
+                continue;
+            }
+
+            // Check for @import or import keyword
+            bool is_at_import = (c == '@' && pos + 7 <= n &&
+                                 source.compare(pos, 7, "@import") == 0 &&
+                                 (pos + 7 == n || !is_ident_char(source[pos + 7])));
+            bool is_kw_import = (c == 'i' && pos + 6 <= n &&
+                                 (pos == 0 || !is_ident_char(source[pos - 1])) &&
+                                 source.compare(pos, 6, "import") == 0 &&
+                                 (pos + 6 == n || !is_ident_char(source[pos + 6])));
+
+            if (is_at_import || is_kw_import) {
+                size_t kw_len = is_at_import ? 7 : 6;
+                size_t scan = pos + kw_len;
+                while (scan < n && (source[scan] == ' ' || source[scan] == '\t' || source[scan] == '\r')) {
+                    scan++;
+                }
+                if (scan < n && source[scan] == '"') {
+                    scan++; // skip opening '"'
+                    size_t path_start = scan;
+                    while (scan < n && source[scan] != '"' && source[scan] != '\n') {
+                        scan++;
+                    }
+                    if (scan < n && source[scan] == '"') {
+                        std::string rel_path = source.substr(path_start, scan - path_start);
+                        scan++; // skip closing '"'
+                        while (scan < n && (source[scan] == ' ' || source[scan] == '\t' || source[scan] == '\r')) {
+                            scan++;
+                        }
+                        if (scan < n && source[scan] == ';') {
+                            scan++; // optional ';'
+                        }
+                        pos = scan;
+
+                        std::filesystem::path p(rel_path);
+                        std::filesystem::path full_p = p.is_absolute()
+                            ? p
+                            : (std::filesystem::path(base_dir) / p);
+                        std::error_code ec;
+                        std::filesystem::path canon = std::filesystem::weakly_canonical(full_p, ec);
+                        std::string norm_key = ec ? full_p.lexically_normal().string() : canon.string();
+
+                        if (visited->find(norm_key) == visited->end()) {
+                            visited->insert(norm_key);
+
+                            std::ifstream ifs(full_p);
+                            if (!ifs.is_open()) {
+                                ifs.open(rel_path);
+                            }
+                            if (!ifs.is_open()) {
+                                throw ParseError("Cannot open imported module '" + rel_path + "'", {line, 1});
+                            }
+                            std::string imported_content((std::istreambuf_iterator<char>(ifs)),
+                                                          std::istreambuf_iterator<char>());
+                            std::string child_dir = full_p.parent_path().empty()
+                                ? base_dir
+                                : full_p.parent_path().string();
+                            out << resolve_imports(imported_content, child_dir, visited) << "\n";
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            if (c == '\n') line++;
+            out << source[pos++];
+        }
+
+        return out.str();
+    }
+};
+
 class Parser {
 private:
     std::vector<Token> tokens_;
     size_t current_{0};
+    std::string base_dir_{"."};
+    std::unordered_set<std::string> visited_imports_;
 
     const Token& peek(size_t offset = 0) const {
         if (current_ + offset < tokens_.size()) {
@@ -1340,10 +1517,13 @@ private:
     }
 
 public:
-    explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
+    explicit Parser(std::vector<Token> tokens, std::string base_dir = ".")
+        : tokens_(std::move(tokens)), base_dir_(std::move(base_dir)) {}
 
-    explicit Parser(const std::string& source) {
-        Lexer lexer(source);
+    explicit Parser(const std::string& source, const std::string& base_dir = ".")
+        : base_dir_(base_dir) {
+        std::string resolved = Preprocessor::resolve_imports(source, base_dir_, &visited_imports_);
+        Lexer lexer(resolved);
         tokens_ = lexer.tokenize_all();
     }
 
@@ -1352,6 +1532,42 @@ public:
         prog->location = peek().loc;
 
         while (!is_at_end()) {
+            if (match({TokenType::KwImport})) {
+                SourceLocation loc = previous().loc;
+                Token path_tok = consume(TokenType::StringLiteral, "Expected string literal path after import");
+                match({TokenType::Semicolon});
+
+                std::filesystem::path p(path_tok.text);
+                std::filesystem::path full_p = p.is_absolute()
+                    ? p
+                    : (std::filesystem::path(base_dir_) / p);
+                std::error_code ec;
+                std::filesystem::path canon = std::filesystem::weakly_canonical(full_p, ec);
+                std::string norm_key = ec ? full_p.lexically_normal().string() : canon.string();
+
+                if (visited_imports_.find(norm_key) == visited_imports_.end()) {
+                    visited_imports_.insert(norm_key);
+                    std::ifstream ifs(full_p);
+                    if (!ifs.is_open()) ifs.open(path_tok.text);
+                    if (!ifs.is_open()) {
+                        throw ParseError("Cannot open imported module '" + path_tok.text + "'", loc);
+                    }
+                    std::string imported_src((std::istreambuf_iterator<char>(ifs)),
+                                              std::istreambuf_iterator<char>());
+                    std::string child_dir = full_p.parent_path().empty()
+                        ? base_dir_
+                        : full_p.parent_path().string();
+                    std::string resolved_sub = Preprocessor::resolve_imports(imported_src, child_dir, &visited_imports_);
+                    Parser sub_parser(Lexer(resolved_sub).tokenize_all(), child_dir);
+                    sub_parser.visited_imports_ = visited_imports_;
+                    auto sub_prog = sub_parser.parse_program();
+                    visited_imports_ = sub_parser.visited_imports_;
+                    for (auto& d : sub_prog->declarations) {
+                        prog->declarations.push_back(d);
+                    }
+                }
+                continue;
+            }
             prog->declarations.push_back(parse_declaration_or_statement());
         }
 
@@ -1999,7 +2215,19 @@ private:
     BTType current_type_{BTType::Unknown};
     std::vector<std::string> errors_;
 
+    void register_builtins() {
+        func_return_types_["planar_dot64"] = BTType::TritWord;
+        func_return_types_["btha_sum_p"]   = BTType::TritWord;
+        func_return_types_["btha_carry_p"] = BTType::TritWord;
+        func_return_types_["btha_sum_n"]   = BTType::TritWord;
+        func_return_types_["btha_carry_n"] = BTType::TritWord;
+    }
+
 public:
+    TypeChecker() {
+        register_builtins();
+    }
+
     const std::vector<std::string>& errors() const { return errors_; }
 
     BTType get_symbol_type(const std::string& name) const {
@@ -2010,6 +2238,8 @@ public:
     void typecheck(ProgramNode& prog) {
         errors_.clear();
         symbol_table_.clear();
+        func_return_types_.clear();
+        register_builtins();
         prog.accept(*this);
         if (!errors_.empty()) {
             throw TypeError(errors_[0]);
@@ -2194,6 +2424,26 @@ public:
             current_type_ = BTType::Void;
             return;
         }
+        if (node.callee == "planar_dot64" || node.callee == "btha_sum_p" ||
+            node.callee == "btha_carry_p" || node.callee == "btha_sum_n" ||
+            node.callee == "btha_carry_n") {
+            if (node.arguments.size() != 4) {
+                errors_.push_back("Built-in Dual-Rail intrinsic '" + node.callee +
+                                  "' requires 4 arguments (ap, an, bp, bn), got " +
+                                  std::to_string(node.arguments.size()));
+            }
+            for (auto& arg : node.arguments) {
+                if (arg) {
+                    arg->accept(*this);
+                    if (current_type_ == BTType::Float || current_type_ == BTType::SparseMatrix) {
+                        errors_.push_back("Invalid argument type '" + bttype_to_string(current_type_) +
+                                          "' for Dual-Rail intrinsic '" + node.callee + "'");
+                    }
+                }
+            }
+            current_type_ = BTType::TritWord;
+            return;
+        }
         if (node.callee == "matmul") {
             current_type_ = BTType::TritMatrix;
             return;
@@ -2201,6 +2451,9 @@ public:
         if (node.callee == "sparse_matrix") {
             current_type_ = BTType::SparseMatrix;
             return;
+        }
+        for (auto& arg : node.arguments) {
+            if (arg) arg->accept(*this);
         }
         auto it = func_return_types_.find(node.callee);
         current_type_ = (it != func_return_types_.end()) ? it->second : BTType::Int;
@@ -2217,6 +2470,8 @@ public:
         if (node.expr) node.expr->accept(*this);
     }
 };
+
+using SemanticAnalyzer = TypeChecker;
 
 } // namespace bt::frontend
 

@@ -41,12 +41,61 @@ namespace bt {
 namespace fp_detail {
 
 /**
- * @brief Computes 3^n as 128-bit signed integer.
+ * @brief Compile-time lookup table of 3^k for k in [0..39] (fits in signed 64-bit int64_t).
+ */
+constexpr std::array<int64_t, 40> POW3_64 = []() constexpr {
+    std::array<int64_t, 40> arr{};
+    int64_t p = 1;
+    for (int i = 0; i < 40; ++i) {
+        arr[i] = p;
+        if (i < 39) p *= 3;
+    }
+    return arr;
+}();
+
+/**
+ * @brief Compile-time lookup table of (3^k - 1) / 2 for k in [0..39].
+ */
+constexpr std::array<int64_t, 40> HALF_POW3_64 = []() constexpr {
+    std::array<int64_t, 40> arr{};
+    for (int i = 0; i < 40; ++i) {
+        arr[i] = (POW3_64[i] - 1) / 2;
+    }
+    return arr;
+}();
+
+/**
+ * @brief Compile-time lookup table of 3^k for k in [0..59] as 128-bit signed integer.
+ */
+constexpr std::array<__int128_t, 60> POW3_128 = []() constexpr {
+    std::array<__int128_t, 60> arr{};
+    __int128_t p = 1;
+    for (int i = 0; i < 60; ++i) {
+        arr[i] = p;
+        if (i < 59) p *= 3;
+    }
+    return arr;
+}();
+
+/**
+ * @brief Compile-time lookup table of (3^k - 1) / 2 for k in [0..59] as 128-bit signed integer.
+ */
+constexpr std::array<__int128_t, 60> HALF_POW3_128 = []() constexpr {
+    std::array<__int128_t, 60> arr{};
+    for (int i = 0; i < 60; ++i) {
+        arr[i] = (POW3_128[i] - 1) / 2;
+    }
+    return arr;
+}();
+
+/**
+ * @brief Computes 3^n as 128-bit signed integer (O(1) table lookup for n < 60).
  */
 constexpr inline __int128_t pow3_128(int n) noexcept {
     if (n <= 0) return 1;
-    __int128_t res = 1;
-    for (int i = 0; i < n; ++i) {
+    if (n < 60) return POW3_128[n];
+    __int128_t res = POW3_128[59];
+    for (int i = 59; i < n; ++i) {
         res *= 3;
     }
     return res;
@@ -83,27 +132,41 @@ constexpr inline __int128_t round_div3_128(__int128_t val) noexcept {
 }
 
 /**
- * @brief Multi-trit balanced truncation: divides by 3^k with zero statistical bias.
+ * @brief One-shot O(1) balanced power-of-3 division (64-bit).
+ * Mathematically identical to k sequential applications of round_div3.
  */
-constexpr inline int64_t round_div_pow3(int64_t val, int k) noexcept {
-    if (k <= 0) return val;
-    for (int i = 0; i < k; ++i) {
-        val = round_div3(val);
-        if (val == 0) break;
-    }
-    return val;
+constexpr inline int64_t round_div_pow3_fast64(int64_t val, int k) noexcept {
+    if (k <= 0 || val == 0) return val;
+    if (k >= 40) return 0;
+    int64_t p3 = POW3_64[k];
+    int64_t half = HALF_POW3_64[k];
+    return (val >= 0) ? ((val + half) / p3) : -((-val + half) / p3);
 }
 
 /**
- * @brief 128-bit multi-trit balanced truncation.
+ * @brief One-shot O(1) balanced power-of-3 division (128-bit).
+ * Mathematically identical to k sequential applications of round_div3_128.
+ */
+constexpr inline __int128_t round_div_pow3_fast128(__int128_t val, int k) noexcept {
+    if (k <= 0 || val == 0) return val;
+    if (k >= 60) return 0;
+    __int128_t p3 = POW3_128[k];
+    __int128_t half = HALF_POW3_128[k];
+    return (val >= 0) ? ((val + half) / p3) : -((-val + half) / p3);
+}
+
+/**
+ * @brief Multi-trit balanced truncation: divides by 3^k in O(1) with zero statistical bias.
+ */
+constexpr inline int64_t round_div_pow3(int64_t val, int k) noexcept {
+    return round_div_pow3_fast64(val, k);
+}
+
+/**
+ * @brief 128-bit multi-trit balanced truncation in O(1).
  */
 constexpr inline __int128_t round_div_pow3_128(__int128_t val, int k) noexcept {
-    if (k <= 0) return val;
-    for (int i = 0; i < k; ++i) {
-        val = round_div3_128(val);
-        if (val == 0) break;
-    }
-    return val;
+    return round_div_pow3_fast128(val, k);
 }
 
 } // namespace fp_detail
@@ -251,7 +314,7 @@ public:
 
     /**
      * @brief Normalizes mantissa so that |M| is in [min_norm_mantissa, max_mantissa].
-     * Discarded fractional trits use zero-bias balanced truncation.
+     * Uses CLZ bit-length difference to jump-divide/multiply in O(1) via round_div_pow3_fast64.
      */
     constexpr void normalize() noexcept {
         if (m_mantissa == 0) {
@@ -262,16 +325,36 @@ public:
         const int64_t max_m = max_mantissa();
         const int64_t min_m = min_norm_mantissa();
 
-        // Right shift with zero-bias balanced truncation while magnitude > max_m
-        while (m_mantissa > max_m || m_mantissa < -max_m) {
-            m_mantissa = fp_detail::round_div3(m_mantissa);
-            m_exponent += 1;
+        // Right shift with O(1) CLZ jump-division + at most 1-2 round_div3 steps
+        if (m_mantissa > max_m || m_mantissa < -max_m) {
+            uint64_t abs_m = (m_mantissa >= 0) ? static_cast<uint64_t>(m_mantissa)
+                                               : (0ULL - static_cast<uint64_t>(m_mantissa));
+            int delta_bits = __builtin_clzll(static_cast<uint64_t>(max_m)) - __builtin_clzll(abs_m);
+            int k_est = (delta_bits * 100) / 159 - 1;
+            if (k_est > 0) {
+                m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, k_est);
+                m_exponent += k_est;
+            }
+            while (m_mantissa > max_m || m_mantissa < -max_m) {
+                m_mantissa = fp_detail::round_div3(m_mantissa);
+                m_exponent += 1;
+            }
         }
 
-        // Left shift while magnitude < min_m and non-zero
-        while (m_mantissa != 0 && (m_mantissa < min_m && m_mantissa > -min_m)) {
-            m_mantissa *= 3;
-            m_exponent -= 1;
+        // Left shift with O(1) CLZ jump-multiplication while magnitude < min_m and non-zero
+        if (m_mantissa != 0 && (m_mantissa < min_m && m_mantissa > -min_m)) {
+            uint64_t abs_m = (m_mantissa >= 0) ? static_cast<uint64_t>(m_mantissa)
+                                               : (0ULL - static_cast<uint64_t>(m_mantissa));
+            int delta_bits = __builtin_clzll(abs_m) - __builtin_clzll(static_cast<uint64_t>(min_m));
+            int k_est = (delta_bits * 100) / 159 - 1;
+            if (k_est > 0 && k_est < 40) {
+                m_mantissa *= fp_detail::POW3_64[k_est];
+                m_exponent -= k_est;
+            }
+            while (m_mantissa != 0 && (m_mantissa < min_m && m_mantissa > -min_m)) {
+                m_mantissa *= 3;
+                m_exponent -= 1;
+            }
         }
 
         if (m_mantissa == 0) {
@@ -289,7 +372,7 @@ public:
     }
 
     /**
-     * @brief Normalizes a 128-bit intermediate mantissa down to MantissaTrits.
+     * @brief Normalizes a 128-bit intermediate mantissa down to MantissaTrits in O(1).
      */
     static constexpr BTFP normalize_128(__int128_t m, int32_t exp) noexcept {
         if (m == 0) return BTFP(0, 0);
@@ -297,14 +380,37 @@ public:
         const __int128_t max_m = max_mantissa();
         const __int128_t min_m = min_norm_mantissa();
 
-        while (m > max_m || m < -max_m) {
-            m = fp_detail::round_div3_128(m);
-            exp += 1;
+        if (m > max_m || m < -max_m) {
+            unsigned __int128 abs_m = (m >= 0) ? static_cast<unsigned __int128>(m)
+                                               : (static_cast<unsigned __int128>(0) - static_cast<unsigned __int128>(m));
+            uint64_t hi = static_cast<uint64_t>(abs_m >> 64);
+            int bitlen_m = (hi != 0) ? (128 - __builtin_clzll(hi))
+                                     : (64 - __builtin_clzll(static_cast<uint64_t>(abs_m)));
+            int bitlen_max = 64 - __builtin_clzll(static_cast<uint64_t>(max_m));
+            int delta_bits = bitlen_m - bitlen_max;
+            int k_est = (delta_bits * 100) / 159 - 1;
+            if (k_est > 0) {
+                m = fp_detail::round_div_pow3_fast128(m, k_est);
+                exp += k_est;
+            }
+            while (m > max_m || m < -max_m) {
+                m = fp_detail::round_div3_128(m);
+                exp += 1;
+            }
         }
 
-        while (m != 0 && (m < min_m && m > -min_m)) {
-            m *= 3;
-            exp -= 1;
+        if (m != 0 && (m < min_m && m > -min_m)) {
+            uint64_t abs_m = static_cast<uint64_t>((m >= 0) ? m : -m);
+            int delta_bits = __builtin_clzll(abs_m) - __builtin_clzll(static_cast<uint64_t>(min_m));
+            int k_est = (delta_bits * 100) / 159 - 1;
+            if (k_est > 0 && k_est < 60) {
+                m *= fp_detail::POW3_128[k_est];
+                exp -= k_est;
+            }
+            while (m != 0 && (m < min_m && m > -min_m)) {
+                m *= 3;
+                exp -= 1;
+            }
         }
 
         if (m == 0) return BTFP(0, 0);
@@ -312,19 +418,13 @@ public:
     }
 
     /**
-     * @brief Zero-Bias Truncation: truncates k fractional trits, achieving exact 0 mean error.
+     * @brief Zero-Bias Truncation: truncates k fractional trits in O(1), achieving exact 0 mean error.
      */
     constexpr BTFP truncate_fractional(int trits_to_discard) const noexcept {
         if (trits_to_discard <= 0 || is_zero()) return *this;
-        int64_t m = m_mantissa;
-        int32_t exp = m_exponent;
-        for (int i = 0; i < trits_to_discard; ++i) {
-            m = fp_detail::round_div3(m);
-            exp += 1;
-        }
-        BTFP res(m, exp);
-        res.normalize();
-        return res;
+        int64_t m = fp_detail::round_div_pow3_fast64(m_mantissa, trits_to_discard);
+        int32_t exp = m_exponent + trits_to_discard;
+        return BTFP(m, exp);
     }
 
     // --------------------------------------------------------------------------
@@ -387,12 +487,24 @@ public:
         if (m_exponent >= other.m_exponent) {
             int diff = m_exponent - other.m_exponent;
             if (diff > MantissaTrits + 4) return *this;
+            if constexpr (MantissaTrits <= 20) {
+                if (diff <= 18) {
+                    int64_t m_sum = m_mantissa * fp_detail::POW3_64[diff] + other.m_mantissa;
+                    return BTFP(m_sum, other.m_exponent);
+                }
+            }
             __int128_t m_a = static_cast<__int128_t>(m_mantissa) * fp_detail::pow3_128(diff);
             __int128_t m_sum = m_a + other.m_mantissa;
             return normalize_128(m_sum, other.m_exponent);
         } else {
             int diff = other.m_exponent - m_exponent;
             if (diff > MantissaTrits + 4) return other;
+            if constexpr (MantissaTrits <= 20) {
+                if (diff <= 18) {
+                    int64_t m_sum = other.m_mantissa * fp_detail::POW3_64[diff] + m_mantissa;
+                    return BTFP(m_sum, m_exponent);
+                }
+            }
             __int128_t m_b = static_cast<__int128_t>(other.m_mantissa) * fp_detail::pow3_128(diff);
             __int128_t m_sum = m_b + m_mantissa;
             return normalize_128(m_sum, m_exponent);
@@ -408,13 +520,56 @@ public:
 
     /**
      * @brief Balanced ternary multiplication: multiplies mantissas, sums exponents, normalizes.
+     * For MantissaTrits <= 20 (BTFP16 & BTFP32), uses a 3-way constant-divisor branch
+     * that compiles into 1-cycle umulh magic multiplies with zero loops and zero hardware sdiv.
      */
-    BTFP mul(const BTFP& other) const noexcept {
+    constexpr BTFP mul(const BTFP& other) const noexcept {
         if (is_zero() || other.is_zero()) return BTFP(0, 0);
 
-        __int128_t m_prod = static_cast<__int128_t>(m_mantissa) * static_cast<__int128_t>(other.m_mantissa);
-        int32_t e_prod = m_exponent + other.m_exponent;
-        return normalize_128(m_prod, e_prod);
+        if constexpr (MantissaTrits >= 2 && MantissaTrits <= 20) {
+            constexpr int64_t P_W2 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits - 2));
+            constexpr int64_t H_W2 = (P_W2 - 1) / 2;
+            constexpr int64_t P_W1 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits - 1));
+            constexpr int64_t H_W1 = (P_W1 - 1) / 2;
+            constexpr int64_t P_W0 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits));
+            constexpr int64_t H_W0 = (P_W0 - 1) / 2;
+            constexpr int64_t THRESH_W1 = max_mantissa() * P_W2 + H_W2;
+            constexpr int64_t THRESH_W0 = max_mantissa() * P_W1 + H_W1;
+
+            int64_t prod = m_mantissa * other.m_mantissa;
+            int64_t u = prod < 0 ? -prod : prod;
+            int32_t e_prod = m_exponent + other.m_exponent;
+            int64_t q = 0;
+
+            if (u <= THRESH_W1) {
+                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W2)) / static_cast<uint64_t>(P_W2));
+                e_prod += (MantissaTrits - 2);
+            } else if (u <= THRESH_W0) {
+                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W1)) / static_cast<uint64_t>(P_W1));
+                e_prod += (MantissaTrits - 1);
+            } else {
+                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W0)) / static_cast<uint64_t>(P_W0));
+                e_prod += MantissaTrits;
+            }
+
+            if constexpr (ExponentTrits > 0) {
+                constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
+                if (e_prod > max_e) {
+                    e_prod = static_cast<int32_t>(max_e);
+                } else if (e_prod < -max_e) {
+                    e_prod = static_cast<int32_t>(-max_e);
+                }
+            }
+
+            BTFP res;
+            res.m_mantissa = (prod < 0) ? -q : q;
+            res.m_exponent = e_prod;
+            return res;
+        } else {
+            __int128_t m_prod = static_cast<__int128_t>(m_mantissa) * static_cast<__int128_t>(other.m_mantissa);
+            int32_t e_prod = m_exponent + other.m_exponent;
+            return normalize_128(m_prod, e_prod);
+        }
     }
 
     /**

@@ -191,6 +191,77 @@ inline AdderOutput BTFA(const TritWord64& A, const TritWord64& B, const TritWord
     return { st2.Sum, TritWord64(PC, NC) };
 }
 
+/**
+ * @brief Branchless 6-Step Kogge-Stone Parallel Prefix Balanced Ternary Adder.
+ * Uses the closed 7-state monotone carry transfer semigroup (fm_p, fm_n, f0_p, f0_n, fp_p, fp_n)
+ * across 6 unrolled parallel prefix stages (shift = 1, 2, 4, 8, 16, 32).
+ * Resolves all 64 trits (including a worst-case 64-trit carry ripple) in strictly 6 deterministic
+ * branchless stages with 0 while loops.
+ */
+constexpr inline TritWord64 kogge_stone_add64(TritWord64 a, TritWord64 b, int8_t cin = 0, int8_t* cout_msb = nullptr) noexcept {
+    // Stage 0: Per-trit carry transfer functions f_i(c) for c in {-1, 0, +1}
+    uint64_t f0_p = a.P & b.P;
+    uint64_t f0_n = a.N & b.N;
+    uint64_t fp_p = (a.P | b.P) & ~(a.N | b.N);
+    uint64_t fp_n = 0ULL;
+    uint64_t fm_p = 0ULL;
+    uint64_t fm_n = (a.N | b.N) & ~(a.P | b.P);
+
+    // 6 unrolled Kogge-Stone parallel prefix stages: shift = 1, 2, 4, 8, 16, 32
+    constexpr int shifts[6] = {1, 2, 4, 8, 16, 32};
+    for (int s = 0; s < 6; ++s) {
+        int shift = shifts[s];
+        uint64_t low_mask = (1ULL << shift) - 1ULL;
+
+        // Shifted lower-stage transfer functions (identity I on low_mask bits)
+        uint64_t l_fm_p = fm_p << shift;
+        uint64_t l_fm_n = (fm_n << shift) | low_mask;
+        uint64_t l_f0_p = f0_p << shift;
+        uint64_t l_f0_n = f0_n << shift;
+        uint64_t l_fp_p = (fp_p << shift) | low_mask;
+        uint64_t l_fp_n = fp_n << shift;
+
+        uint64_t l_fm_z = ~(l_fm_p | l_fm_n);
+        uint64_t l_f0_z = ~(l_f0_p | l_f0_n);
+        uint64_t l_fp_z = ~(l_fp_p | l_fp_n);
+
+        // Semigroup composition H o L for c = -1, 0, +1
+        uint64_t n_fm_p = (l_fm_p & fp_p) | (l_fm_z & f0_p) | (l_fm_n & fm_p);
+        uint64_t n_fm_n = (l_fm_p & fp_n) | (l_fm_z & f0_n) | (l_fm_n & fm_n);
+
+        uint64_t n_f0_p = (l_f0_p & fp_p) | (l_f0_z & f0_p) | (l_f0_n & fm_p);
+        uint64_t n_f0_n = (l_f0_p & fp_n) | (l_f0_z & f0_n) | (l_f0_n & fm_n);
+
+        uint64_t n_fp_p = (l_fp_p & fp_p) | (l_fp_z & f0_p) | (l_fp_n & fm_p);
+        uint64_t n_fp_n = (l_fp_p & fp_n) | (l_fp_z & f0_n) | (l_fp_n & fm_n);
+
+        fm_p = n_fm_p; fm_n = n_fm_n;
+        f0_p = n_f0_p; f0_n = n_f0_n;
+        fp_p = n_fp_p; fp_n = n_fp_n;
+    }
+
+    // Select carry-out of each bit i based on external cin in {-1, 0, +1}
+    uint64_t cin_p_mask = (cin > 0) ? ~0ULL : 0ULL;
+    uint64_t cin_n_mask = (cin < 0) ? ~0ULL : 0ULL;
+    uint64_t cin_z_mask = ~(cin_p_mask | cin_n_mask);
+
+    uint64_t cout_p = (cin_p_mask & fp_p) | (cin_z_mask & f0_p) | (cin_n_mask & fm_p);
+    uint64_t cout_n = (cin_p_mask & fp_n) | (cin_z_mask & f0_n) | (cin_n_mask & fm_n);
+
+    if (cout_msb != nullptr) {
+        *cout_msb = static_cast<int8_t>(((cout_p >> 63) & 1ULL) - ((cout_n >> 63) & 1ULL));
+    }
+
+    // Carry into bit i is carry out of bit i-1 (with cin at bit 0)
+    uint64_t c_in_p = (cout_p << 1) | ((cin > 0) ? 1ULL : 0ULL);
+    uint64_t c_in_n = (cout_n << 1) | ((cin < 0) ? 1ULL : 0ULL);
+
+    // Final mod-3 sum at each bit i: S = (a + b + c_in) mod 3
+    AdderOutput st1 = BTHA(a, b);
+    AdderOutput st2 = BTHA(st1.Sum, TritWord64(c_in_p, c_in_n));
+    return st2.Sum;
+}
+
 // ==============================================================================
 // 5. Balanced Ternary Carry-Save Accumulator (BT-CSA)
 // ==============================================================================
@@ -226,43 +297,30 @@ public:
         bool overflow{false};
     };
 
-    // Resolves (S, C) to a single canonical TritWord64 at kernel exit
+    // Resolves (S, C) to a single canonical TritWord64 at kernel exit via branchless Kogge-Stone adder
     inline TritWord64 canonicalize() const noexcept {
-        TritWord64 curr_S = S;
-        TritWord64 curr_C = C;
-
-        // Loop terminates in 2-3 iterations because balanced carries cancel out
-        while (curr_C.P != 0 || curr_C.N != 0) {
-            bool overflow = ((curr_C.P | curr_C.N) >> 63) != 0;
-            (void)overflow; // Track MSB carry-out before shifting
-            uint64_t sh_P = curr_C.P << 1;
-            uint64_t sh_N = curr_C.N << 1;
-            AdderOutput ha = BTHA(curr_S, TritWord64(sh_P, sh_N));
-            curr_S = ha.Sum;
-            curr_C = ha.Carry;
-        }
-        return curr_S;
+        TritWord64 C_shifted(C.P << 1, C.N << 1);
+        return kogge_stone_add64(S, C_shifted);
     }
 
     inline CanonicalResult canonicalize_with_overflow() const noexcept {
-        TritWord64 curr_S = S;
-        TritWord64 curr_C = C;
         Trit ovf = Trit::Zero;
         bool overflow = false;
 
-        while (curr_C.P != 0 || curr_C.N != 0) {
-            if (((curr_C.P | curr_C.N) >> 63) != 0) {
-                overflow = true;
-                if ((curr_C.P >> 63) & 1ULL) ovf = Trit::Pos;
-                if ((curr_C.N >> 63) & 1ULL) ovf = Trit::Neg;
-            }
-            uint64_t sh_P = curr_C.P << 1;
-            uint64_t sh_N = curr_C.N << 1;
-            AdderOutput ha = BTHA(curr_S, TritWord64(sh_P, sh_N));
-            curr_S = ha.Sum;
-            curr_C = ha.Carry;
+        if (((C.P | C.N) >> 63) != 0) {
+            overflow = true;
+            if ((C.P >> 63) & 1ULL) ovf = Trit::Pos;
+            if ((C.N >> 63) & 1ULL) ovf = Trit::Neg;
         }
-        return { curr_S, ovf, overflow };
+
+        int8_t cout_msb = 0;
+        TritWord64 C_shifted(C.P << 1, C.N << 1);
+        TritWord64 res = kogge_stone_add64(S, C_shifted, 0, &cout_msb);
+        if (cout_msb != 0) {
+            overflow = true;
+            ovf = from_int(cout_msb);
+        }
+        return { res, ovf, overflow };
     }
 };
 
@@ -418,6 +476,125 @@ struct Base243Codec {
         return { from_int(t0), from_int(t1), from_int(t2), from_int(t3), from_int(t4) };
     }
 };
+
+/**
+ * @brief Packs a 64-trit TritWord64(P, N) directly into 13 Base-243 bytes
+ * (12 full 5-trit bytes + 1 4-trit tail byte) without any heap allocation.
+ */
+inline void pack_base243_word64(TritWord64 w, uint8_t out_bytes[13]) noexcept {
+    uint64_t P = w.P;
+    uint64_t N = w.N;
+
+    for (int k = 0; k < 12; ++k) {
+        uint32_t p5 = static_cast<uint32_t>(P & 0x1FULL);
+        uint32_t n5 = static_cast<uint32_t>(N & 0x1FULL);
+        P >>= 5;
+        N >>= 5;
+
+        uint32_t val_p = (p5 & 1U)
+                       + ((p5 >> 1) & 1U) * 3U
+                       + ((p5 >> 2) & 1U) * 9U
+                       + ((p5 >> 3) & 1U) * 27U
+                       + ((p5 >> 4) & 1U) * 81U;
+        uint32_t val_n = (n5 & 1U)
+                       + ((n5 >> 1) & 1U) * 3U
+                       + ((n5 >> 2) & 1U) * 9U
+                       + ((n5 >> 3) & 1U) * 27U
+                       + ((n5 >> 4) & 1U) * 81U;
+
+        // 1 + 3 + 9 + 27 + 81 = 121 offset maps {-1, 0, +1}^5 into [0..242]
+        out_bytes[k] = static_cast<uint8_t>(121U + val_p - val_n);
+    }
+
+    // 13th byte: 4-trit tail (trits 60..63, with 5th trit = Zero -> offset 121U)
+    uint32_t p4 = static_cast<uint32_t>(P & 0x0FULL);
+    uint32_t n4 = static_cast<uint32_t>(N & 0x0FULL);
+    uint32_t val_p4 = (p4 & 1U)
+                    + ((p4 >> 1) & 1U) * 3U
+                    + ((p4 >> 2) & 1U) * 9U
+                    + ((p4 >> 3) & 1U) * 27U;
+    uint32_t val_n4 = (n4 & 1U)
+                    + ((n4 >> 1) & 1U) * 3U
+                    + ((n4 >> 2) & 1U) * 9U
+                    + ((n4 >> 3) & 1U) * 27U;
+    out_bytes[12] = static_cast<uint8_t>(121U + val_p4 - val_n4);
+}
+
+/**
+ * @brief Unpacks 13 Base-243 bytes directly into a 64-trit TritWord64(P, N)
+ * using division-free magic multipliers (171, 57, 19, 203) and direct bit shifts.
+ */
+inline TritWord64 unpack_base243_word64(const uint8_t in_bytes[13]) noexcept {
+    uint64_t P = 0ULL;
+    uint64_t N = 0ULL;
+
+    for (int k = 0; k < 12; ++k) {
+        uint32_t b32 = in_bytes[k];
+        if (b32 >= 243U) continue;
+
+        uint32_t q1 = (b32 * 171U) >> 9;
+        uint32_t q2 = (b32 * 57U) >> 9;
+        uint32_t q3 = (b32 * 19U) >> 9;
+        uint32_t q4 = (b32 * 203U) >> 14;
+
+        uint32_t d0 = b32 - 3U * q1;
+        uint32_t d1 = q1 - 3U * q2;
+        uint32_t d2 = q2 - 3U * q3;
+        uint32_t d3 = q3 - 3U * q4;
+        uint32_t d4 = q4;
+
+        uint64_t p_chunk = static_cast<uint64_t>(
+            ((d0 >> 1) << 0) |
+            ((d1 >> 1) << 1) |
+            ((d2 >> 1) << 2) |
+            ((d3 >> 1) << 3) |
+            ((d4 >> 1) << 4)
+        );
+        uint64_t n_chunk = static_cast<uint64_t>(
+            (((2U - d0) >> 1) << 0) |
+            (((2U - d1) >> 1) << 1) |
+            (((2U - d2) >> 1) << 2) |
+            (((2U - d3) >> 1) << 3) |
+            (((2U - d4) >> 1) << 4)
+        );
+
+        int shift = 5 * k;
+        P |= (p_chunk << shift);
+        N |= (n_chunk << shift);
+    }
+
+    // 13th byte: 4-trit tail (trits 60..63)
+    uint32_t b12 = in_bytes[12];
+    if (b12 < 243U) {
+        uint32_t q1 = (b12 * 171U) >> 9;
+        uint32_t q2 = (b12 * 57U) >> 9;
+        uint32_t q3 = (b12 * 19U) >> 9;
+        uint32_t q4 = (b12 * 203U) >> 14;
+
+        uint32_t d0 = b12 - 3U * q1;
+        uint32_t d1 = q1 - 3U * q2;
+        uint32_t d2 = q2 - 3U * q3;
+        uint32_t d3 = q3 - 3U * q4;
+
+        uint64_t p_tail = static_cast<uint64_t>(
+            ((d0 >> 1) << 0) |
+            ((d1 >> 1) << 1) |
+            ((d2 >> 1) << 2) |
+            ((d3 >> 1) << 3)
+        );
+        uint64_t n_tail = static_cast<uint64_t>(
+            (((2U - d0) >> 1) << 0) |
+            (((2U - d1) >> 1) << 1) |
+            (((2U - d2) >> 1) << 2) |
+            (((2U - d3) >> 1) << 3)
+        );
+
+        P |= (p_tail << 60);
+        N |= (n_tail << 60);
+    }
+
+    return TritWord64(P, N);
+}
 
 // ==============================================================================
 // 8. Division-Free Base-59049 Packing Engine (10 Trits in 16-Bit Word, 98.7% Eff)

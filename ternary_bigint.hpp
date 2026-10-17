@@ -154,47 +154,13 @@ public:
         return res;
     }
 
-    // Multi-word Balanced Ternary Addition with cross-word carry propagation
-    static TritBigInt add(const TritBigInt& a, const TritBigInt& b) noexcept {
-        std::array<TritWord64, NumWords> Sum{};
-        std::array<TritWord64, NumWords> Carry{};
-
+    // Multi-word Balanced Ternary Addition via branchless 6-step Kogge-Stone parallel prefix adder
+    static constexpr TritBigInt add(const TritBigInt& a, const TritBigInt& b) noexcept {
+        TritBigInt res{};
+        int8_t carry = 0;
         for (size_t w = 0; w < NumWords; ++w) {
-            AdderOutput ha = BTHA(a.words[w], b.words[w]);
-            Sum[w] = ha.Sum;
-            Carry[w] = ha.Carry;
+            res.words[w] = kogge_stone_add64(a.words[w], b.words[w], carry, &carry);
         }
-
-        while (true) {
-            bool has_carry = false;
-            for (size_t w = 0; w < NumWords; ++w) {
-                if (Carry[w].P != 0 || Carry[w].N != 0) {
-                    has_carry = true;
-                    break;
-                }
-            }
-            if (!has_carry) break;
-
-            std::array<TritWord64, NumWords> ShiftedCarry{};
-            for (size_t w = 0; w < NumWords; ++w) {
-                uint64_t sh_P = Carry[w].P << 1;
-                uint64_t sh_N = Carry[w].N << 1;
-                if (w > 0) {
-                    sh_P |= (Carry[w - 1].P >> 63) & 1ULL;
-                    sh_N |= (Carry[w - 1].N >> 63) & 1ULL;
-                }
-                ShiftedCarry[w] = TritWord64(sh_P, sh_N);
-            }
-
-            for (size_t w = 0; w < NumWords; ++w) {
-                AdderOutput ha = BTHA(Sum[w], ShiftedCarry[w]);
-                Sum[w] = ha.Sum;
-                Carry[w] = ha.Carry;
-            }
-        }
-
-        TritBigInt res;
-        res.words = Sum;
         return res;
     }
 

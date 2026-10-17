@@ -461,6 +461,97 @@ void test_fp_and_sparse_guards() {
     assert(caught_spmm_oob && "spmm with column index exceeding B.rows must throw std::out_of_range");
 }
 
+void test_btfp_fast_o1_mul_and_norm() {
+    std::cout << "  [BT-FP] Testing Fast O(1) Constant-Divisor Mul & CLZ Jump Normalization...\n";
+
+    // 1. Verify round_div_pow3_fast64 matches k sequential calls to round_div3
+    auto seq_round_div_pow3 = [](int64_t val, int k) -> int64_t {
+        for (int i = 0; i < k && val != 0; ++i) {
+            val = fp_detail::round_div3(val);
+        }
+        return val;
+    };
+
+    uint64_t seed = 0x9E3779B97F4A7C15ULL;
+    auto splitmix64 = [&seed]() -> uint64_t {
+        uint64_t z = (seed += 0x9E3779B97F4A7C15ULL);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        return z ^ (z >> 31);
+    };
+
+    for (int iter = 0; iter < 5000; ++iter) {
+        int64_t val = static_cast<int64_t>(splitmix64() >> 10) - (1LL << 53);
+        int k = static_cast<int>(splitmix64() % 38);
+        assert(fp_detail::round_div_pow3_fast64(val, k) == seq_round_div_pow3(val, k));
+        assert(fp_detail::round_div_pow3_fast128(val, k) == seq_round_div_pow3(val, k));
+    }
+
+    // 2. Verify CLZ jump normalization against sequential while-loop normalization
+    auto seq_normalize_btfp32 = [](int64_t m, int32_t e) -> std::pair<int64_t, int32_t> {
+        if (m == 0) return {0, 0};
+        const int64_t max_m = BTFP32::max_mantissa();
+        const int64_t min_m = BTFP32::min_norm_mantissa();
+        while (m > max_m || m < -max_m) {
+            m = fp_detail::round_div3(m);
+            e += 1;
+        }
+        while (m != 0 && (m < min_m && m > -min_m)) {
+            m *= 3;
+            e -= 1;
+        }
+        if (m == 0) e = 0;
+        return {m, e};
+    };
+
+    for (int iter = 0; iter < 5000; ++iter) {
+        // Test both very small (|m| < min_m) and very large (|m| > max_m) mantissas
+        int64_t raw_m = (iter % 2 == 0)
+            ? (static_cast<int64_t>(splitmix64() >> 6) - (1LL << 57))
+            : (static_cast<int64_t>(splitmix64() % 2000000LL) - 1000000LL);
+        int32_t raw_e = static_cast<int32_t>(splitmix64() % 200) - 100;
+
+        BTFP32 fast_fp(raw_m, raw_e);
+        auto [ref_m, ref_e] = seq_normalize_btfp32(raw_m, raw_e);
+        assert(fast_fp.mantissa() == ref_m && fast_fp.exponent() == ref_e);
+    }
+
+    // 3. Verify 3-way constant-divisor BTFP32::mul across boundary cases (min_m, max_m) and 10,000 random pairs
+    const int64_t min_m32 = BTFP32::min_norm_mantissa();
+    const int64_t max_m32 = BTFP32::max_mantissa();
+    std::vector<int64_t> boundary_m = {
+        min_m32, min_m32 + 1, (min_m32 + max_m32) / 2, max_m32 - 1, max_m32,
+        -min_m32, -(min_m32 + 1), -((min_m32 + max_m32) / 2), -(max_m32 - 1), -max_m32
+    };
+
+    for (int64_t ma : boundary_m) {
+        for (int64_t mb : boundary_m) {
+            BTFP32 fa(ma, 3);
+            BTFP32 fb(mb, -2);
+            BTFP32 prod = fa * fb;
+            auto [ref_m, ref_e] = seq_normalize_btfp32(ma * mb, 1);
+            assert(prod.mantissa() == ref_m && prod.exponent() == ref_e);
+        }
+    }
+
+    for (int iter = 0; iter < 10000; ++iter) {
+        int64_t ma = min_m32 + static_cast<int64_t>(splitmix64() % static_cast<uint64_t>(max_m32 - min_m32 + 1));
+        int64_t mb = min_m32 + static_cast<int64_t>(splitmix64() % static_cast<uint64_t>(max_m32 - min_m32 + 1));
+        if (splitmix64() & 1ULL) ma = -ma;
+        if (splitmix64() & 1ULL) mb = -mb;
+        int32_t ea = static_cast<int32_t>(splitmix64() % 100) - 50;
+        int32_t eb = static_cast<int32_t>(splitmix64() % 100) - 50;
+
+        BTFP32 fa(ma, ea);
+        BTFP32 fb(mb, eb);
+        BTFP32 prod = fa * fb;
+        auto [ref_m, ref_e] = seq_normalize_btfp32(ma * mb, ea + eb);
+        assert(prod.mantissa() == ref_m && prod.exponent() == ref_e);
+    }
+
+    std::cout << "    -> Fast O(1) BTFP32 mul & CLZ normalization verified bit-exact across 20,000 cases.\n";
+}
+
 // ==============================================================================
 // Main Test Runner
 // ==============================================================================
@@ -475,6 +566,7 @@ int main() {
     test_btfp_round_trip();
     test_btfp_arithmetic();
     test_btfp_zero_bias_rounding();
+    test_btfp_fast_o1_mul_and_norm();
 
     // Phase 3.2: T-CSR Sparse Linear Algebra Tests
     test_tcsr_creation();

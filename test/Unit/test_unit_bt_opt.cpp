@@ -425,6 +425,41 @@ void test_c_abi() {
     std::cout << "    -> PASSED: Production C ABI & MLIR type formatting verified.\n";
 }
 
+// ==============================================================================
+// 8. Test --autotune-tile Hardware Cache-Hierarchy SCF Lowering
+// ==============================================================================
+
+void test_autotune_tile() {
+    std::cout << "  [bt-opt 8/8] Testing --autotune-tile Hardware Cache-Tiled SCF Lowering...\n";
+
+    // 1. Direct C++ API verification
+    ::bt::CacheHierarchyConfig cfg = ::bt::CacheAutotuner::detect_host_cache();
+    assert(cfg.fits_in_l1d_budget() && "Autotuned tile must fit inside 75% of L1d cache!");
+
+    std::string scf_ir = ::bt::CacheAutotuner::emit_autotuned_scf_mlir(1024, 1024, 1024);
+    std::string expected_header = "// Autotuned L1d Tile: " +
+                                  std::to_string(cfg.tile_M) + "x" +
+                                  std::to_string(cfg.tile_N) + "x" +
+                                  std::to_string(cfg.tile_K_words);
+    assert(scf_ir.find(expected_header) != std::string::npos &&
+           "Missing '// Autotuned L1d Tile: MxNxK' annotation!");
+    assert(scf_ir.find("scf.for %k0") != std::string::npos);
+    assert(scf_ir.find("scf.for %i0") != std::string::npos);
+    assert(scf_ir.find("scf.for %j0") != std::string::npos);
+    assert(scf_ir.find("math.ctpop") != std::string::npos);
+
+    // 2. Verify tools/bt-opt/bt-opt.cpp CLI --autotune-tile flag presence
+    std::ifstream btOptFile("tools/bt-opt/bt-opt.cpp");
+    assert(btOptFile.is_open() && "Could not open tools/bt-opt/bt-opt.cpp!");
+    std::stringstream btOptBuf;
+    btOptBuf << btOptFile.rdbuf();
+    std::string btOptSrc = btOptBuf.str();
+    assert(btOptSrc.find("--autotune-tile") != std::string::npos &&
+           "tools/bt-opt/bt-opt.cpp must support --autotune-tile CLI flag!");
+
+    std::cout << "    -> PASSED: --autotune-tile SCF lowering & L1d/L2 cache annotation verified.\n";
+}
+
 int main() {
     std::cout << "======================================================================\n";
     std::cout << "  [LLVM Unit Test Layer 1] bt-opt MLIR Optimizer & IREE Plugin Suite\n";
@@ -437,6 +472,7 @@ int main() {
     test_iree_plugin_initialization();
     test_bt_opt_emission();
     test_c_abi();
+    test_autotune_tile();
 
     std::cout << "======================================================================\n";
     std::cout << "  -> PASSED: 100% of bt-opt & IREE Plugin Unit Tests Succeeded (0 Errors)!\n";

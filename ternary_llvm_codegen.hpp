@@ -27,6 +27,8 @@ class LLVMCodeGenVisitor : public frontend::ASTVisitor {
 private:
     std::ostringstream ir_;
     std::ostringstream fn_body_;
+    std::ostringstream user_fns_;
+    std::unordered_map<std::string, std::string> user_func_ret_types_;
 
     struct VarInfo {
         std::string ptr_reg; // e.g. %var_x_1
@@ -147,6 +149,8 @@ public:
                           const std::string& datalayout = "e-m:o-i64:64-i128:128-n32:64-S128") {
         ir_.str(""); ir_.clear();
         fn_body_.str(""); fn_body_.clear();
+        user_fns_.str(""); user_fns_.clear();
+        user_func_ret_types_.clear();
         scope_stack_.clear();
         enter_scope();
         sparse_matrices_.clear();
@@ -304,7 +308,8 @@ public:
         fn_body_ << "}\n";
         is_in_bt_main_ = false;
 
-        // Combine module header + generated functions
+        // Combine module header + user functions + generated main function
+        ir_ << user_fns_.str();
         ir_ << fn_body_.str();
 
         if (emit_debug_) {
@@ -352,8 +357,57 @@ public:
         exit_scope();
     }
 
-    void visit(frontend::FunctionDefNode& /*node*/) override {
-        // Function definitions can be extended for multi-function modules
+    void visit(frontend::FunctionDefNode& node) override {
+        std::string saved_body = fn_body_.str();
+        fn_body_.str("");
+        fn_body_.clear();
+        bool saved_in_main = is_in_bt_main_;
+        bool saved_terminated = block_terminated_;
+        is_in_bt_main_ = false;
+        block_terminated_ = false;
+
+        std::string ret_llvm_type = "i64";
+        if (node.return_type == "float") ret_llvm_type = "double";
+        else if (node.return_type == "void") ret_llvm_type = "void";
+        user_func_ret_types_[node.name] = ret_llvm_type;
+
+        fn_body_ << "define " << ret_llvm_type << " @" << node.name << "(";
+        for (size_t i = 0; i < node.params.size(); ++i) {
+            std::string p_type = (node.params[i].type == "float") ? "double" : "i64";
+            fn_body_ << p_type << " %arg_" << node.params[i].name;
+            if (i + 1 < node.params.size()) fn_body_ << ", ";
+        }
+        fn_body_ << ") nounwind {\nentry:\n";
+
+        enter_scope();
+        for (const auto& p : node.params) {
+            std::string p_type = (p.type == "float") ? "double" : "i64";
+            std::string ptr_reg = "%var_" + p.name + "_" + std::to_string(++alloca_counter_);
+            fn_body_ << "  " << ptr_reg << " = alloca " << p_type << ", align 8\n";
+            fn_body_ << "  store " << p_type << " %arg_" << p.name << ", " << p_type << "* " << ptr_reg << ", align 8\n";
+            scope_stack_.back()[p.name] = VarInfo{ptr_reg, p_type, 0};
+        }
+
+        if (node.body) {
+            for (auto& s : node.body->statements) {
+                if (block_terminated_) break;
+                if (s) s->accept(*this);
+            }
+        }
+
+        if (!block_terminated_) {
+            if (ret_llvm_type == "void") fn_body_ << "  ret void\n";
+            else if (ret_llvm_type == "double") fn_body_ << "  ret double 0.0\n";
+            else fn_body_ << "  ret i64 0\n";
+        }
+        fn_body_ << "}\n\n";
+        exit_scope();
+
+        user_fns_ << fn_body_.str();
+        fn_body_.str(saved_body);
+        fn_body_.seekp(0, std::ios_base::end);
+        is_in_bt_main_ = saved_in_main;
+        block_terminated_ = saved_terminated;
     }
 
     void visit(frontend::VarDeclNode& node) override {
@@ -966,6 +1020,115 @@ public:
                      << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
             current_val_ = res;
             current_type_ = "i64";
+        } else if ((node.callee == "planar_dot64" || node.callee == "btha_sum_p" ||
+                    node.callee == "btha_carry_p" || node.callee == "btha_sum_n" ||
+                    node.callee == "btha_carry_n") && node.arguments.size() == 4) {
+            node.arguments[0]->accept(*this);
+            std::string ap = current_val_;
+            node.arguments[1]->accept(*this);
+            std::string an = current_val_;
+            node.arguments[2]->accept(*this);
+            std::string bp = current_val_;
+            node.arguments[3]->accept(*this);
+            std::string bn = current_val_;
+            if (node.location.line > 0) current_loc_ = node.location;
+
+            if (node.callee == "planar_dot64") {
+                std::string pp1 = new_reg();
+                fn_body_ << "  " << pp1 << " = and i64 " << ap << ", " << bp << dbg_tag() << "\n";
+                std::string pp2 = new_reg();
+                fn_body_ << "  " << pp2 << " = and i64 " << an << ", " << bn << dbg_tag() << "\n";
+                std::string p_prod = new_reg();
+                fn_body_ << "  " << p_prod << " = or i64 " << pp1 << ", " << pp2 << dbg_tag() << "\n";
+
+                std::string np1 = new_reg();
+                fn_body_ << "  " << np1 << " = and i64 " << ap << ", " << bn << dbg_tag() << "\n";
+                std::string np2 = new_reg();
+                fn_body_ << "  " << np2 << " = and i64 " << an << ", " << bp << dbg_tag() << "\n";
+                std::string n_prod = new_reg();
+                fn_body_ << "  " << n_prod << " = or i64 " << np1 << ", " << np2 << dbg_tag() << "\n";
+
+                std::string pop_p = new_reg();
+                fn_body_ << "  " << pop_p << " = call i64 @llvm.ctpop.i64(i64 " << p_prod << ")" << dbg_tag() << "\n";
+                std::string pop_n = new_reg();
+                fn_body_ << "  " << pop_n << " = call i64 @llvm.ctpop.i64(i64 " << n_prod << ")" << dbg_tag() << "\n";
+                std::string res = new_reg();
+                fn_body_ << "  " << res << " = sub i64 " << pop_p << ", " << pop_n << dbg_tag() << "\n";
+                current_val_ = res;
+                current_type_ = "i64";
+            } else if (node.callee == "btha_sum_p") {
+                // PS = ((ap ^ bp) & ~(an | bn)) | (an & bn)
+                std::string xor_p = new_reg();
+                fn_body_ << "  " << xor_p << " = xor i64 " << ap << ", " << bp << dbg_tag() << "\n";
+                std::string or_n = new_reg();
+                fn_body_ << "  " << or_n << " = or i64 " << an << ", " << bn << dbg_tag() << "\n";
+                std::string not_or_n = new_reg();
+                fn_body_ << "  " << not_or_n << " = xor i64 " << or_n << ", -1" << dbg_tag() << "\n";
+                std::string half_ps = new_reg();
+                fn_body_ << "  " << half_ps << " = and i64 " << xor_p << ", " << not_or_n << dbg_tag() << "\n";
+                std::string nc = new_reg();
+                fn_body_ << "  " << nc << " = and i64 " << an << ", " << bn << dbg_tag() << "\n";
+                std::string ps = new_reg();
+                fn_body_ << "  " << ps << " = or i64 " << half_ps << ", " << nc << dbg_tag() << "\n";
+                current_val_ = ps;
+                current_type_ = "i64";
+            } else if (node.callee == "btha_carry_p") {
+                // PC = ap & bp
+                std::string pc = new_reg();
+                fn_body_ << "  " << pc << " = and i64 " << ap << ", " << bp << dbg_tag() << "\n";
+                current_val_ = pc;
+                current_type_ = "i64";
+            } else if (node.callee == "btha_sum_n") {
+                // NS = ((an ^ bn) & ~(ap | bp)) | (ap & bp)
+                std::string xor_n = new_reg();
+                fn_body_ << "  " << xor_n << " = xor i64 " << an << ", " << bn << dbg_tag() << "\n";
+                std::string or_p = new_reg();
+                fn_body_ << "  " << or_p << " = or i64 " << ap << ", " << bp << dbg_tag() << "\n";
+                std::string not_or_p = new_reg();
+                fn_body_ << "  " << not_or_p << " = xor i64 " << or_p << ", -1" << dbg_tag() << "\n";
+                std::string half_ns = new_reg();
+                fn_body_ << "  " << half_ns << " = and i64 " << xor_n << ", " << not_or_p << dbg_tag() << "\n";
+                std::string pc = new_reg();
+                fn_body_ << "  " << pc << " = and i64 " << ap << ", " << bp << dbg_tag() << "\n";
+                std::string ns = new_reg();
+                fn_body_ << "  " << ns << " = or i64 " << half_ns << ", " << pc << dbg_tag() << "\n";
+                current_val_ = ns;
+                current_type_ = "i64";
+            } else if (node.callee == "btha_carry_n") {
+                // NC = an & bn
+                std::string nc = new_reg();
+                fn_body_ << "  " << nc << " = and i64 " << an << ", " << bn << dbg_tag() << "\n";
+                current_val_ = nc;
+                current_type_ = "i64";
+            }
+        } else if (user_func_ret_types_.find(node.callee) != user_func_ret_types_.end()) {
+            std::string ret_type = user_func_ret_types_[node.callee];
+            std::vector<std::pair<std::string, std::string>> arg_vals;
+            for (auto& arg : node.arguments) {
+                arg->accept(*this);
+                arg_vals.emplace_back(current_type_ == "double" ? "double" : "i64", current_val_);
+            }
+            if (node.location.line > 0) current_loc_ = node.location;
+            if (ret_type == "void") {
+                fn_body_ << "  call void @" << node.callee << "(";
+                for (size_t i = 0; i < arg_vals.size(); ++i) {
+                    fn_body_ << arg_vals[i].first << " " << arg_vals[i].second;
+                    if (i + 1 < arg_vals.size()) fn_body_ << ", ";
+                }
+                fn_body_ << ")" << dbg_tag() << "\n";
+                current_val_ = "0";
+                current_type_ = "i64";
+            } else {
+                std::string res = new_reg();
+                fn_body_ << "  " << res << " = call " << ret_type << " @" << node.callee << "(";
+                for (size_t i = 0; i < arg_vals.size(); ++i) {
+                    fn_body_ << arg_vals[i].first << " " << arg_vals[i].second;
+                    if (i + 1 < arg_vals.size()) fn_body_ << ", ";
+                }
+                fn_body_ << ")" << dbg_tag() << "\n";
+                current_val_ = res;
+                current_type_ = ret_type;
+            }
         } else {
             current_val_ = "0";
             current_type_ = "i64";

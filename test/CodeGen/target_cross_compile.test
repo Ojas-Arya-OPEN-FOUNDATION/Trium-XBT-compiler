@@ -1,4 +1,4 @@
-// RUN: (%bt-compiler %s --target=aarch64 -S && %bt-compiler %s --target=x86_64 -S && %bt-compiler %s --target=riscv64 -S) | FileCheck %s
+// RUN: (%bt-compiler %s --target=aarch64 -S && %bt-compiler %s --target=x86_64 -S && %bt-compiler %s --target=riscv64 -S && %bt-compiler %s --target=riscv64-xbt -S) | FileCheck %s
 
 var a = 84;
 var b = 27;
@@ -15,3 +15,14 @@ print(c);
 // CHECK: RISC-V 64
 // CHECK: bt_main
 // CHECK: ret
+// CHECK: RISC-V 64 (riscv64-xbt)
+// CHECK: xbt.btha
+// CHECK: .insn r 0x0b, 0, 0
+// CHECK: xbt.ksadd
+// CHECK: .insn r 0x0b, 1, 0
+// CHECK: xbt.dot64
+// CHECK: .insn r 0x0b, 2, 0
+// CHECK: xbt.unpack243
+// CHECK: .insn r 0x0b, 3, 0
+// CHECK: xbt.neg
+// CHECK: .insn r 0x0b, 4, 0

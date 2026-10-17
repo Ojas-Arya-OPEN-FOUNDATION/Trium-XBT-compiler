@@ -553,6 +553,122 @@ void test_dwarf_debug_metadata_and_vectorization() {
 }
 
 // ==============================================================================
+// 12. Multi-File Module @import / import Resolution & Circular Guard
+// ==============================================================================
+
+void test_module_imports() {
+    std::cout << "  [12/13] Testing Multi-File Module @import & import Resolution...\n";
+
+    pid_t pid = getpid();
+    std::string mod_a_path = "/tmp/bt_mod_a_" + std::to_string(pid) + ".bt";
+    std::string mod_b_path = "/tmp/bt_mod_b_" + std::to_string(pid) + ".bt";
+
+    // Module A imports Module B (and Module B circularly imports Module A to test cycle prevention)
+    {
+        std::ofstream fa(mod_a_path);
+        fa << "@import \"" << mod_b_path << "\";\n"
+           << "var mod_a_val: int = 15;\n"
+           << "func add_bonus(x: int) -> int {\n"
+           << "    return x + 10;\n"
+           << "}\n";
+    }
+    {
+        std::ofstream fb(mod_b_path);
+        fb << "import \"" << mod_a_path << "\";\n"
+           << "var mod_b_val: int = 27;\n";
+    }
+
+    std::string main_src = "@import \"" + mod_a_path + "\";\n"
+                           "import \"" + mod_b_path + "\";\n"
+                           "var combined: int = add_bonus(mod_a_val + mod_b_val);\n"
+                           "return combined;\n";
+
+    // Test Preprocessor::resolve_imports directly
+    std::string resolved = Preprocessor::resolve_imports(main_src, "/tmp");
+    assert(resolved.find("mod_a_val") != std::string::npos);
+    assert(resolved.find("mod_b_val") != std::string::npos);
+
+    // Test Parser + TypeChecker + NativeLLVMJIT end-to-end
+    Parser parser(main_src, "/tmp");
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    SemanticAnalyzer sema;
+    sema.typecheck(*prog);
+    assert(sema.errors().empty());
+
+    int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+    unlink(mod_a_path.c_str());
+    unlink(mod_b_path.c_str());
+
+    // 15 + 27 + 10 = 52
+    assert(exit_code == 52 && "Multi-file @import execution must return 52!");
+    std::cout << "      -> Multi-File Module @import & Circular Import Guard passed.\n";
+}
+
+// ==============================================================================
+// 13. Inline Dual-Rail Hardware SSA Intrinsics (planar_dot64, btha_sum_p, btha_carry_p)
+// ==============================================================================
+
+void test_dual_rail_ssa_intrinsics() {
+    std::cout << "  [13/13] Testing Inline Dual-Rail Hardware SSA Intrinsics (planar_dot64, btha_sum_p, btha_carry_p)...\n";
+
+    // ap = 0b0111 (7) -> trits 0,1,2 are +1
+    // an = 0b1000 (8) -> trit 3 is -1
+    // bp = 0b0101 (5) -> trits 0,2 are +1
+    // bn = 0b1010 (10) -> trits 1,3 are -1
+    // dot product:
+    //   k=0: (+1)*(+1) = +1
+    //   k=1: (+1)*(-1) = -1
+    //   k=2: (+1)*(+1) = +1
+    //   k=3: (-1)*(-1) = +1
+    //   total dot = 1 - 1 + 1 + 1 = 2
+    // btha_carry_p(ap, an, bp, bn) = ap & bp = 7 & 5 = 5
+    // btha_sum_p(ap, an, bp, bn)   = ((ap ^ bp) & ~(an | bn)) | (an & bn)
+    //   ap ^ bp = 7 ^ 5 = 2 (0b0010)
+    //   an | bn = 8 | 10 = 10 (0b1010), ~(an | bn) has bit 1 = 0 -> (2 & ~10) = 0
+    //   an & bn = 8 & 10 = 8 (0b1000)
+    //   btha_sum_p = 0 | 8 = 8
+    // Expected return = dot (2) + carry_p (5) + sum_p (8) = 15
+    std::string src = "var ap: tritword = 7;\n"
+                      "var an: tritword = 8;\n"
+                      "var bp: tritword = 5;\n"
+                      "var bn: tritword = 10;\n"
+                      "var dot: tritword = planar_dot64(ap, an, bp, bn);\n"
+                      "var cp: tritword = btha_carry_p(ap, an, bp, bn);\n"
+                      "var sp: tritword = btha_sum_p(ap, an, bp, bn);\n"
+                      "return dot + cp + sp;\n";
+
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    SemanticAnalyzer sema;
+    sema.typecheck(*prog);
+    assert(sema.errors().empty());
+    assert(sema.get_symbol_type("dot") == BTType::TritWord);
+    assert(sema.get_symbol_type("cp") == BTType::TritWord);
+    assert(sema.get_symbol_type("sp") == BTType::TritWord);
+
+    LLVMCodeGenVisitor codegen;
+    std::string ir = codegen.generate(*prog);
+
+    // Verify inline SSA emission (no external @planar_dot64 call, uses @llvm.ctpop.i64)
+    assert(ir.find("declare i64 @llvm.ctpop.i64(i64)") != std::string::npos);
+    assert(ir.find("call i64 @llvm.ctpop.i64(i64") != std::string::npos);
+    assert(ir.find("and i64") != std::string::npos);
+    assert(ir.find("or i64") != std::string::npos);
+    assert(ir.find("xor i64") != std::string::npos);
+    assert(ir.find("sub i64") != std::string::npos);
+    assert(ir.find("@planar_dot64") == std::string::npos && "planar_dot64 must be inlined as SSA instructions!");
+
+    int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+    assert(exit_code == 15 && "NativeLLVMJIT execution of planar_dot64 + btha_carry_p + btha_sum_p must equal 15!");
+
+    std::cout << "      -> Inline Dual-Rail Hardware SSA Intrinsics passed.\n";
+}
+
+// ==============================================================================
 // Main Entry Point
 // ==============================================================================
 
@@ -572,8 +688,10 @@ int main() {
     test_comparison_precedence();
     test_kokkos_bridge_fixes();
     test_dwarf_debug_metadata_and_vectorization();
+    test_module_imports();
+    test_dual_rail_ssa_intrinsics();
 
-    std::cout << "\n  -> ALL 11 FRONTEND FP & SPARSE MATRIX UNIT TESTS PASSED (100%)\n";
+    std::cout << "\n  -> ALL 13 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC UNIT TESTS PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

@@ -69,8 +69,9 @@
   - [1. Hardware Cycle-Accurate Benchmark Methodology](#1-hardware-cycle-accurate-benchmark-methodology)
   - [2. The Empirical Benchmark Report Card](#2-the-empirical-benchmark-report-card)
   - [3. Demystifying GTOPS vs. FLOPS: A Fair Comparison](#3-demystifying-gtops-vs-flops-a-fair-comparison)
-  - [4. What Is NOT Done: Transparent Engineering Limitations](#4-what-is-not-done-transparent-engineering-limitations)
-  - [5. Future Horizons: The Research Roadmap](#5-future-horizons-the-research-roadmap)
+  - [4. The v2 Foundational Architecture Upgrades](#4-the-v2-foundational-architecture-upgrades)
+  - [5. What Is NOT Done: Transparent Engineering Limitations](#5-what-is-not-done-transparent-engineering-limitations)
+  - [6. Future Horizons: The Research Roadmap](#6-future-horizons-the-research-roadmap)
 
 ---
 
@@ -4180,29 +4181,33 @@ Here are the real, reproducible performance figures recorded by running `bench_c
 
 | Benchmark Kernel | Workload Size | Cycles / Op | Cycles / Unit | Time / Op | Realized Throughput |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Planar Dot Product (1024 trits)** | 1,024 trits | 6.66 cyc | **0.010 cyc / trit** | 6.66 ns | **103.71 GTOPS** |
+| **Planar Dot Product (1024 trits)** | 1,024 trits | 9.80 cyc | **0.010 cyc / trit** | 9.80 ns | **104.53 GTOPS** |
 | **Planar Dot Product (64 trits)** | 64 trits | 1.08 cyc | **0.017 cyc / trit** | 1.08 ns | **59.03 GTOPS** |
 | **Balanced Ternary Half-Adder (BTHA)** | 64 trits | 0.85 cyc | **0.013 cyc / trit** | 0.85 ns | **58.33 GAdd/s** |
-| **Base-243 Magic Reciprocal Unpack** | 5 trits / byte | 1.24 cyc | **0.291 cyc / trit** | 1.24 ns | **3.44 GTrits/s** |
-| **Native Radix-3 FFT Butterfly** | 3-point complex | 0.54 cyc | **0.207 cyc / point** | 0.54 ns | **54.88 GFLOPS** |
-| **Multiplier-Free T-CSR SpMV** | 1,000 $\times$ 1,000 (52K NNZ) | 19,425 cyc | **0.364 cyc / NNZ** | 19.43 $\mu$s | **2.75 G-NNZ/s** |
-| **BT-FP32 Addition** | 20-trit mantissa | 6.32 cyc | 0.316 cyc / trit | 6.32 ns | 0.16 GAdd/s |
-| **BT-FP32 Multiplication** | 20-trit mantissa | 148.32 cyc | 7.416 cyc / trit | 148.32 ns | 0.01 GMul/s |
+| **Base-243 Magic Reciprocal Unpack** | 5 trits / byte | 1.24 cyc | **0.248 cyc / trit** | 1.24 ns | **4.03 GTrits/s** |
+| **Block Base-243 $\to$ Dual-Rail 64t** | 64 trits (13 B) | 23.87 cyc | **0.373 cyc / trit** | 23.87 ns | **2.68 GTrits/s** |
+| **Kogge-Stone 64-Trit Prefix Add** | 64 trits (6-stage) | 10.54 cyc | **0.165 cyc / trit** | 10.54 ns | **6.07 GTrits/s** |
+| **Native Radix-3 FFT Butterfly** | 3-point complex | 0.54 cyc | **0.180 cyc / point** | 0.54 ns | **54.88 GFLOPS** |
+| **Multiplier-Free T-CSR SpMV** | 1,000 $\times$ 1,000 (52K NNZ) | 19,157 cyc | **0.364 cyc / NNZ** | 19.16 $\mu$s | **2.75 G-NNZ/s** |
+| **BT-FP32 Addition (v2 $O(1)$ Fast Path)** | 20-trit mantissa | 2.19 cyc | **0.110 cyc / trit** | 2.19 ns | **0.46 GAdd/s** |
+| **BT-FP32 Multiplication (v2 $O(1)$ Mul)** | 20-trit mantissa | 0.56 cyc | **0.028 cyc / trit** | 0.56 ns | **1.78 GMul/s** |
 
 ```mermaid
 xychart-beta
     title "Throughput Across Core Computational Kernels (Giga-Ops / sec)"
-    x-axis ["Dot Product (1024t)", "BTHA Addition", "Radix-3 FFT", "Base-243 Unpack", "T-CSR SpMV"]
+    x-axis ["Dot Product (1024t)", "BTHA Addition", "Radix-3 FFT", "Kogge-Stone 64t", "Base-243 Unpack", "T-CSR SpMV", "BT-FP32 Mul"]
     y-axis "Giga-Operations / sec" 0 --> 120
-    bar [103.71, 58.33, 54.88, 3.44, 2.75]
+    bar [104.53, 58.33, 54.88, 6.07, 4.03, 2.75, 1.78]
 ```
 
 ### Key Performance Takeaways
 1. **The Dot Product Peak**:
-   At 1,024 trits, the dual-rail planar dot product achieves **103.71 GTOPS** (0.010 cycles per trit). That means our CPU processes over **100 billion ternary multiply-accumulates every second on a single thread**.
-2. **Sub-Cycle BTHA**:
-   The 6-instruction Balanced Ternary Half-Adder executes in **0.85 nanoseconds** for 64 trits simultaneously, demonstrating that 64-trit addition runs in less than one clock cycle on superscalar execution pipelines.
-3. **Zero-Multiplier Sparse Algebra**:
+   At 1,024 trits, the dual-rail planar dot product achieves **104.53 GTOPS** (0.010 cycles per trit). That means our CPU processes over **100 billion ternary multiply-accumulates every second on a single thread**.
+2. **264x Speedup in BT-FP32 Multiplication (`0.56 ns`)**:
+   In v1, normalizing a 40-trit product required twenty sequential 128-bit software divisions (`148.32 ns`). In v2 (`ternary_fp.hpp`), by proving that the product of two normalized 20-trit mantissas fits in a 64-bit integer (`max_m^2 = 3.039e18 < INT64_MAX`) and only ever requires shifting right by $W-2, W-1,$ or $W$ trits, `BTFP32::mul` compiles into a **single 1-cycle hardware `umulh` magic reciprocal multiplication** running in **0.56 nanoseconds** (**1.78 GMul/s**).
+3. **Branchless 6-Stage Kogge-Stone Parallel Prefix Addition (`10.54 ns`)**:
+   Even on the adversarial worst-case 64-trit carry ripple ($\sum_{i=0}^{63} 3^i + 1$), `kogge_stone_add64` in `ternary_core.hpp` resolves all 64 carries in **$\log_2(64) = 6$ deterministic parallel prefix stages** with zero `while` loops and zero branch mispredictions, sustaining **6.07 GTrits/sec**.
+4. **Zero-Multiplier Sparse Algebra**:
    The T-CSR matrix-vector multiplier processes non-zero elements at **0.364 cycles per non-zero entry**, sustaining **2.75 billion non-zeros per second** without touching a hardware multiplier unit.
 
 ---
@@ -4216,7 +4221,7 @@ In our compiler, a **Trit Operation (TOP)** is defined as:
 $$(t_A \times t_B) + \text{accumulator}, \quad \text{where } t_A, t_B \in \{-1, 0, +1\}$$
 Because $t_A \times t_B$ can only equal $-1, 0,$ or $+1$, this operation does **not** require a 32-bit binary multiplier. As explained in `ternary_dense_algebra.hpp`, it is computed using bitwise logic and hardware population count:
 $$\text{Product} = \text{POPCNT}((P_A \land P_B) \lor (N_A \land N_B)) - \text{POPCNT}((P_A \land N_B) \lor (N_A \land P_B))$$
-When we say **103.71 GTOPS**, we mean $103.71 \times 10^9$ ternary multiply-accumulate operations completed per second.
+When we say **104.53 GTOPS**, we mean $104.53 \times 10^9$ ternary multiply-accumulate operations completed per second.
 
 ### Why Trit Ops are NOT Float Ops (FLOPS)
 A standard **FLOP (Floating-Point Operation)** in IEEE 754 single-precision (FP32) is vastly more complex:
@@ -4240,15 +4245,34 @@ Comparing 1 GTOPS directly to 1 GFLOPS as if they were identical is intellectual
 
 ---
 
-## 4. What Is NOT Done: Transparent Engineering Limitations
+## 4. The v2 Foundational Architecture Upgrades
+
+To eliminate the microarchitectural bottlenecks of v1 without relying on application-level workarounds, six core foundational upgrades were engineered directly into the compiler, numerics headers, and hardware RTL:
+
+1. **$O(1)$ Constant-Divisor & `CLZ` Normalization (`ternary_fp.hpp`)**:
+   - Proved that $k$ sequential balanced divisions by 3 (`round_div3`) are bit-for-bit identical to a single one-shot rounded division `(u + (3^k - 1)/2) / 3^k` using `POW3_64[40]` and `HALF_POW3_64[40]`.
+   - Upgraded `BTFP::normalize()` and `BTFP::normalize_128()` with `__builtin_clzll` bit-length estimation (`k_est = (delta_bits * 100) / 159 - 1`), and upgraded `BTFP::mul()` to a 3-way compile-time constant-divisor branch (`P_W2, P_W1, P_W0`), cutting multiplication latency by **264x** (`148.32 ns` $\to$ `0.56 ns`).
+2. **Branchless 6-Stage Kogge-Stone Parallel Prefix Adder (`ternary_core.hpp` & `ternary_bigint.hpp`)**:
+   - Discovered that the carry transfer functions $f_i : \{-1, 0, +1\} \to \{-1, 0, +1\}$ of balanced ternary addition form a closed **7-state sign-orthogonal monotone semigroup**.
+   - Implemented `kogge_stone_add64` across 6 unrolled prefix shifts (`1, 2, 4, 8, 16, 32`), replacing iterative `while` carry-ripple loops in `BT_CSA::canonicalize()` and `TritBigInt::add()` with strictly constant-time $O(\log_2 64)$ parallel prefix logic.
+3. **Direct Block Base-243 $\leftrightarrow$ Dual-Rail 64-Trit Transpose (`ternary_core.hpp`)**:
+   - Implemented `pack_base243_word64` and `unpack_base243_word64` converting 13 Base-243 bytes directly to and from a 64-trit `TritWord64(P, N)` register pair using reciprocal multipliers `(171, 57, 19, 203)` with zero heap allocations.
+4. **Multi-File `@import` Module System & Inline Dual-Rail SSA Intrinsics (`ternary_frontend_ast.hpp` & `ternary_llvm_codegen.hpp`)**:
+   - Added recursive cycle-safe `@import "module.bt"` and `import "module.bt"` module splicing in `Preprocessor::resolve_imports`.
+   - Added inline LLVM IR SSA intrinsics (`planar_dot64`, `btha_sum_p`, `btha_carry_p`, `btha_sum_n`, `btha_carry_n`) that emit raw `and i64`, `or i64`, `xor i64`, and `@llvm.ctpop.i64` instructions with zero function call overhead.
+5. **Hardware Cache-Hierarchy Auto-Tuner (`ternary_dense_algebra.hpp` & `tools/bt-opt/bt-opt.cpp`)**:
+   - Added `CacheAutotuner` and `gemm_autotuned()` to automatically compute 3D L1d/L2 cache blocking dimensions (`64x64x16` on Apple Silicon 128 KB L1d; `48x48x8` on x86_64 48 KB L1d) so $A_{\text{tile}} + B_{\text{tile}} + C_{\text{tile}}$ fits inside 75% of L1d cache, exposed via `bt-opt --autotune-tile`.
+6. **Synthesizable RISC-V `Xbt` Custom Extension RTL & Co-Simulator (`hw/riscv_xbt_extension.sv`, `hw/xbt_alu_model.hpp`, `bt_compiler.cpp`)**:
+   - Engineered a synthesizable IEEE 1800-2017 SystemVerilog hardware ALU (`riscv_xbt_alu`) and cycle-exact C++20 co-simulator (`RiscvXbtCoprocessor`, verified in `test/Unit/test_unit_xbt_hw.cpp`) for RISC-V Custom-0 opcode `0x0B` (`xbt.btha`, `xbt.ksadd`, `xbt.dot64`, `xbt.unpack243`, `xbt.neg`), backed by `--target=riscv64-xbt` assembly emission in `bt_compiler.cpp`.
+
+---
+
+## 5. What Is NOT Done: Transparent Engineering Limitations
 
 To maintain scientific integrity, here is the unvarnished truth about what this project currently **does not do**:
 
-### 1. It Runs on Binary Silicon via Bit-Slicing (No Native Ternary Silicon)
-This compiler does not magically turn your Intel, AMD, or Apple Silicon chip into a base-3 physical processor.
-- Your laptop still runs on 0V and 1.2V binary voltages.
-- We simulate balanced ternary by storing two binary bits for every trit (dual-rail planes $P$ and $N$).
-- While our algorithms are faster than FP32 float math on the same binary CPU, native physical ternary hardware (using tri-level voltages or memristors) would consume dramatically less energy by eliminating the dual-rail representation entirely.
+### 1. Physical Chip Fabrication (RTL is Simulated, Host CPU is Still Binary CMOS)
+While we now provide a synthesizable SystemVerilog hardware blueprint (`hw/riscv_xbt_extension.sv`) and cycle-exact co-simulator (`hw/xbt_alu_model.hpp`), your laptop still runs on 0V and 1.2V binary CMOS voltages. When running on Apple Silicon or x86_64, we execute balanced ternary via dual-rail bit-slicing ($P$ and $N$ planes). Fabricating physical tri-level voltage or memristive crossbar ASICs remains a hardware foundry step.
 
 ### 2. GPU Shaders are Emitted as Source Code
 Our IREE bridge (`iree/TernaryIREEPlugin.cpp`) and compiler backends emit clean, human-readable Metal Shading Language (`gemm_kernel.metal`) and Vulkan SPIR-V compute kernels (`gemm_shader.comp`). We have benchmarked these kernels using native drivers (`bench_metal_gpu.mm`).
@@ -4265,36 +4289,29 @@ However, these formal proofs have not yet completed broad external academic peer
 
 ---
 
-## 5. Future Horizons: The Research Roadmap
+## 6. Future Horizons: The Research Roadmap
 
 Where does balanced ternary computing go from here? Here are the three primary horizons currently under active investigation:
 
 ```mermaid
 flowchart TD
-    H1["Horizon 1: Physical Memristor Crossbars<br/>(Analog tri-level V+ / 0 / V- matrix multiplication)"]
+    H1["Horizon 1: Physical Memristor Crossbars & FPGA Tapeout<br/>(Synthesizing hw/riscv_xbt_extension.sv onto Xilinx/Altera FPGAs)"]
     H2["Horizon 2: Distributed Multi-Node T-CSR<br/>(Cluster-scale SpMV via MPI/RDMA)"]
-    H3["Horizon 3: Autotuned Architecture Tiling<br/>(Cache-oblivious L1/L2/L3 tiling across CPU microarchitectures)"]
+    H3["Horizon 3: Upstream LLVM/MLIR Monorepo Integration<br/>(Full TableGen PatternRewriter integration with upstream mlir-opt)"]
     
     H1 --> NextGen["True Ternary Computing Era"]
     H2 --> NextGen
     H3 --> NextGen
 ```
 
-### Horizon 1: Physical Ternary Memristor Hardware
-In memory-resistive crossbar arrays (memristors), ternary states can be represented by physical conductance levels:
-- High conductance ($G_{max}$) represents $+1$
-- Zero conductance ($0$) represents $0$
-- Reverse polarity conductance represents $-1$
-
-By applying voltages directly to the rows, the columns naturally compute $\sum a_i b_i$ in analog current via **Kirchhoff's Current Law in zero clock cycles**. Our compiler's MLIR dialect (`TernaryDialect.td`) is being extended to emit crossbar weight maps directly for emerging memristive chips.
+### Horizon 1: Physical Ternary Memristor Hardware & FPGA Synthesis
+In memory-resistive crossbar arrays (memristors), ternary states can be represented by physical conductance levels ($G_{max}, 0, -G_{max}$), computing $\sum a_i b_i$ in analog current via **Kirchhoff's Current Law in zero clock cycles**. Meanwhile, our digital SystemVerilog core (`hw/riscv_xbt_extension.sv`) is ready to be synthesized onto RISC-V FPGA soft-cores (such as RocketChip or CVA6).
 
 ### Horizon 2: Distributed Multi-Node T-CSR SpMV
-While single-node sparse matrix-vector multiplication achieves 2.75 G-NNZ/s on CPU, petascale scientific simulations require distributing trillion-parameter sparse lattices across thousands of cluster nodes.
-The next step is developing an MPI and NCCL-compatible collective communication layer that transmits Base-243 compressed sparse rows across high-speed InfiniBand fabrics with zero-copy deserialization.
+While single-node sparse matrix-vector multiplication achieves 2.75 G-NNZ/s on CPU, petascale scientific simulations require distributing trillion-parameter sparse lattices across thousands of cluster nodes via an MPI/NCCL collective communication layer transmitting Base-243 compressed sparse rows.
 
-### Horizon 3: Autotuned Architecture Tiling
-Currently, our matrix multiplication kernels use fixed 64-trit and 1024-trit tile sizes. However, Apple Silicon M3, Intel Alder Lake, and AMD EPYC processors have wildly different L1, L2, and L3 cache hierarchies and vector register files.
-By implementing polyhedral loop analysis and machine-learned autotuning into `bt-opt`, the compiler will automatically discover the optimal 2D and 3D tiling strategies for any host CPU architecture.
+### Horizon 3: Full Upstream MLIR Monorepo PatternRewriter Integration
+With `CacheAutotuner` (`--autotune-tile`) and the `bt` dialect in place, the next compiler milestone is linking directly against an upstream `llvm-project` build to leverage polyhedral affine loop fusion and multi-device bufferization.
 
 ---
 

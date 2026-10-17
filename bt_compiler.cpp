@@ -20,6 +20,7 @@
 #include "symplectic_ternary_engine.hpp"
 #include "ternary_jit_engine.hpp"
 #include "ternary_llvm_codegen.hpp"
+#include "hw/xbt_alu_model.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -66,6 +67,7 @@ struct CompilerOptions {
     bool emitDebug{false};
     bool emitBitcode{false};
     bool enableLTO{false};
+    bool enableRiscvXbt{false};
 };
 
 // ==============================================================================
@@ -576,6 +578,10 @@ int main(int argc, char** argv) {
                 #else
                 opts.targetTriple = "x86_64-linux-gnu";
                 #endif
+            } else if (t == "riscv64-xbt" || t == "riscv-xbt") {
+                opts.target = TargetArch::LLVM_IR;
+                opts.targetTriple = "riscv64-unknown-linux-gnu";
+                opts.enableRiscvXbt = true;
             } else if (t == "riscv64" || t == "riscv") {
                 opts.target = TargetArch::LLVM_IR;
                 opts.targetTriple = "riscv64-unknown-linux-gnu";
@@ -583,7 +589,8 @@ int main(int argc, char** argv) {
                 opts.target = TargetArch::LLVM_IR;
             } else if (t.find("apple-darwin") != std::string::npos ||
                        t.find("linux-gnu") != std::string::npos ||
-                       t.find("unknown-elf") != std::string::npos) {
+                       t.find("unknown-elf") != std::string::npos ||
+                       t.find("xbt") != std::string::npos) {
                 opts.targetTriple = t;
                 if (t.find("arm64") != std::string::npos || t.find("aarch64") != std::string::npos) {
                     opts.target = TargetArch::ARM64_NEON;
@@ -591,6 +598,9 @@ int main(int argc, char** argv) {
                     opts.target = TargetArch::X86_AVX512;
                 } else if (t.find("riscv") != std::string::npos) {
                     opts.target = TargetArch::LLVM_IR;
+                    if (t.find("xbt") != std::string::npos) {
+                        opts.enableRiscvXbt = true;
+                    }
                 }
             } else {
                 opts.target = TargetArch::CPP20_GENERIC;
@@ -799,9 +809,27 @@ int main(int argc, char** argv) {
         // RISC-V 64 backend handling
         if (triple.find("riscv") != std::string::npos) {
             if (opts.outputMode == OutputMode::ASM) {
+                std::string xbt_section;
+                if (opts.enableRiscvXbt) {
+                    using namespace bt::hw;
+                    std::ostringstream xss;
+                    xss << "\t# RISC-V Xbt Custom-0 (0x0B) Hardware Extension Intrinsics\n"
+                        << "\t# " << disassemble_xbt(encode_xbt_r(0, 2, 1, static_cast<uint8_t>(XbtFunct3::BTHA), 3)) << "\n"
+                        << "\t.insn r 0x0b, 0, 0, x3, x1, x2\n"
+                        << "\t# " << disassemble_xbt(encode_xbt_r(0, 2, 1, static_cast<uint8_t>(XbtFunct3::KSADD), 4)) << "\n"
+                        << "\t.insn r 0x0b, 1, 0, x4, x1, x2\n"
+                        << "\t# " << disassemble_xbt(encode_xbt_r(0, 2, 1, static_cast<uint8_t>(XbtFunct3::DOT64), 10)) << "\n"
+                        << "\t.insn r 0x0b, 2, 0, x10, x1, x2\n"
+                        << "\t# " << disassemble_xbt(encode_xbt_r(0, 0, 11, static_cast<uint8_t>(XbtFunct3::UNPACK243), 5)) << "\n"
+                        << "\t.insn r 0x0b, 3, 0, x5, x11, x0\n"
+                        << "\t# " << disassemble_xbt(encode_xbt_r(0, 0, 4, static_cast<uint8_t>(XbtFunct3::NEG), 6)) << "\n"
+                        << "\t.insn r 0x0b, 4, 0, x6, x4, x0\n";
+                    xbt_section = xss.str();
+                }
+
                 std::string riscv_asm = 
                     "; ==============================================================================\n"
-                    "; Universal Balanced Ternary Target Output: RISC-V 64 (" + triple + ")\n"
+                    "; Universal Balanced Ternary Target Output: RISC-V 64 (" + (opts.enableRiscvXbt ? std::string("riscv64-xbt") : triple) + ")\n"
                     "; Target Datalayout: " + datalayout + "\n"
                     "; LLVM IR Equivalent:\n"
                     "; target triple = \"" + triple + "\"\n"
@@ -816,7 +844,8 @@ int main(int argc, char** argv) {
                     "\taddi\tsp, sp, -32\n"
                     "\tsd\tra, 24(sp)\n"
                     "\tsd\ts0, 16(sp)\n"
-                    "\taddi\ts0, sp, 32\n"
+                    "\taddi\ts0, sp, 32\n" +
+                    xbt_section +
                     "\tli\ta0, 0\n"
                     "\tld\tra, 24(sp)\n"
                     "\tld\ts0, 16(sp)\n"

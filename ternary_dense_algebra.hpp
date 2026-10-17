@@ -416,6 +416,376 @@ inline void gemm_tiled_l1_l2(const TernaryMatrix& A, const TernaryMatrix& B, Den
 }
 
 // ==============================================================================
+// 5b. Hardware Cache-Hierarchy Auto-Tuner & Dual-Rail Planar GEMM
+// ==============================================================================
+
+/**
+ * @brief Contiguous Dual-Rail Bitplane Storage (P and N arrays of 64-trit words).
+ */
+struct DenseDualRailPlanes {
+    std::vector<uint64_t> P;
+    std::vector<uint64_t> N;
+    size_t rows{0};
+    size_t cols{0};
+    size_t words_per_row{0};
+
+    DenseDualRailPlanes() = default;
+
+    DenseDualRailPlanes(size_t r, size_t c)
+        : P(r * ((c + 63) / 64), 0ULL),
+          N(r * ((c + 63) / 64), 0ULL),
+          rows(r),
+          cols(c),
+          words_per_row((c + 63) / 64) {}
+
+    DenseDualRailPlanes(const TernaryMatrix& mat)
+        : P(mat.rows * mat.words_per_row, 0ULL),
+          N(mat.rows * mat.words_per_row, 0ULL),
+          rows(mat.rows),
+          cols(mat.cols),
+          words_per_row(mat.words_per_row) {
+        for (size_t i = 0; i < mat.data.size(); ++i) {
+            P[i] = mat.data[i].P;
+            N[i] = mat.data[i].N;
+        }
+    }
+
+    static inline DenseDualRailPlanes from_matrix(const TernaryMatrix& mat) {
+        return DenseDualRailPlanes(mat);
+    }
+
+    inline Trit get(size_t r, size_t c) const noexcept {
+        assert(r < rows && c < cols);
+        size_t w = c / 64;
+        size_t bit = c % 64;
+        size_t idx = r * words_per_row + w;
+        bool p = (P[idx] >> bit) & 1ULL;
+        bool n = (N[idx] >> bit) & 1ULL;
+        if (p) return Trit::Pos;
+        if (n) return Trit::Neg;
+        return Trit::Zero;
+    }
+
+    inline void set(size_t r, size_t c, Trit t) noexcept {
+        assert(r < rows && c < cols);
+        size_t w = c / 64;
+        size_t bit = c % 64;
+        size_t idx = r * words_per_row + w;
+        uint64_t mask = 1ULL << bit;
+        P[idx] &= ~mask;
+        N[idx] &= ~mask;
+        if (t == Trit::Pos) P[idx] |= mask;
+        if (t == Trit::Neg) N[idx] |= mask;
+    }
+
+    DenseDualRailPlanes transpose() const {
+        DenseDualRailPlanes T(cols, rows);
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                T.set(c, r, get(r, c));
+            }
+        }
+        return T;
+    }
+};
+
+/**
+ * @brief Hardware Cache-Hierarchy Configuration & Optimal 3D GEMM Tile Parameters.
+ */
+struct CacheHierarchyConfig {
+    size_t l1d_bytes{131072};       // L1 data cache size in bytes
+    size_t l2_bytes{16777216};      // L2 cache size in bytes
+    size_t cacheline_bytes{128};    // Cache line size in bytes
+    size_t tile_M{64};              // Optimal M tile dimension
+    size_t tile_N{64};              // Optimal N tile dimension
+    size_t tile_K_words{16};        // Optimal K tile dimension in 64-trit words
+
+    constexpr size_t tile_K_trits() const noexcept {
+        return tile_K_words * 64;
+    }
+
+    /**
+     * @brief Total working-set bytes for A_tile + B_tile + C_tile in L1d cache:
+     * A_tile: tile_M * tile_K_words * 16 B (Dual-Rail P + N)
+     * B_tile: tile_N * tile_K_words * 16 B (Dual-Rail P + N)
+     * C_tile: tile_M * tile_N * 8 B (int64_t accumulator)
+     */
+    constexpr size_t working_set_bytes() const noexcept {
+        size_t a_tile_bytes = tile_M * tile_K_words * 16;
+        size_t b_tile_bytes = tile_N * tile_K_words * 16;
+        size_t c_tile_bytes = tile_M * tile_N * sizeof(int64_t);
+        return a_tile_bytes + b_tile_bytes + c_tile_bytes;
+    }
+
+    constexpr size_t l1d_budget_bytes() const noexcept {
+        return (l1d_bytes * 3) / 4; // 75% of L1d cache
+    }
+
+    constexpr bool fits_in_l1d_budget() const noexcept {
+        return working_set_bytes() <= l1d_budget_bytes();
+    }
+};
+
+/**
+ * @brief Hardware Cache-Hierarchy Auto-Tuner for 3D Tiled Balanced Ternary GEMM.
+ */
+class CacheAutotuner {
+public:
+    static constexpr CacheHierarchyConfig compute_tiles_for_cache(
+        size_t l1d_bytes, size_t l2_bytes, size_t cacheline_bytes) noexcept {
+        CacheHierarchyConfig cfg;
+        cfg.l1d_bytes = (l1d_bytes > 0) ? l1d_bytes : 32768;
+        cfg.l2_bytes = (l2_bytes > 0) ? l2_bytes : 524288;
+        cfg.cacheline_bytes = (cacheline_bytes >= 16) ? cacheline_bytes : 64;
+
+        const size_t budget = (cfg.l1d_bytes * 3) / 4; // 75% of L1d
+
+        // Align K_words to cacheline bursts (2 cachelines of Dual-Rail words = 16 words on 128B line, 8 words on 64B line)
+        size_t words_per_line = std::max<size_t>(1, cfg.cacheline_bytes / 16);
+        cfg.tile_K_words = std::max<size_t>(4, words_per_line * 2);
+
+        // Search candidate square/rectangular tile dimensions (multiples of 8 for 4x2 microkernel)
+        constexpr size_t candidates[] = {128, 96, 64, 48, 32, 24, 16, 8};
+        bool found = false;
+        for (size_t dim : candidates) {
+            cfg.tile_M = dim;
+            cfg.tile_N = dim;
+            if (cfg.working_set_bytes() <= budget) {
+                found = true;
+                break;
+            }
+        }
+
+        while (!found && cfg.tile_K_words > 1) {
+            cfg.tile_K_words /= 2;
+            for (size_t dim : candidates) {
+                cfg.tile_M = dim;
+                cfg.tile_N = dim;
+                if (cfg.working_set_bytes() <= budget) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            cfg.tile_M = 4;
+            cfg.tile_N = 4;
+            cfg.tile_K_words = 1;
+        }
+        return cfg;
+    }
+
+    static inline CacheHierarchyConfig detect_host_cache() noexcept {
+#if defined(__aarch64__) || defined(_M_ARM64)
+        // Apple Silicon / ARM64: L1d = 128 KB, L2 = 16 MB, cacheline = 128 B
+        return compute_tiles_for_cache(128ULL * 1024ULL, 16ULL * 1024ULL * 1024ULL, 128ULL);
+#elif defined(__x86_64__) || defined(_M_X64)
+        // x86_64: L1d = 48 KB, L2 = 1024 KB, cacheline = 64 B
+        return compute_tiles_for_cache(48ULL * 1024ULL, 1024ULL * 1024ULL, 64ULL);
+#else
+        return compute_tiles_for_cache(32ULL * 1024ULL, 512ULL * 1024ULL, 64ULL);
+#endif
+    }
+
+    static inline CacheHierarchyConfig get_optimal_config() noexcept {
+        return detect_host_cache();
+    }
+
+    static inline std::string emit_autotuned_scf_mlir(size_t M = 1024, size_t N = 1024, size_t K_trits = 1024) {
+        CacheHierarchyConfig cfg = detect_host_cache();
+        size_t K_words = (K_trits + 63) / 64;
+        std::ostringstream ss;
+        ss << "// Autotuned L1d Tile: " << cfg.tile_M << "x" << cfg.tile_N << "x" << cfg.tile_K_words << "\n";
+        ss << "// Hardware Cache Hierarchy: L1d=" << (cfg.l1d_bytes / 1024) << "KB, L2="
+           << (cfg.l2_bytes / 1024) << "KB, CacheLine=" << cfg.cacheline_bytes
+           << "B, WorkingSet=" << cfg.working_set_bytes() << "B (<= 75% L1d=" << cfg.l1d_budget_bytes() << "B)\n";
+        ss << "module @bt_autotuned_gemm {\n";
+        ss << "  func.func @bt_gemm_autotuned_scf(\n";
+        ss << "      %A_P: memref<" << M << "x" << K_words << "xi64>,\n";
+        ss << "      %A_N: memref<" << M << "x" << K_words << "xi64>,\n";
+        ss << "      %BT_P: memref<" << N << "x" << K_words << "xi64>,\n";
+        ss << "      %BT_N: memref<" << N << "x" << K_words << "xi64>,\n";
+        ss << "      %C: memref<" << M << "x" << N << "xi64>) {\n";
+        ss << "    %c0 = arith.constant 0 : index\n";
+        ss << "    %c1 = arith.constant 1 : index\n";
+        ss << "    %M = arith.constant " << M << " : index\n";
+        ss << "    %N = arith.constant " << N << " : index\n";
+        ss << "    %K = arith.constant " << K_words << " : index\n";
+        ss << "    %tileM = arith.constant " << cfg.tile_M << " : index\n";
+        ss << "    %tileN = arith.constant " << cfg.tile_N << " : index\n";
+        ss << "    %tileK = arith.constant " << cfg.tile_K_words << " : index\n";
+        ss << "    scf.for %k0 = %c0 to %K step %tileK {\n";
+        ss << "      scf.for %i0 = %c0 to %M step %tileM {\n";
+        ss << "        scf.for %j0 = %c0 to %N step %tileN {\n";
+        ss << "          scf.for %i = %i0 to %tileM step %c1 {\n";
+        ss << "            scf.for %j = %j0 to %tileN step %c1 {\n";
+        ss << "              scf.for %w = %k0 to %tileK step %c1 {\n";
+        ss << "                %ap = memref.load %A_P[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
+        ss << "                %an = memref.load %A_N[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
+        ss << "                %bp = memref.load %BT_P[%j, %w] : memref<" << N << "x" << K_words << "xi64>\n";
+        ss << "                %bn = memref.load %BT_N[%j, %w] : memref<" << N << "x" << K_words << "xi64>\n";
+        ss << "                %pp1 = arith.andi %ap, %bp : i64\n";
+        ss << "                %pp2 = arith.andi %an, %bn : i64\n";
+        ss << "                %p_prod = arith.ori %pp1, %pp2 : i64\n";
+        ss << "                %np1 = arith.andi %ap, %bn : i64\n";
+        ss << "                %np2 = arith.andi %an, %bp : i64\n";
+        ss << "                %n_prod = arith.ori %np1, %np2 : i64\n";
+        ss << "                %pop_p = math.ctpop %p_prod : i64\n";
+        ss << "                %pop_n = math.ctpop %n_prod : i64\n";
+        ss << "                %dot = arith.subi %pop_p, %pop_n : i64\n";
+        ss << "                %prev = memref.load %C[%i, %j] : memref<" << M << "x" << N << "xi64>\n";
+        ss << "                %acc = arith.addi %prev, %dot : i64\n";
+        ss << "                memref.store %acc, %C[%i, %j] : memref<" << M << "x" << N << "xi64>\n";
+        ss << "              }\n";
+        ss << "            }\n";
+        ss << "          }\n";
+        ss << "        }\n";
+        ss << "      }\n";
+        ss << "    }\n";
+        ss << "    return\n";
+        ss << "  }\n";
+        ss << "}\n";
+        return ss.str();
+    }
+};
+
+/**
+ * @brief Cache-Autotuned 3D-Blocked Dual-Rail GEMM with Arbitrary Tail-Trit Masking.
+ * A: M x K_trits, B_T: N x K_trits (transposed B), C: M x N row-major output.
+ */
+inline void gemm_autotuned(const DenseDualRailPlanes& A, const DenseDualRailPlanes& B_T,
+                           std::vector<int64_t>& C, size_t M, size_t N, size_t K_trits) {
+    if (C.size() < M * N) {
+        C.resize(M * N, 0);
+    } else {
+        std::fill(C.begin(), C.begin() + static_cast<std::ptrdiff_t>(M * N), 0);
+    }
+
+    if (M == 0 || N == 0 || K_trits == 0) {
+        return;
+    }
+
+    const size_t K_words = (K_trits + 63) / 64;
+    const size_t stride_A = (A.words_per_row > 0) ? A.words_per_row : K_words;
+    const size_t stride_B = (B_T.words_per_row > 0) ? B_T.words_per_row : K_words;
+    const uint64_t tail_mask = (K_trits % 64 == 0) ? ~0ULL : ((1ULL << (K_trits % 64)) - 1ULL);
+
+    const CacheHierarchyConfig cfg = CacheAutotuner::detect_host_cache();
+    const size_t M_tile = cfg.tile_M;
+    const size_t N_tile = cfg.tile_N;
+    const size_t K_words_tile = cfg.tile_K_words;
+
+    auto dot_word = [](uint64_t ap, uint64_t an, uint64_t bp, uint64_t bn) noexcept -> int64_t {
+        uint64_t p_prod = (ap & bp) | (an & bn);
+        uint64_t n_prod = (ap & bn) | (an & bp);
+        return static_cast<int64_t>(std::popcount(p_prod)) -
+               static_cast<int64_t>(std::popcount(n_prod));
+    };
+
+    for (size_t k0 = 0; k0 < K_words; k0 += K_words_tile) {
+        const size_t k_max = std::min(k0 + K_words_tile, K_words);
+
+        for (size_t i0 = 0; i0 < M; i0 += M_tile) {
+            const size_t i_max = std::min(i0 + M_tile, M);
+
+            for (size_t j0 = 0; j0 < N; j0 += N_tile) {
+                const size_t j_max = std::min(j0 + N_tile, N);
+
+                // 4x2 register-blocked microkernel
+                size_t i = i0;
+                for (; i + 3 < i_max; i += 4) {
+                    size_t j = j0;
+                    for (; j + 1 < j_max; j += 2) {
+                        int64_t c00 = 0, c01 = 0;
+                        int64_t c10 = 0, c11 = 0;
+                        int64_t c20 = 0, c21 = 0;
+                        int64_t c30 = 0, c31 = 0;
+
+                        for (size_t w = k0; w < k_max; ++w) {
+                            const uint64_t mask = (w + 1 == K_words) ? tail_mask : ~0ULL;
+
+                            const uint64_t a0p = A.P[(i + 0) * stride_A + w] & mask;
+                            const uint64_t a0n = A.N[(i + 0) * stride_A + w] & mask;
+                            const uint64_t a1p = A.P[(i + 1) * stride_A + w] & mask;
+                            const uint64_t a1n = A.N[(i + 1) * stride_A + w] & mask;
+                            const uint64_t a2p = A.P[(i + 2) * stride_A + w] & mask;
+                            const uint64_t a2n = A.N[(i + 2) * stride_A + w] & mask;
+                            const uint64_t a3p = A.P[(i + 3) * stride_A + w] & mask;
+                            const uint64_t a3n = A.N[(i + 3) * stride_A + w] & mask;
+
+                            const uint64_t b0p = B_T.P[(j + 0) * stride_B + w] & mask;
+                            const uint64_t b0n = B_T.N[(j + 0) * stride_B + w] & mask;
+                            const uint64_t b1p = B_T.P[(j + 1) * stride_B + w] & mask;
+                            const uint64_t b1n = B_T.N[(j + 1) * stride_B + w] & mask;
+
+                            c00 += dot_word(a0p, a0n, b0p, b0n);
+                            c01 += dot_word(a0p, a0n, b1p, b1n);
+                            c10 += dot_word(a1p, a1n, b0p, b0n);
+                            c11 += dot_word(a1p, a1n, b1p, b1n);
+                            c20 += dot_word(a2p, a2n, b0p, b0n);
+                            c21 += dot_word(a2p, a2n, b1p, b1n);
+                            c30 += dot_word(a3p, a3n, b0p, b0n);
+                            c31 += dot_word(a3p, a3n, b1p, b1n);
+                        }
+
+                        C[(i + 0) * N + (j + 0)] += c00;
+                        C[(i + 0) * N + (j + 1)] += c01;
+                        C[(i + 1) * N + (j + 0)] += c10;
+                        C[(i + 1) * N + (j + 1)] += c11;
+                        C[(i + 2) * N + (j + 0)] += c20;
+                        C[(i + 2) * N + (j + 1)] += c21;
+                        C[(i + 3) * N + (j + 0)] += c30;
+                        C[(i + 3) * N + (j + 1)] += c31;
+                    }
+
+                    // Remainder for j
+                    for (; j < j_max; ++j) {
+                        for (size_t ii = 0; ii < 4; ++ii) {
+                            int64_t acc = 0;
+                            for (size_t w = k0; w < k_max; ++w) {
+                                const uint64_t mask = (w + 1 == K_words) ? tail_mask : ~0ULL;
+                                acc += dot_word(A.P[(i + ii) * stride_A + w] & mask,
+                                                A.N[(i + ii) * stride_A + w] & mask,
+                                                B_T.P[j * stride_B + w] & mask,
+                                                B_T.N[j * stride_B + w] & mask);
+                            }
+                            C[(i + ii) * N + j] += acc;
+                        }
+                    }
+                }
+
+                // Remainder for i
+                for (; i < i_max; ++i) {
+                    for (size_t j = j0; j < j_max; ++j) {
+                        int64_t acc = 0;
+                        for (size_t w = k0; w < k_max; ++w) {
+                            const uint64_t mask = (w + 1 == K_words) ? tail_mask : ~0ULL;
+                            acc += dot_word(A.P[i * stride_A + w] & mask,
+                                            A.N[i * stride_A + w] & mask,
+                                            B_T.P[j * stride_B + w] & mask,
+                                            B_T.N[j * stride_B + w] & mask);
+                        }
+                        C[i * N + j] += acc;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief Convenience overload of gemm_autotuned for TernaryMatrix and DenseMatrixInt64.
+ */
+inline void gemm_autotuned(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
+    assert(A.cols == B.rows);
+    assert(C.rows == A.rows && C.cols == B.cols);
+    DenseDualRailPlanes A_planes(A);
+    DenseDualRailPlanes BT_planes(B.transpose());
+    gemm_autotuned(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
+}
+
+// ==============================================================================
 // 6. Multi-Trit Radix-3 Fixed-Point Matrix Multiplication
 // ==============================================================================
 

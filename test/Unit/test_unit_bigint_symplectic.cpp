@@ -258,6 +258,42 @@ void test_cross_word_carry_addition() {
         assert(rec8 == a8);
     }
 
+    // 2,000 random 256-trit (4-word) Kogge-Stone additions verified against trit-by-trit sequential ripple
+    {
+        uint32_t seed = 0xDEADBEEFU;
+        auto lcg = [&seed]() {
+            seed = seed * 1664525U + 1013904223U;
+            return seed;
+        };
+
+        for (int iter = 0; iter < 2000; ++iter) {
+            TritBigInt<4> ra, rb, ref_sum;
+            for (size_t i = 0; i < 256; ++i) {
+                ra.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+                rb.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+            }
+
+            int8_t c = 0;
+            for (size_t i = 0; i < 256; ++i) {
+                int s = static_cast<int>(to_int(ra.getTrit(i))) + static_cast<int>(to_int(rb.getTrit(i))) + static_cast<int>(c);
+                int8_t next_c = 0;
+                if (s >= 2) {
+                    s -= 3;
+                    next_c = 1;
+                } else if (s <= -2) {
+                    s += 3;
+                    next_c = -1;
+                }
+                ref_sum.setTrit(i, from_int(static_cast<int8_t>(s)));
+                c = next_c;
+            }
+
+            TritBigInt<4> ks_sum = ra + rb;
+            assert(ks_sum.verify_invariants());
+            assert(ks_sum == ref_sum);
+        }
+    }
+
     std::cout << "  -> PASSED" << std::endl;
 }
 

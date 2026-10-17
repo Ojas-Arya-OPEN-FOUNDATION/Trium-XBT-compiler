@@ -61,6 +61,8 @@ clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_c_abi_ffi.cpp" -I"${SC
 python3 "${SCRIPT_DIR}/ffi/python/bt_ffi.py"
 clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_bigint_symplectic.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_bigint_symplectic"
 "${SCRIPT_DIR}/test/Unit/unit_bigint_symplectic"
+clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_xbt_hw.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_xbt_hw"
+"${SCRIPT_DIR}/test/Unit/unit_xbt_hw"
 
 
 

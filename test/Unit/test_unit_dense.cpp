@@ -94,11 +94,111 @@ void test_codec_and_gemm_guards() {
     assert(C.data[0] == 0 && "gemm_multitrit on empty planes must zero C and safely return");
 }
 
+void test_cache_autotuner_and_gemm_autotuned() {
+    std::cout << "  [Dense] Testing CacheAutotuner & gemm_autotuned (Aligned 128x128 & Unaligned 37x53x100)...\n";
+
+    // 1. Verify CacheAutotuner host detection and L1d 75% working-set budget
+    CacheHierarchyConfig host_cfg = CacheAutotuner::detect_host_cache();
+    assert(host_cfg.l1d_bytes > 0);
+    assert(host_cfg.l2_bytes >= host_cfg.l1d_bytes);
+    assert(host_cfg.cacheline_bytes >= 64);
+    assert(host_cfg.tile_M > 0 && host_cfg.tile_N > 0 && host_cfg.tile_K_words > 0);
+    assert(host_cfg.working_set_bytes() <= (host_cfg.l1d_bytes * 3) / 4 &&
+           "Working set A_tile + B_tile + C_tile must fit inside 75% of L1d cache!");
+
+    // Verify Apple Silicon (128KB L1d) and x86_64 (48KB L1d) configurations explicitly
+    CacheHierarchyConfig arm_cfg = CacheAutotuner::compute_tiles_for_cache(128 * 1024, 16 * 1024 * 1024, 128);
+    assert(arm_cfg.fits_in_l1d_budget());
+    assert(arm_cfg.tile_M == 64 && arm_cfg.tile_N == 64 && arm_cfg.tile_K_words == 16);
+
+    CacheHierarchyConfig x86_cfg = CacheAutotuner::compute_tiles_for_cache(48 * 1024, 1024 * 1024, 64);
+    assert(x86_cfg.fits_in_l1d_budget());
+
+    // 2. Test gemm_autotuned on aligned 128x128x128 matrices
+    {
+        const size_t M = 128, N = 128, K = 128;
+        TernaryMatrix A_mat(M, K);
+        TernaryMatrix B_mat(K, N);
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t k = 0; k < K; ++k) {
+                int v = static_cast<int>((i * 7 + k * 13) % 3) - 1;
+                A_mat.set(i, k, from_int(static_cast<int8_t>(v)));
+            }
+        }
+        for (size_t k = 0; k < K; ++k) {
+            for (size_t j = 0; j < N; ++j) {
+                int v = static_cast<int>((k * 5 + j * 11) % 3) - 1;
+                B_mat.set(k, j, from_int(static_cast<int8_t>(v)));
+            }
+        }
+
+        DenseMatrixInt64 C_ref(M, N);
+        gemm(A_mat, B_mat, C_ref);
+
+        DenseDualRailPlanes A_planes(A_mat);
+        DenseDualRailPlanes BT_planes(B_mat.transpose());
+        std::vector<int64_t> C_auto(M * N, 0);
+        gemm_autotuned(A_planes, BT_planes, C_auto, M, N, K);
+
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                assert(C_auto[i * N + j] == C_ref(i, j));
+            }
+        }
+    }
+
+    // 3. Test gemm_autotuned on unaligned 37x53x100 matrices + tail-masking verification
+    {
+        const size_t M = 37, N = 53, K = 100;
+        TernaryMatrix A_mat(M, K);
+        TernaryMatrix B_mat(K, N);
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t k = 0; k < K; ++k) {
+                int v = static_cast<int>((i * 3 + k * 17) % 3) - 1;
+                A_mat.set(i, k, from_int(static_cast<int8_t>(v)));
+            }
+        }
+        for (size_t k = 0; k < K; ++k) {
+            for (size_t j = 0; j < N; ++j) {
+                int v = static_cast<int>((k * 19 + j * 23) % 3) - 1;
+                B_mat.set(k, j, from_int(static_cast<int8_t>(v)));
+            }
+        }
+
+        DenseMatrixInt64 C_ref(M, N);
+        gemm(A_mat, B_mat, C_ref);
+
+        DenseDualRailPlanes A_planes(A_mat);
+        DenseDualRailPlanes BT_planes(B_mat.transpose());
+
+        // Inject garbage bits into the unused tail bits [36..63] of the 2nd word (w=1, since 100 = 64 + 36)
+        // to prove gemm_autotuned's tail_mask properly masks out bits >= K_trits!
+        const uint64_t garbage_bits = ~((1ULL << (K % 64)) - 1ULL);
+        for (size_t i = 0; i < M; ++i) {
+            A_planes.P[i * A_planes.words_per_row + 1] |= garbage_bits;
+        }
+        for (size_t j = 0; j < N; ++j) {
+            BT_planes.P[j * BT_planes.words_per_row + 1] |= garbage_bits;
+        }
+
+        std::vector<int64_t> C_auto(M * N, 0);
+        gemm_autotuned(A_planes, BT_planes, C_auto, M, N, K);
+
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                assert(C_auto[i * N + j] == C_ref(i, j) &&
+                       "Unaligned 37x53x100 gemm_autotuned mismatch (tail mask failed)!");
+            }
+        }
+    }
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Dense Algebra & GEMM Tests...\n";
     test_kleene_logic();
     test_tiled_gemm();
     test_codec_and_gemm_guards();
-    std::cout << "  -> PASSED: All Dense Algebra Unit Tests Verified.\n";
+    test_cache_autotuner_and_gemm_autotuned();
+    std::cout << "  -> PASSED: All Dense Algebra & CacheAutotuner Unit Tests Verified.\n";
     return 0;
 }
