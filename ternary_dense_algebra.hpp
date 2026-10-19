@@ -812,6 +812,14 @@ public:
         }
     }
 
+    inline size_t rows() const noexcept {
+        return planes.empty() ? 0 : planes[0].rows;
+    }
+
+    inline size_t cols() const noexcept {
+        return planes.empty() ? 0 : planes[0].cols;
+    }
+
     inline TernaryMatrix& plane(size_t p) noexcept {
         assert(p < num_planes);
         return planes[p];
@@ -821,12 +829,91 @@ public:
         assert(p < num_planes);
         return planes[p];
     }
+
+    /**
+     * @brief Decomposes a signed 64-bit integer into num_planes balanced trits
+     * and stores them across planes[0..num_planes-1] at position (r, c).
+     */
+    inline void set_int64(size_t r, size_t c, int64_t val) {
+        int64_t n = val;
+        for (size_t p = 0; p < num_planes; ++p) {
+            int64_t rem = n % 3;
+            n /= 3;
+            if (rem == 2) {
+                rem = -1;
+                n += 1;
+            } else if (rem == -2) {
+                rem = 1;
+                n -= 1;
+            }
+            planes[p].set(r, c, from_int(static_cast<int8_t>(rem)));
+        }
+    }
+
+    /**
+     * @brief Reconstructs the signed 64-bit integer at position (r, c)
+     * across planes[0..num_planes-1]: sum_{p=0..num_planes-1} trit_p * 3^p.
+     */
+    inline int64_t get_int64(size_t r, size_t c) const {
+        if (num_planes > 39) {
+            throw std::invalid_argument("MultiTritMatrix::get_int64: num_planes > 39 overflows int64_t");
+        }
+        int64_t total = 0;
+        int64_t p3 = 1;
+        for (size_t p = 0; p < num_planes; ++p) {
+            total += static_cast<int64_t>(to_int(planes[p].get(r, c))) * p3;
+            if (p + 1 < num_planes) p3 *= 3;
+        }
+        return total;
+    }
+
+    /**
+     * @brief Encodes a row-major R x C integer matrix into a MultiTritMatrix with `planes` bitplanes.
+     */
+    static MultiTritMatrix encode_int_matrix(const std::vector<int64_t>& data,
+                                             size_t R, size_t C, size_t planes) {
+        if (data.size() != R * C) {
+            throw std::invalid_argument("MultiTritMatrix::encode_int_matrix: data size mismatch");
+        }
+        MultiTritMatrix M(R, C, planes);
+        for (size_t r = 0; r < R; ++r) {
+            for (size_t c = 0; c < C; ++c) {
+                M.set_int64(r, c, data[r * C + c]);
+            }
+        }
+        return M;
+    }
+
+    /**
+     * @brief Overload for DenseMatrixInt64.
+     */
+    static MultiTritMatrix encode_int_matrix(const DenseMatrixInt64& src, size_t planes) {
+        return encode_int_matrix(src.data, src.rows, src.cols, planes);
+    }
+
+    /**
+     * @brief Decodes the MultiTritMatrix back into a flat row-major std::vector<int64_t>.
+     */
+    std::vector<int64_t> decode_int_matrix() const {
+        if (planes.empty()) return {};
+        size_t R = planes[0].rows;
+        size_t C = planes[0].cols;
+        std::vector<int64_t> out(R * C, 0);
+        for (size_t r = 0; r < R; ++r) {
+            for (size_t c = 0; c < C; ++c) {
+                out[r * C + c] = get_int64(r, c);
+            }
+        }
+        return out;
+    }
 };
 
 /**
  * @brief Radix-3 Multi-Trit Convolution Matrix Multiplication:
  * Computes C = A * B where elements are W-trit signed values.
  * Uses exact power-of-3 weighting: C = sum_{p, q} (A^(p) * B^(q)) * 3^(p+q).
+ * Pre-transposes all Q planes of B once before the (p, q) loop to eliminate
+ * P-fold redundant transpositions.
  */
 inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, DenseMatrixInt64& C) {
     if (A.num_planes == 0 || B.num_planes == 0) {
@@ -839,13 +926,26 @@ inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, D
     }
 
     size_t M = A.plane(0).rows;
+    size_t K = A.plane(0).cols;
     size_t N = B.plane(0).cols;
+    assert(B.plane(0).rows == K);
     assert(C.rows == M && C.cols == N);
 
     // Zero accumulator
     std::fill(C.data.begin(), C.data.end(), 0);
 
-    DenseMatrixInt64 plane_prod(M, N);
+    // Pre-transpose all Q planes of B once before the (p, q) loop
+    std::vector<DenseDualRailPlanes> A_planes(A.num_planes);
+    for (size_t p = 0; p < A.num_planes; ++p) {
+        A_planes[p] = DenseDualRailPlanes(A.plane(p));
+    }
+
+    std::vector<DenseDualRailPlanes> BT_planes(B.num_planes);
+    for (size_t q = 0; q < B.num_planes; ++q) {
+        BT_planes[q] = DenseDualRailPlanes(B.plane(q).transpose());
+    }
+
+    std::vector<int64_t> plane_prod(M * N, 0);
 
     // Precalculate powers of 3 using 128-bit integers to prevent signed 64-bit overflow
     std::vector<__int128_t> pow3(A.num_planes + B.num_planes, 1);
@@ -857,11 +957,11 @@ inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, D
 
     for (size_t p = 0; p < A.num_planes; ++p) {
         for (size_t q = 0; q < B.num_planes; ++q) {
-            gemm(A.plane(p), B.plane(q), plane_prod);
+            gemm_autotuned(A_planes[p], BT_planes[q], plane_prod, M, N, K);
             __int128_t scale = pow3[p + q];
 
             for (size_t idx = 0; idx < C.data.size(); ++idx) {
-                accum[idx] += static_cast<__int128_t>(plane_prod.data[idx]) * scale;
+                accum[idx] += static_cast<__int128_t>(plane_prod[idx]) * scale;
             }
         }
     }
@@ -903,20 +1003,10 @@ struct Codec {
     }
 
     /**
-     * @brief Converts a balanced ternary word into a 64-bit integer.
+     * @brief Converts a balanced ternary word into a 64-bit integer in O(1) via SWAR reduction.
      */
     static inline int64_t to_int64(const TritWord64& word, size_t num_trits = 39) {
-        // 3^39 fits in signed 64-bit int (3^39 = 4.05e18 < 9.22e18)
-        if (num_trits > 39) {
-            throw std::invalid_argument("num_trits > 39 overflows int64_t");
-        }
-        int64_t total = 0;
-        int64_t p3 = 1;
-        for (size_t i = 0; i < num_trits; ++i) {
-            total += static_cast<int64_t>(to_int(word.getTrit(i))) * p3;
-            if (i + 1 < num_trits) p3 *= 3;
-        }
-        return total;
+        return swar_to_int64(word, num_trits);
     }
 
     /**

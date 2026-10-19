@@ -286,6 +286,254 @@ using SymplecticState512 = MultiWordSymplecticState<8>;
 using MultiWordSymplecticEngine256 = MultiWordSymplecticEngine<4>;
 using MultiWordSymplecticEngine512 = MultiWordSymplecticEngine<8>;
 
+/**
+ * @brief Coupled N-Body Lattice & Multi-Stage Symplectic Engine.
+ * 
+ * Evolves a periodic 1D lattice of `Sites` coupled oscillators over `TritBigInt<NumWords>`:
+ * - State: `std::array<TritBigInt<NumWords>, Sites> Q, P;`
+ * - Coupled discrete Laplacian / FPUT-style nearest-neighbor antisymmetric force:
+ *   F_i(Q) = (Q_{(i+1) mod N} - Q_i) - (Q_i - Q_{(i-1) mod N})
+ *   satisfying sum_i F_i(Q) == 0 identically!
+ * - Guarantees 100% bit-exact time-reversibility (step_backward o step_forward == Id)
+ *   AND bit-exact total momentum conservation (sum_i P_i == const at every step).
+ */
+template <size_t Sites = 4, size_t NumWords = 2>
+class SymplecticLatticeEngine {
+    static_assert(Sites > 0, "SymplecticLatticeEngine requires at least 1 lattice site");
+
+public:
+    using BigInt = TritBigInt<NumWords>;
+    using LatticeVec = std::array<BigInt, Sites>;
+
+    struct State {
+        LatticeVec Q{};
+        LatticeVec P{};
+
+        constexpr State() noexcept = default;
+        constexpr State(const LatticeVec& q, const LatticeVec& p) noexcept : Q(q), P(p) {}
+
+        constexpr bool isValid() const noexcept {
+            for (size_t i = 0; i < Sites; ++i) {
+                if (!Q[i].verify_invariants() || !P[i].verify_invariants()) return false;
+            }
+            return true;
+        }
+
+        constexpr BigInt total_momentum() const noexcept {
+            BigInt sum{};
+            for (size_t i = 0; i < Sites; ++i) {
+                sum = BigInt::add(sum, P[i]);
+            }
+            return sum;
+        }
+
+        constexpr bool operator==(const State& other) const noexcept = default;
+        constexpr bool operator!=(const State& other) const noexcept = default;
+    };
+
+    LatticeVec Q{};
+    LatticeVec P{};
+
+    constexpr SymplecticLatticeEngine() noexcept = default;
+    constexpr SymplecticLatticeEngine(const LatticeVec& q, const LatticeVec& p) noexcept : Q(q), P(p) {}
+    constexpr explicit SymplecticLatticeEngine(const State& st) noexcept : Q(st.Q), P(st.P) {}
+
+    constexpr State state() const noexcept {
+        return State(Q, P);
+    }
+
+    constexpr void set_state(const State& st) noexcept {
+        Q = st.Q;
+        P = st.P;
+    }
+
+    constexpr bool isValid() const noexcept {
+        for (size_t i = 0; i < Sites; ++i) {
+            if (!Q[i].verify_invariants() || !P[i].verify_invariants()) return false;
+        }
+        return true;
+    }
+
+    constexpr bool operator==(const SymplecticLatticeEngine& other) const noexcept {
+        return Q == other.Q && P == other.P;
+    }
+
+    constexpr bool operator!=(const SymplecticLatticeEngine& other) const noexcept {
+        return !(*this == other);
+    }
+
+    /**
+     * @brief Coupled discrete Laplacian / FPUT-style nearest-neighbor antisymmetric force:
+     * F_i(Q) = (Q_{(i+1) mod N} - Q_i) - (Q_i - Q_{(i-1) mod N})
+     * Satisfies sum_{i=0..Sites-1} F_i(Q) == 0 identically!
+     */
+    static inline LatticeVec compute_forces(const LatticeVec& q_vec) noexcept {
+        LatticeVec F{};
+        for (size_t i = 0; i < Sites; ++i) {
+            const size_t next = (i + 1) % Sites;
+            const size_t prev = (i + Sites - 1) % Sites;
+            BigInt d_right = q_vec[next] - q_vec[i];
+            BigInt d_left  = q_vec[i] - q_vec[prev];
+            F[i] = d_right - d_left;
+        }
+        return F;
+    }
+
+    /**
+     * @brief Computes total lattice momentum sum_i P_i (conserved bit-for-bit at every step).
+     */
+    inline BigInt total_momentum() const noexcept {
+        BigInt sum{};
+        for (size_t i = 0; i < Sites; ++i) {
+            sum += P[i];
+        }
+        return sum;
+    }
+
+    static inline BigInt total_momentum(const State& st) noexcept {
+        return st.total_momentum();
+    }
+
+    /**
+     * @brief Forward Kick-Drift-Kick (KDK) Symplectic Lattice Step (in-place on member Q, P):
+     */
+    template <typename ForceFieldFn>
+    inline void step_forward(ForceFieldFn&& force_fn) noexcept {
+        LatticeVec f1 = force_fn(Q);
+        for (size_t i = 0; i < Sites; ++i) {
+            P[i] += f1[i];
+        }
+        for (size_t i = 0; i < Sites; ++i) {
+            Q[i] += P[i];
+        }
+        LatticeVec f2 = force_fn(Q);
+        for (size_t i = 0; i < Sites; ++i) {
+            P[i] += f2[i];
+        }
+    }
+
+    inline void step_forward() noexcept {
+        step_forward(compute_forces);
+    }
+
+    /**
+     * @brief Backward Kick-Drift-Kick (KDK) Symplectic Lattice Step (exact inverse, in-place):
+     */
+    template <typename ForceFieldFn>
+    inline void step_backward(ForceFieldFn&& force_fn) noexcept {
+        LatticeVec f2 = force_fn(Q);
+        for (size_t i = 0; i < Sites; ++i) {
+            P[i] -= f2[i];
+        }
+        for (size_t i = 0; i < Sites; ++i) {
+            Q[i] -= P[i];
+        }
+        LatticeVec f1 = force_fn(Q);
+        for (size_t i = 0; i < Sites; ++i) {
+            P[i] -= f1[i];
+        }
+    }
+
+    inline void step_backward() noexcept {
+        step_backward(compute_forces);
+    }
+
+    /**
+     * @brief Static State-based Forward and Backward KDK Steps:
+     */
+    template <typename ForceFieldFn>
+    static inline State step_forward(const State& st, ForceFieldFn&& force_fn) noexcept {
+        SymplecticLatticeEngine eng(st);
+        eng.step_forward(std::forward<ForceFieldFn>(force_fn));
+        return eng.state();
+    }
+
+    static inline State step_forward(const State& st) noexcept {
+        return step_forward(st, compute_forces);
+    }
+
+    template <typename ForceFieldFn>
+    static inline State step_backward(const State& st, ForceFieldFn&& force_fn) noexcept {
+        SymplecticLatticeEngine eng(st);
+        eng.step_backward(std::forward<ForceFieldFn>(force_fn));
+        return eng.state();
+    }
+
+    static inline State step_backward(const State& st) noexcept {
+        return step_backward(st, compute_forces);
+    }
+
+    /**
+     * @brief Palindromic Multi-Stage Yoshida Symmetric Forward Composition (in-place):
+     * Applies a symmetric sequence of KDK sub-steps with palindromic integer weights (1, -1, 1)
+     * or custom symmetric stage weights, preserving both exact reversibility and total momentum.
+     */
+    template <typename ForceFieldFn>
+    inline void step_yoshida_symmetric_forward(ForceFieldFn&& force_fn) noexcept {
+        // Stage 1: Forward KDK with weight +1
+        step_forward(force_fn);
+        // Stage 2: Central symmetric sub-step with negated force/drift weight (-1)
+        {
+            LatticeVec f1 = force_fn(Q);
+            for (size_t i = 0; i < Sites; ++i) P[i] -= f1[i];
+            for (size_t i = 0; i < Sites; ++i) Q[i] -= P[i];
+            LatticeVec f2 = force_fn(Q);
+            for (size_t i = 0; i < Sites; ++i) P[i] -= f2[i];
+        }
+        // Stage 3: Forward KDK with weight +1 (palindromic closure)
+        step_forward(force_fn);
+    }
+
+    inline void step_yoshida_symmetric_forward() noexcept {
+        step_yoshida_symmetric_forward(compute_forces);
+    }
+
+    /**
+     * @brief Palindromic Multi-Stage Yoshida Symmetric Backward Composition (exact inverse, in-place):
+     */
+    template <typename ForceFieldFn>
+    inline void step_yoshida_symmetric_backward(ForceFieldFn&& force_fn) noexcept {
+        // Undo Stage 3:
+        step_backward(force_fn);
+        // Undo Stage 2:
+        {
+            LatticeVec f2 = force_fn(Q);
+            for (size_t i = 0; i < Sites; ++i) P[i] += f2[i];
+            for (size_t i = 0; i < Sites; ++i) Q[i] += P[i];
+            LatticeVec f1 = force_fn(Q);
+            for (size_t i = 0; i < Sites; ++i) P[i] += f1[i];
+        }
+        // Undo Stage 1:
+        step_backward(force_fn);
+    }
+
+    inline void step_yoshida_symmetric_backward() noexcept {
+        step_yoshida_symmetric_backward(compute_forces);
+    }
+
+    template <typename ForceFieldFn>
+    static inline State step_yoshida_symmetric_forward(const State& st, ForceFieldFn&& force_fn) noexcept {
+        SymplecticLatticeEngine eng(st);
+        eng.step_yoshida_symmetric_forward(std::forward<ForceFieldFn>(force_fn));
+        return eng.state();
+    }
+
+    static inline State step_yoshida_symmetric_forward(const State& st) noexcept {
+        return step_yoshida_symmetric_forward(st, compute_forces);
+    }
+
+    template <typename ForceFieldFn>
+    static inline State step_yoshida_symmetric_backward(const State& st, ForceFieldFn&& force_fn) noexcept {
+        SymplecticLatticeEngine eng(st);
+        eng.step_yoshida_symmetric_backward(std::forward<ForceFieldFn>(force_fn));
+        return eng.state();
+    }
+
+    static inline State step_yoshida_symmetric_backward(const State& st) noexcept {
+        return step_yoshida_symmetric_backward(st, compute_forces);
+    }
+};
+
 } // namespace symplectic
 } // namespace bt
 

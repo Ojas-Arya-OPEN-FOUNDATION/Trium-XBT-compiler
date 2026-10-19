@@ -452,6 +452,90 @@ void test_bitwise_and_coding() {
 }
 
 // ==============================================================================
+// 8. General Linear System Solver (solve) & Radix-3 Spectral Convolution Tests
+// ==============================================================================
+#include "../../ternary_fp.hpp"
+
+void test_general_solver_and_convolve_radix3() {
+    std::cout << "  [Test] Exact Matrix<Rational>::solve(b), Matrix<BTFP32> & convolve_real_radix3...\n";
+
+    // 1. Exact 4x4 Hilbert Matrix system over Matrix<Rational>: H_ij = 1 / (i + j + 1)
+    // Hilbert matrices are notoriously ill-conditioned in floating-point, but over Rational
+    // solve(b), inverse(), and determinant() have 0 rounding error!
+    RationalMatrix H(4, 4);
+    for (size_t i = 0; i < 4; ++i) {
+        for (size_t j = 0; j < 4; ++j) {
+            H(i, j) = Rational(1, static_cast<int64_t>(i + j + 1));
+        }
+    }
+    // Exact determinant of 4x4 Hilbert matrix is 1 / 6048000
+    assert(H.determinant() == Rational(1, 6048000));
+
+    // Exact inverse check: H * H^-1 == I
+    RationalMatrix H_inv = H.inverse();
+    assert((H * H_inv) == RationalMatrix::identity(4));
+
+    // Exact linear system solve: H * x_true = b
+    std::vector<Rational> x_true = {Rational(3, 7), Rational(-5, 3), Rational(11, 9), Rational(-2, 5)};
+    std::vector<Rational> b = H * x_true;
+    std::vector<Rational> x_solved = H.solve(b);
+    assert(x_solved == x_true);
+    assert((H * x_solved) == b);
+
+    // Multi-RHS Matrix solve(B): H * X = I => X == H^-1
+    RationalMatrix X_mat = H.solve(RationalMatrix::identity(4));
+    assert(X_mat == H_inv);
+
+    // Partial pivoting test where A(0, 0) == 0
+    RationalMatrix A_piv = {
+        {Rational(0), Rational(2), Rational(1)},
+        {Rational(3), Rational(-1), Rational(2)},
+        {Rational(1), Rational(4), Rational(-1)}
+    };
+    std::vector<Rational> b_piv = {Rational(5), Rational(8), Rational(3)};
+    std::vector<Rational> x_piv = A_piv.solve(b_piv);
+    assert((A_piv * x_piv) == b_piv);
+
+    // 2. Matrix<BTFP32> seamless support (partial pivoting, solve, inverse, determinant, norms)
+    Matrix<BTFP32> M_fp = {
+        {BTFP32(0), BTFP32(3), BTFP32(1)},
+        {BTFP32(9), BTFP32(-3), BTFP32(6)},
+        {BTFP32(3), BTFP32(6), BTFP32(-3)}
+    };
+    std::vector<BTFP32> x_fp_true = {BTFP32(2), BTFP32(-1), BTFP32(4)};
+    std::vector<BTFP32> b_fp = M_fp * x_fp_true;
+    std::vector<BTFP32> x_fp_sol = M_fp.solve(b_fp);
+    for (size_t i = 0; i < 3; ++i) {
+        assert(std::abs(x_fp_sol[i].to_double() - x_fp_true[i].to_double()) < 1e-8);
+    }
+    Matrix<BTFP32> M_fp_inv = M_fp.inverse();
+    Matrix<BTFP32> M_fp_id = M_fp * M_fp_inv;
+    for (size_t r = 0; r < 3; ++r) {
+        for (size_t c = 0; c < 3; ++c) {
+            double expected = (r == c) ? 1.0 : 0.0;
+            assert(std::abs(M_fp_id(r, c).to_double() - expected) < 1e-8);
+        }
+    }
+    assert(M_fp.norm_1() > 0.0 && M_fp.norm_inf() > 0.0 && M_fp.norm_frobenius() > 0.0);
+
+    // 3. Radix3FFT::convolve_real_radix3 and convolve_radix3 verification
+    std::vector<double> sig_a = {1.0, -1.0, 2.0, 0.5, -3.0};
+    std::vector<double> sig_b = {2.0, 3.0, -1.0, 4.0};
+    std::vector<double> conv_fft = Radix3FFT::convolve_real_radix3(sig_a, sig_b);
+    assert(conv_fft.size() == sig_a.size() + sig_b.size() - 1);
+
+    for (size_t n = 0; n < conv_fft.size(); ++n) {
+        double ref = 0.0;
+        for (size_t k = 0; k < sig_a.size(); ++k) {
+            if (n >= k && (n - k) < sig_b.size()) {
+                ref += sig_a[k] * sig_b[n - k];
+            }
+        }
+        assert(std::abs(conv_fft[n] - ref) < 1e-11);
+    }
+}
+
+// ==============================================================================
 // Main Runner
 // ==============================================================================
 int main() {
@@ -464,6 +548,7 @@ int main() {
     test_norms_and_condition();
     test_radix3_fft();
     test_bitwise_and_coding();
+    test_general_solver_and_convolve_radix3();
 
     std::cout << "  -> PASSED: All libbt Standard Library & Radix-3 FFT Unit Tests 100% Verified.\n";
     return 0;

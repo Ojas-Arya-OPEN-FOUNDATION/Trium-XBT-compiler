@@ -137,6 +137,14 @@ public:
         return v;
     }
 
+    static JITValue make_btfp(bt::BTFP32 b) {
+        JITValue v;
+        v.kind = Kind::Float;
+        v.btfp_val = b;
+        v.float_val = b.to_double();
+        return v;
+    }
+
     static JITValue make_sparse_matrix(bt::TCSRMatrix mat) {
         JITValue v;
         v.kind = Kind::SparseMat;
@@ -953,6 +961,49 @@ public:
             if (node.arguments.size() != 1) throw std::runtime_error("to_int requires 1 argument!");
             node.arguments[0]->accept(*this);
             last_eval_result = JITValue::make_scalar_int(last_eval_result.as_int64());
+            return;
+        }
+
+        // 9b. Builtin: fma(a, b, c)
+        if (fn == "fma") {
+            if (node.arguments.size() != 3) throw std::runtime_error("fma requires 3 arguments!");
+            node.arguments[0]->accept(*this);
+            JITValue a = last_eval_result;
+            node.arguments[1]->accept(*this);
+            JITValue b = last_eval_result;
+            node.arguments[2]->accept(*this);
+            JITValue c = last_eval_result;
+            bt::BTFP32 af = (a.kind == JITValue::Kind::Float) ? a.btfp_val : bt::BTFP32::from_double(static_cast<double>(a.as_int64()));
+            bt::BTFP32 bf = (b.kind == JITValue::Kind::Float) ? b.btfp_val : bt::BTFP32::from_double(static_cast<double>(b.as_int64()));
+            bt::BTFP32 cf = (c.kind == JITValue::Kind::Float) ? c.btfp_val : bt::BTFP32::from_double(static_cast<double>(c.as_int64()));
+            bt::BTFP32 res = bt::BTFP32::fma(af, bf, cf);
+            last_eval_result = JITValue::make_btfp(res);
+            return;
+        }
+
+        // 9c. Builtin: sqrt(x)
+        if (fn == "sqrt") {
+            if (node.arguments.size() != 1) throw std::runtime_error("sqrt requires 1 argument!");
+            node.arguments[0]->accept(*this);
+            JITValue x = last_eval_result;
+            bt::BTFP32 xf = (x.kind == JITValue::Kind::Float) ? x.btfp_val : bt::BTFP32::from_double(static_cast<double>(x.as_int64()));
+            bt::BTFP32 res = xf.sqrt();
+            last_eval_result = JITValue::make_btfp(res);
+            return;
+        }
+
+        // 9d. Builtin: abs(x)
+        if (fn == "abs") {
+            if (node.arguments.size() != 1) throw std::runtime_error("abs requires 1 argument!");
+            node.arguments[0]->accept(*this);
+            JITValue x = last_eval_result;
+            if (x.kind == JITValue::Kind::Float) {
+                bt::BTFP32 res = x.btfp_val.abs();
+                last_eval_result = JITValue::make_btfp(res);
+            } else {
+                int64_t val = x.as_int64();
+                last_eval_result = JITValue::make_scalar_int(val < 0 ? -val : val);
+            }
             return;
         }
 

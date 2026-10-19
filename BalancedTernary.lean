@@ -349,3 +349,84 @@ theorem dot_eq_popcount_diff (xs ys : List BitplaneTrit) :
       · simp [bitplaneDot, positiveBits, negativeBits, hp, hn, popcount, hz_val, ih_spec]
         omega
       · simp [bitplaneDot, positiveBits, negativeBits, hp, hn, popcount, hz_val, ih_spec]
+
+/-!
+### Douglas W. Jones 4-Stage SWAR Parallel BCT-to-Binary Tree Reduction
+Proving that the 4-stage binary tree base-3^{2^k} reduction (`bct_to_bin_swar32` in `ternary_core.hpp`)
+is algebraically identical to sequential Horner radix-3 evaluation `evalTritList`.
+-/
+
+def swarStage1 (d0 d1 : Int) : Int := d0 + 3 * d1
+def swarStage2 (v0 v1 : Int) : Int := v0 + 9 * v1
+def swarStage3 (w0 w1 : Int) : Int := w0 + 81 * w1
+def swarStage4 (u0 u1 : Int) : Int := u0 + 6561 * u1
+
+theorem swar_3stage_eq_horner8 (t0 t1 t2 t3 t4 t5 t6 t7 : Trit) :
+    swarStage3 (swarStage2 (swarStage1 (Trit.val t0) (Trit.val t1))
+                           (swarStage1 (Trit.val t2) (Trit.val t3)))
+               (swarStage2 (swarStage1 (Trit.val t4) (Trit.val t5))
+                           (swarStage1 (Trit.val t6) (Trit.val t7)))
+    = evalTritList [t0, t1, t2, t3, t4, t5, t6, t7] := by
+  dsimp [swarStage1, swarStage2, swarStage3, evalTritList]
+  omega
+
+theorem swar_4stage_eq_horner16
+    (t0 t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 t15 : Trit) :
+    swarStage4
+      (swarStage3 (swarStage2 (swarStage1 (Trit.val t0) (Trit.val t1))
+                              (swarStage1 (Trit.val t2) (Trit.val t3)))
+                  (swarStage2 (swarStage1 (Trit.val t4) (Trit.val t5))
+                              (swarStage1 (Trit.val t6) (Trit.val t7))))
+      (swarStage3 (swarStage2 (swarStage1 (Trit.val t8) (Trit.val t9))
+                              (swarStage1 (Trit.val t10) (Trit.val t11)))
+                  (swarStage2 (swarStage1 (Trit.val t12) (Trit.val t13))
+                              (swarStage1 (Trit.val t14) (Trit.val t15))))
+    = evalTritList [t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15] := by
+  dsimp [swarStage1, swarStage2, swarStage3, swarStage4, evalTritList]
+  omega
+
+/-!
+### Uniqueness of Balanced Euclidean Division (`divMod3_unique` & Odd Divisors)
+-/
+
+theorem divMod3_unique (z q1 q2 : Int) (t1 t2 : Trit)
+    (h1 : z = 3 * q1 + Trit.val t1)
+    (h2 : z = 3 * q2 + Trit.val t2) :
+    q1 = q2 ∧ t1 = t2 := by
+  cases t1 <;> cases t2 <;> dsimp [Trit.val] at h1 h2
+  · exact ⟨by omega, rfl⟩
+  · omega
+  · omega
+  · omega
+  · exact ⟨by omega, rfl⟩
+  · omega
+  · omega
+  · omega
+  · exact ⟨by omega, rfl⟩
+
+theorem balanced_divmod_odd_unique (a k q1 r1 q2 r2 : Int)
+    (hk : k ≥ 0)
+    (h1 : a = (2 * k + 1) * q1 + r1)
+    (hb1 : -k ≤ r1 ∧ r1 ≤ k)
+    (h2 : a = (2 * k + 1) * q2 + r2)
+    (hb2 : -k ≤ r2 ∧ r2 ≤ k) :
+    q1 = q2 ∧ r1 = r2 := by
+  have hdiff : (2 * k + 1) * (q1 - q2) = r2 - r1 := by
+    have hmul : (2 * k + 1) * (q1 - q2) = (2 * k + 1) * q1 - (2 * k + 1) * q2 :=
+      Int.mul_sub (2 * k + 1) q1 q2
+    omega
+  have h_cases : q1 - q2 = 0 ∨ q1 - q2 ≥ 1 ∨ q1 - q2 ≤ -1 := by omega
+  rcases h_cases with hzero | hge | hle
+  · have hq : q1 = q2 := by omega
+    subst hq
+    exact ⟨rfl, by omega⟩
+  · have hm : (2 * k + 1) * (q1 - q2) ≥ (2 * k + 1) * 1 :=
+      Int.mul_le_mul_of_nonneg_left hge (by omega)
+    rw [Int.mul_one] at hm
+    omega
+  · have hm : (2 * k + 1) * (q1 - q2) ≤ (2 * k + 1) * (-1) :=
+      Int.mul_le_mul_of_nonneg_left hle (by omega)
+    have hneg1 : (2 * k + 1) * (-1) = -(2 * k + 1) := by omega
+    rw [hneg1] at hm
+    omega
+

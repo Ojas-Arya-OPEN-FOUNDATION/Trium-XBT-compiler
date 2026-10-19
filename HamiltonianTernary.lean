@@ -109,3 +109,93 @@ theorem hamiltonian_multiplication_expansion (Qa Pa Qb Pb : Int) :
     rw [Int.mul_add]
   rw [h_dist]
   omega
+
+/-!
+### 3. 3-Stage Störmer-Verlet Kick-Drift-Kick (KDK) Symplectic Reversibility
+Matches `MultiWordSymplecticEngine` and `SymplecticLatticeEngine` in `symplectic_ternary_engine.hpp`.
+-/
+
+namespace PhaseSpace
+
+def verletForward (F : Int → Int) (s : PhaseSpace) : PhaseSpace :=
+  let p_half := s.p + F s.q
+  let q_next := s.q + p_half
+  let p_next := p_half + F q_next
+  ⟨q_next, p_next⟩
+
+def verletBackward (F : Int → Int) (s : PhaseSpace) : PhaseSpace :=
+  let p_half := s.p - F s.q
+  let q_prev := s.q - p_half
+  let p_prev := p_half - F q_prev
+  ⟨q_prev, p_prev⟩
+
+theorem verletKDK_exact_reversibility (F : Int → Int) (s : PhaseSpace) :
+    verletBackward F (verletForward F s) = s := by
+  dsimp [verletForward, verletBackward]
+  have h1 : s.p + F s.q + F (s.q + (s.p + F s.q)) - F (s.q + (s.p + F s.q)) = s.p + F s.q := by omega
+  rw [h1]
+  have h2 : s.q + (s.p + F s.q) - (s.p + F s.q) = s.q := by omega
+  rw [h2]
+  have h3 : s.p + F s.q - F s.q = s.p := by omega
+  rw [h3]
+
+theorem verletKDK_exact_invertibility (F : Int → Int) (s : PhaseSpace) :
+    verletForward F (verletBackward F s) = s := by
+  dsimp [verletForward, verletBackward]
+  have h1 : s.q - (s.p - F s.q) + (s.p - F s.q - F (s.q - (s.p - F s.q)) + F (s.q - (s.p - F s.q))) = s.q := by omega
+  have h2 : s.p - F s.q - F (s.q - (s.p - F s.q)) + F (s.q - (s.p - F s.q)) = s.p - F s.q := by omega
+  rw [h2]
+  have h3 : s.q - (s.p - F s.q) + (s.p - F s.q) = s.q := by omega
+  rw [h3]
+  have h4 : s.p - F s.q + F s.q = s.p := by omega
+  rw [h4]
+
+/-!
+### 4. Arbitrary K-Stage Multi-Stage Symplectic Composition Reversibility
+-/
+
+def multiStageForward : List ((Int → Int) × (Int → Int)) → PhaseSpace → PhaseSpace
+  | [], s => s
+  | (f, g) :: rest, s => multiStageForward rest (forwardStep f g s)
+
+def multiStageBackward : List ((Int → Int) × (Int → Int)) → PhaseSpace → PhaseSpace
+  | [], s => s
+  | (f, g) :: rest, s => backwardStep f g (multiStageBackward rest s)
+
+theorem multiStage_exact_reversibility
+    (stages : List ((Int → Int) × (Int → Int))) (s : PhaseSpace) :
+    multiStageBackward stages (multiStageForward stages s) = s := by
+  induction stages generalizing s with
+  | nil => rfl
+  | cons fg rest ih =>
+    rcases fg with ⟨f, g⟩
+    dsimp [multiStageForward, multiStageBackward]
+    rw [ih (forwardStep f g s)]
+    exact leapfrog_exact_reversibility f g s
+
+end PhaseSpace
+
+/-!
+### 5. Coupled Lattice Total Momentum Conservation under Antisymmetric Forces
+-/
+
+structure Lattice2Body where
+  q1 : Int
+  q2 : Int
+  p1 : Int
+  p2 : Int
+  deriving DecidableEq, Repr
+
+def totalMomentum (st : Lattice2Body) : Int :=
+  st.p1 + st.p2
+
+def latticeKickPairwise (f12 f21 : Int) (st : Lattice2Body) : Lattice2Body :=
+  ⟨st.q1, st.q2, st.p1 + f12, st.p2 + f21⟩
+
+theorem coupledLattice_momentum_conservation
+    (f12 f21 : Int) (st : Lattice2Body)
+    (h_antisym : f12 + f21 = 0) :
+    totalMomentum (latticeKickPairwise f12 f21 st) = totalMomentum st := by
+  dsimp [totalMomentum, latticeKickPairwise]
+  omega
+

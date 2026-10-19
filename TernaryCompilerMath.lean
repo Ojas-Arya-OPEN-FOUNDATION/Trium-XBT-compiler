@@ -51,6 +51,44 @@ theorem composeCarry_assoc (A B C : CarryOp) :
   cases C.onNeg <;> cases C.onZero <;> cases C.onPos <;>
   cases B.onNeg <;> cases B.onZero <;> cases B.onPos <;> rfl
 
+/-- Full-adder carry function mapping (a, b, c_in) to c_out ∈ {-1, 0, +1} -/
+def fa_carry (a b c : Trit) : Trit :=
+  let s := val a + val b + val c
+  if s ≥ 2 then Pos
+  else if s ≤ -2 then Neg
+  else Zero
+
+/-- Stage-0 Kogge-Stone carry transfer generator for input trits (a, b) -/
+def initCarryOp (a b : Trit) : CarryOp where
+  onNeg  := fa_carry a b Neg
+  onZero := fa_carry a b Zero
+  onPos  := fa_carry a b Pos
+
+/-- Theorem: Stage-0 generator soundness: applying initCarryOp to any c_in equals fa_carry -/
+theorem initCarryOp_sound (a b c : Trit) :
+    applyCarry (initCarryOp a b) c = fa_carry a b c := by
+  cases c <;> rfl
+
+/-- Monotone carry transfer predicate: f(-1) ≤ f(0) ≤ f(+1) -/
+def isMonotoneCarry (op : CarryOp) : Bool :=
+  (val op.onNeg ≤ val op.onZero) && (val op.onZero ≤ val op.onPos)
+
+/-- Theorem: Every Stage-0 generator is monotone -/
+theorem initCarryOp_monotone (a b : Trit) :
+    isMonotoneCarry (initCarryOp a b) = true := by
+  cases a <;> cases b <;> decide
+
+/-- Theorem: Monotone carry operators are closed under associative prefix composition -/
+theorem composeCarry_preserves_monotone (L R : CarryOp)
+    (hL : isMonotoneCarry L = true)
+    (hR : isMonotoneCarry R = true) :
+    isMonotoneCarry (composeCarry L R) = true := by
+  rcases L with ⟨ln, lz, lp⟩
+  rcases R with ⟨rn, rz, rp⟩
+  cases ln <;> cases lz <;> cases lp <;>
+  cases rn <;> cases rz <;> cases rp <;>
+  revert hL hR <;> decide
+
 end Trit
 
 /-!

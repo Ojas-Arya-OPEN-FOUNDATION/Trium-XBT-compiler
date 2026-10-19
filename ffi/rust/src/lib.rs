@@ -61,6 +61,11 @@ extern "C" {
     pub fn bt_fp32_sub(a: BtFp32, b: BtFp32) -> BtFp32;
     pub fn bt_fp32_mul(a: BtFp32, b: BtFp32) -> BtFp32;
     pub fn bt_fp32_div(a: BtFp32, b: BtFp32) -> BtFp32;
+    pub fn bt_fp32_fma(a: BtFp32, b: BtFp32, c: BtFp32) -> BtFp32;
+    pub fn bt_fp32_sqrt(a: BtFp32) -> BtFp32;
+    pub fn bt_fp32_abs(a: BtFp32) -> BtFp32;
+    pub fn bt_fp32_neg(a: BtFp32) -> BtFp32;
+    pub fn bt_fp32_pow_int(a: BtFp32, exp: i64) -> BtFp32;
     pub fn bt_csr_spmv_exec(mat: *const BtCsr, x: *const i64, y: *mut i64);
     pub fn bt_radix3_fft_forward(
         real_in: *const f64,
@@ -76,6 +81,14 @@ extern "C" {
         imag_out: *mut f64,
         n: usize,
     ) -> i32;
+    pub fn bt_radix3_convolve(
+        a: *const f64,
+        na: usize,
+        b: *const f64,
+        nb: usize,
+        out: *mut f64,
+    ) -> i32;
+    pub fn bt_kogge_stone_add64_val(a: BtWord64, b: BtWord64, cin: i8, cout_msb: *mut i8) -> BtWord64;
     pub fn bt_dot_product_64_val(a: BtWord64, b: BtWord64) -> i64;
     pub fn bt_btha_step_val(a: BtWord64, b: BtWord64) -> BtBthaResult;
     pub fn bt_base243_pack_val(trits: *const i8) -> u8;
@@ -143,6 +156,36 @@ impl BtFp32 {
     #[inline]
     pub fn is_zero(&self) -> bool {
         self.mantissa == 0
+    }
+
+    /// Fused multiply-add with single unbiased rounding: (self * b) + c.
+    #[inline]
+    pub fn fma(self, b: Self, c: Self) -> Self {
+        unsafe { bt_fp32_fma(self, b, c) }
+    }
+
+    /// Balanced ternary square root with exact midpoint rounding: sqrt(self).
+    #[inline]
+    pub fn sqrt(self) -> Self {
+        unsafe { bt_fp32_sqrt(self) }
+    }
+
+    /// Absolute value of a balanced ternary float.
+    #[inline]
+    pub fn abs(self) -> Self {
+        unsafe { bt_fp32_abs(self) }
+    }
+
+    /// Zero-cost negation of a balanced ternary float.
+    #[inline]
+    pub fn neg(self) -> Self {
+        unsafe { bt_fp32_neg(self) }
+    }
+
+    /// Integer power of a balanced ternary float: self^exp.
+    #[inline]
+    pub fn pow_int(self, exp: i64) -> Self {
+        unsafe { bt_fp32_pow_int(self, exp) }
     }
 }
 
@@ -267,6 +310,25 @@ pub fn radix3_ifft(real: &[f64], imag: Option<&[f64]>) -> Result<(Vec<f64>, Vec<
 
     if status == 0 {
         Ok((real_out, imag_out))
+    } else {
+        Err(status)
+    }
+}
+
+/// O(N log3 N) discrete spectral convolution via Radix-3 FFT.
+pub fn radix3_convolve(a: &[f64], b: &[f64]) -> Result<Vec<f64>, i32> {
+    let na = a.len();
+    let nb = b.len();
+    if na == 0 || nb == 0 {
+        return Ok(Vec::new());
+    }
+    let out_len = na + nb - 1;
+    let mut out = vec![0.0; out_len];
+    let status = unsafe {
+        bt_radix3_convolve(a.as_ptr(), na, b.as_ptr(), nb, out.as_mut_ptr())
+    };
+    if status == 0 {
+        Ok(out)
     } else {
         Err(status)
     }

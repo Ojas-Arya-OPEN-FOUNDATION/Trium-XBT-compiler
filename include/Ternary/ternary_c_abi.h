@@ -296,6 +296,31 @@ BT_API bt_fp32_t bt_fp32_mul(bt_fp32_t a, bt_fp32_t b);
 BT_API bt_fp32_t bt_fp32_div(bt_fp32_t a, bt_fp32_t b);
 
 /**
+ * @brief Fused multiply-add with single unbiased rounding: (a * b) + c.
+ */
+BT_API bt_fp32_t bt_fp32_fma(bt_fp32_t a, bt_fp32_t b, bt_fp32_t c);
+
+/**
+ * @brief Balanced ternary square root with exact midpoint rounding: sqrt(a).
+ */
+BT_API bt_fp32_t bt_fp32_sqrt(bt_fp32_t a);
+
+/**
+ * @brief Absolute value of a balanced ternary float.
+ */
+BT_API bt_fp32_t bt_fp32_abs(bt_fp32_t a);
+
+/**
+ * @brief Zero-cost negation of a balanced ternary float.
+ */
+BT_API bt_fp32_t bt_fp32_neg(bt_fp32_t a);
+
+/**
+ * @brief Integer power of a balanced ternary float: a^exp.
+ */
+BT_API bt_fp32_t bt_fp32_pow_int(bt_fp32_t a, int64_t exp);
+
+/**
  * @brief Multiplier-Free Sparse Matrix-Vector Multiply (SpMV): y = mat * x.
  */
 BT_API void bt_csr_spmv_exec(const bt_csr_t* mat, const int64_t* x, int64_t* y);
@@ -311,6 +336,17 @@ BT_API int bt_radix3_fft_forward(const double* real_in, const double* imag_in, d
  * @return 0 on success, -1 on invalid args, -2 on non-power-of-3 size.
  */
 BT_API int bt_radix3_fft_inverse(const double* real_in, const double* imag_in, double* real_out, double* imag_out, size_t n);
+
+/**
+ * @brief O(N log3 N) discrete spectral convolution via Radix-3 FFT.
+ * Output buffer must have size >= na + nb - 1.
+ */
+BT_API int bt_radix3_convolve(const double* a, size_t na, const double* b, size_t nb, double* out);
+
+/**
+ * @brief Exported 6-stage Kogge-Stone adder with 35% reduced monotone transfer lattice.
+ */
+BT_API bt_word64_t bt_kogge_stone_add64_val(bt_word64_t a, bt_word64_t b, int8_t cin, int8_t* cout_msb);
 
 /**
  * @brief Exported single-word 64-trit dot product for dynamic FFI bindings.

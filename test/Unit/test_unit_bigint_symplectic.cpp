@@ -552,6 +552,202 @@ void test_symplectic_engine_reversibility() {
 }
 
 // ==============================================================================
+// 7. Euclidean Domain Operations: sign, abs, divmod, gcd, pow
+// ==============================================================================
+
+void test_euclidean_domain_divmod_gcd_pow() {
+    std::cout << "[Test 7/8] TritBigInt Euclidean Domain (sign, abs, divmod, gcd, pow)..." << std::endl;
+
+    using BigInt = TritBigInt<4>;
+
+    // 1. sign() and abs()
+    BigInt zero;
+    assert(zero.sign() == 0);
+    assert(zero.abs() == zero);
+
+    BigInt pos_val = BigInt::from_int64(987654321LL);
+    BigInt neg_val = -pos_val;
+    assert(pos_val.sign() == 1);
+    assert(neg_val.sign() == -1);
+    assert(pos_val.abs() == pos_val);
+    assert(neg_val.abs() == pos_val);
+
+    // 2. Division by zero throws std::domain_error
+    bool threw_div0 = false;
+    try {
+        (void)BigInt::divmod(pos_val, zero);
+    } catch (const std::domain_error&) {
+        threw_div0 = true;
+    }
+    assert(threw_div0 && "Division by zero must throw std::domain_error");
+
+    // 3. Exhaustive small integer divmod verification:
+    //    a = q * b + r, 2 * |r| <= |b|, and odd symmetry divmod(-a, b) == (-q, -r)
+    for (int64_t a = -250; a <= 250; ++a) {
+        BigInt ba = BigInt::from_int64(a);
+        BigInt neg_ba = -ba;
+        for (int64_t b = -40; b <= 40; ++b) {
+            if (b == 0) continue;
+            BigInt bb = BigInt::from_int64(b);
+            BigInt abs_bb = bb.abs();
+
+            auto [q, r] = BigInt::divmod(ba, bb);
+            assert(q.verify_invariants() && r.verify_invariants());
+
+            // Identity: a == q * b + r
+            assert(q * bb + r == ba);
+
+            // Centered remainder bound: 2 * |r| <= |b|
+            BigInt two_abs_r = r.abs() + r.abs();
+            assert(two_abs_r <= abs_bb);
+
+            // Odd symmetry: divmod(-a, b) == (-q, -r) and divmod(a, -b) == (-q, r)
+            auto [qn, rn] = BigInt::divmod(neg_ba, bb);
+            assert(qn == -q && rn == -r);
+
+            auto [qb, rb] = BigInt::divmod(ba, -bb);
+            assert(qb == -q && rb == r);
+
+            // Operators / and %
+            assert((ba / bb) == q);
+            assert((ba % bb) == r);
+        }
+    }
+
+    // 4. Multi-word (> 64 trits) divmod test
+    BigInt big_u, big_v;
+    big_u.setTrit(140, Trit::Pos);
+    big_u.setTrit(95, Trit::Neg);
+    big_u.setTrit(31, Trit::Pos);
+    big_u.setTrit(0, Trit::Neg);
+
+    big_v.setTrit(68, Trit::Pos);
+    big_v.setTrit(12, Trit::Neg);
+    big_v.setTrit(0, Trit::Pos);
+
+    auto [big_q, big_r] = BigInt::divmod(big_u, big_v);
+    assert(big_q.verify_invariants() && big_r.verify_invariants());
+    assert(big_q * big_v + big_r == big_u);
+    assert((big_r.abs() + big_r.abs()) <= big_v.abs());
+
+    auto [big_qn, big_rn] = BigInt::divmod(-big_u, big_v);
+    assert(big_qn == -big_q && big_rn == -big_r);
+
+    // 5. Centered Euclidean GCD
+    auto ref_gcd = [](int64_t x, int64_t y) -> int64_t {
+        if (x < 0) x = -x;
+        if (y < 0) y = -y;
+        while (y != 0) {
+            int64_t t = x % y;
+            x = y;
+            y = t;
+        }
+        return x;
+    };
+
+    int64_t gcd_pairs[][2] = {
+        {0, 0}, {0, 45}, {-45, 0}, {1071, 462}, {-1071, 462},
+        {270, 192}, {123456789LL, 987654321LL}, {355, 113}, {144, 89}
+    };
+    for (auto& p : gcd_pairs) {
+        BigInt ga = BigInt::from_int64(p[0]);
+        BigInt gb = BigInt::from_int64(p[1]);
+        BigInt g = BigInt::gcd(ga, gb);
+        assert(g.verify_invariants());
+        assert(g.to_int64() == ref_gcd(p[0], p[1]));
+    }
+
+    // 6. Binary Exponentiation pow(exp)
+    BigInt base3 = BigInt::from_int64(3);
+    for (uint64_t e = 0; e <= 150; e += 15) {
+        BigInt p = base3.pow(e);
+        assert(p.verify_invariants());
+        BigInt expected;
+        expected.setTrit(static_cast<size_t>(e), Trit::Pos);
+        assert(p == expected);
+    }
+
+    BigInt base_neg5 = BigInt::from_int64(-5);
+    assert(base_neg5.pow(0).to_int64() == 1);
+    assert(base_neg5.pow(1).to_int64() == -5);
+    assert(base_neg5.pow(2).to_int64() == 25);
+    assert(base_neg5.pow(3).to_int64() == -125);
+    assert(base_neg5.pow(4).to_int64() == 625);
+
+    std::cout << "  -> PASSED" << std::endl;
+}
+
+// ==============================================================================
+// 8. Coupled N-Body Symplectic Lattice Engine: Reversibility & Momentum Conservation
+// ==============================================================================
+
+void test_coupled_symplectic_lattice() {
+    std::cout << "[Test 8/8] Coupled N-Body SymplecticLatticeEngine (Reversibility & Total Momentum)..." << std::endl;
+
+    using Lattice = SymplecticLatticeEngine<4, 2>;
+    using BigInt = TritBigInt<2>;
+
+    Lattice eng;
+    eng.Q[0] = BigInt::from_int64(104729);
+    eng.Q[1] = BigInt::from_int64(-88192);
+    eng.Q[2] = BigInt::from_int64(314159);
+    eng.Q[3] = BigInt::from_int64(-271828);
+    // Also set high word trits on Q[0], Q[2] to exercise cross-word lattice forces
+    eng.Q[0].setTrit(70, Trit::Pos);
+    eng.Q[2].setTrit(70, Trit::Neg);
+
+    eng.P[0] = BigInt::from_int64(1729);
+    eng.P[1] = BigInt::from_int64(-4096);
+    eng.P[2] = BigInt::from_int64(65537);
+    eng.P[3] = BigInt::from_int64(-12345);
+    eng.P[1].setTrit(65, Trit::Pos);
+
+    const auto initial_state = eng.state();
+    const BigInt initial_momentum = eng.total_momentum();
+    assert(eng.isValid());
+
+    // Verify sum of internal forces is identically 0
+    auto f0 = Lattice::compute_forces(eng.Q);
+    BigInt force_sum{};
+    for (size_t i = 0; i < 4; ++i) force_sum += f0[i];
+    assert(force_sum.is_zero() && "Sum of discrete Laplacian forces must be identically zero!");
+
+    // 1. 1,000 steps of KDK step_forward + exact total momentum check at every step
+    constexpr size_t LATTICE_STEPS = 1000;
+    for (size_t s = 0; s < LATTICE_STEPS; ++s) {
+        eng.step_forward();
+        assert(eng.isValid());
+        assert(eng.total_momentum() == initial_momentum && "Total lattice momentum must be conserved bit-for-bit!");
+    }
+    assert(eng.state() != initial_state);
+
+    // Reverse 1,000 steps via step_backward
+    for (size_t s = 0; s < LATTICE_STEPS; ++s) {
+        eng.step_backward();
+        assert(eng.isValid());
+        assert(eng.total_momentum() == initial_momentum);
+    }
+    assert(eng.state() == initial_state && "SymplecticLatticeEngine KDK must be 100% bit-exactly time-reversible!");
+
+    // 2. Palindromic Multi-Stage Yoshida Symmetric Composition (200 steps forward + 200 backward)
+    for (size_t s = 0; s < 200; ++s) {
+        eng.step_yoshida_symmetric_forward();
+        assert(eng.isValid());
+        assert(eng.total_momentum() == initial_momentum && "Total momentum must be conserved across Yoshida stages!");
+    }
+    assert(eng.state() != initial_state);
+
+    for (size_t s = 0; s < 200; ++s) {
+        eng.step_yoshida_symmetric_backward();
+        assert(eng.isValid());
+        assert(eng.total_momentum() == initial_momentum);
+    }
+    assert(eng.state() == initial_state && "Yoshida symmetric multi-stage composition must be 100% bit-exactly reversible!");
+
+    std::cout << "  -> PASSED" << std::endl;
+}
+
+// ==============================================================================
 // Main Runner
 // ==============================================================================
 
@@ -566,9 +762,11 @@ int main() {
     test_multiplication();
     test_spaceship_comparisons();
     test_symplectic_engine_reversibility();
+    test_euclidean_domain_divmod_gcd_pow();
+    test_coupled_symplectic_lattice();
 
     std::cout << "======================================================================" << std::endl;
-    std::cout << "  ALL 6 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
+    std::cout << "  ALL 8 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
     std::cout << "======================================================================" << std::endl;
 
     return 0;

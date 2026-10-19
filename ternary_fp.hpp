@@ -477,7 +477,9 @@ public:
 
         if (m != 0 && (m < min_m && m > -min_m)) {
             uint64_t abs_m = static_cast<uint64_t>((m >= 0) ? m : -m);
-            int delta_bits = __builtin_clzll(abs_m) - __builtin_clzll(static_cast<uint64_t>(min_m));
+            int bitlen_m = 64 - __builtin_clzll(abs_m);
+            int bitlen_min = 64 - __builtin_clzll(static_cast<uint64_t>(min_m));
+            int delta_bits = bitlen_min - bitlen_m;
             int k_est = (delta_bits * 100) / 159 - 1;
             if (k_est > 0 && k_est < 60) {
                 m *= fp_detail::POW3_128[k_est];
@@ -519,6 +521,13 @@ public:
     }
 
     /**
+     * @brief Explicit conversion to IEEE-754 double.
+     */
+    explicit operator double() const noexcept {
+        return to_double();
+    }
+
+    /**
      * @brief Constructs a BTFP instance from a standard IEEE-754 double.
      */
     static BTFP from_double(double val) {
@@ -552,6 +561,23 @@ public:
     constexpr BTFP operator-() const noexcept {
         BTFP res;
         res.m_mantissa = -m_mantissa;
+        res.m_exponent = m_exponent;
+        return res;
+    }
+
+    /**
+     * @brief O(1) compile-time negation: returns -(*this).
+     */
+    constexpr BTFP neg() const noexcept {
+        return -(*this);
+    }
+
+    /**
+     * @brief O(1) compile-time absolute value: preserves normalization without re-normalizing.
+     */
+    constexpr BTFP abs() const noexcept {
+        BTFP res;
+        res.m_mantissa = (m_mantissa < 0) ? -m_mantissa : m_mantissa;
         res.m_exponent = m_exponent;
         return res;
     }
@@ -631,17 +657,16 @@ public:
                 e_prod += MantissaTrits;
             }
 
+            int64_t m_prod = (prod < 0) ? -q : q;
             if constexpr (ExponentTrits > 0) {
                 constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
-                if (e_prod > max_e) {
-                    e_prod = static_cast<int32_t>(max_e);
-                } else if (e_prod < -max_e) {
-                    e_prod = static_cast<int32_t>(-max_e);
+                if (e_prod > max_e || e_prod < -max_e) {
+                    return BTFP(m_prod, e_prod);
                 }
             }
 
             BTFP res;
-            res.m_mantissa = (prod < 0) ? -q : q;
+            res.m_mantissa = m_prod;
             res.m_exponent = e_prod;
             return res;
         } else {
@@ -649,6 +674,130 @@ public:
             int32_t e_prod = m_exponent + other.m_exponent;
             return normalize_128(m_prod, e_prod);
         }
+    }
+
+    /**
+     * @brief Single-rounding Fused Multiply-Add: computes (a * b + c) in 128-bit arithmetic
+     * and performs a single unbiased normalize_128 rounding.
+     */
+    static constexpr BTFP fma(const BTFP& a, const BTFP& b, const BTFP& c) noexcept {
+        if (a.is_zero() || b.is_zero()) return c;
+
+        __int128_t P = static_cast<__int128_t>(a.m_mantissa) * static_cast<__int128_t>(b.m_mantissa);
+        int32_t e_p = a.m_exponent + b.m_exponent;
+
+        if (c.is_zero()) {
+            return normalize_128(P, e_p);
+        }
+
+        int32_t delta = e_p - c.m_exponent;
+        if (delta == 0) {
+            return normalize_128(P + static_cast<__int128_t>(c.m_mantissa), e_p);
+        } else if (delta > 0) {
+            constexpr int max_exact_shift = (78 - 2 * MantissaTrits > 0) ? (78 - 2 * MantissaTrits) : 0;
+            if (delta <= max_exact_shift) {
+                __int128_t S = P * fp_detail::pow3_128(delta) + static_cast<__int128_t>(c.m_mantissa);
+                return normalize_128(S, c.m_exponent);
+            } else {
+                int shift_right = delta - max_exact_shift;
+                __int128_t c_shifted = fp_detail::round_div_pow3_fast128(static_cast<__int128_t>(c.m_mantissa), shift_right);
+                __int128_t S = P * fp_detail::pow3_128(max_exact_shift) + c_shifted;
+                return normalize_128(S, e_p - max_exact_shift);
+            }
+        } else {
+            int d = -delta; // e_c - e_p > 0
+            if (d > MantissaTrits + 4) {
+                return c;
+            }
+            constexpr int max_c_shift = 78 - MantissaTrits;
+            if (d <= max_c_shift) {
+                __int128_t S = static_cast<__int128_t>(c.m_mantissa) * fp_detail::pow3_128(d) + P;
+                return normalize_128(S, e_p);
+            } else {
+                return c;
+            }
+        }
+    }
+
+    /**
+     * @brief Balanced ternary square root with parity-aligned 128-bit integer square root
+     * and exact midpoint rounding (N - r^2 > r => r + 1).
+     */
+    BTFP sqrt() const {
+        if (m_mantissa < 0) {
+            throw std::domain_error("BTFP::sqrt: negative argument");
+        }
+        if (m_mantissa == 0) {
+            return BTFP(0, 0);
+        }
+
+        int S0 = (MantissaTrits <= 36) ? (MantissaTrits + 4) : (MantissaTrits + 2);
+        int S = (((m_exponent - S0) % 2) != 0) ? (S0 + 1) : S0;
+        int32_t e_out = (m_exponent - S) / 2;
+
+        unsigned __int128 N = static_cast<unsigned __int128>(m_mantissa) *
+                              static_cast<unsigned __int128>(fp_detail::pow3_128(S));
+
+        // Seed 128-bit Heron / Newton-Raphson iteration from double sqrt
+        double approx = std::sqrt(static_cast<double>(N));
+        unsigned __int128 r = static_cast<unsigned __int128>(approx);
+        if (r == 0) r = 1;
+
+        for (int i = 0; i < 10; ++i) {
+            unsigned __int128 next_r = (r + N / r) >> 1;
+            if (next_r == r) break;
+            r = next_r;
+        }
+        while (r > N / r) {
+            --r;
+        }
+        while ((r + 1) <= N / (r + 1)) {
+            ++r;
+        }
+
+        // Exact balanced midpoint rounding: N - r^2 > r => r + 1
+        if (N - r * r > r) {
+            ++r;
+        }
+
+        return normalize_128(static_cast<__int128_t>(r), e_out);
+    }
+
+    /**
+     * @brief Integer exponentiation via binary exponentiation by squaring.
+     */
+    BTFP pow_int(int64_t exp) const {
+        if (exp == 0) {
+            return BTFP(1);
+        }
+        if (is_zero()) {
+            if (exp < 0) {
+                throw std::domain_error("BTFP::pow_int: zero to negative power");
+            }
+            return BTFP(0, 0);
+        }
+
+        bool neg_exp = (exp < 0);
+        uint64_t uexp = neg_exp
+            ? (0ULL - static_cast<uint64_t>(exp))
+            : static_cast<uint64_t>(exp);
+
+        BTFP base = *this;
+        BTFP result(1);
+        while (uexp > 0) {
+            if (uexp & 1ULL) {
+                result = result.mul(base);
+            }
+            uexp >>= 1;
+            if (uexp > 0) {
+                base = base.mul(base);
+            }
+        }
+
+        if (neg_exp) {
+            return BTFP(1).div(result);
+        }
+        return result;
     }
 
     /**

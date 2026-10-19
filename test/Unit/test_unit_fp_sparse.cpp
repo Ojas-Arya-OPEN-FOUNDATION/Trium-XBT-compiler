@@ -552,6 +552,98 @@ void test_btfp_fast_o1_mul_and_norm() {
     std::cout << "    -> Fast O(1) BTFP32 mul & CLZ normalization verified bit-exact across 20,000 cases.\n";
 }
 
+void test_btfp_fma_sqrt_pow_and_clamping() {
+    std::cout << "  [BT-FP] Testing fma, sqrt, abs, neg, pow_int & mul() Exponent-Clamping Fix...\n";
+
+    // 1. O(1) abs(), neg(), and explicit operator double()
+    BTFP32 pos = BTFP32::from_double(42.5);
+    BTFP32 neg = pos.neg();
+    assert(neg.is_negative());
+    assert(neg == -pos);
+    assert(neg.abs() == pos);
+    assert(pos.abs() == pos);
+    assert(BTFP32(0).abs().is_zero());
+    assert(BTFP32(0).neg().is_zero());
+    assert(std::abs(static_cast<double>(pos) - 42.5) / 42.5 < 1e-9);
+    assert(std::abs(static_cast<double>(neg) - (-42.5)) / 42.5 < 1e-9);
+
+    // 2. Single-rounding fma(a, b, c) vs double-rounded (a * b + c)
+    // Catastrophic cancellation test: a * b is an exact 38-trit product that would lose
+    // low trits if rounded to 20 trits before adding c = -(high part of a * b).
+    int64_t m_a = BTFP32::min_norm_mantissa() + 12345;
+    int64_t m_b = BTFP32::min_norm_mantissa() + 67891;
+    __int128_t exact_prod = static_cast<__int128_t>(m_a) * static_cast<__int128_t>(m_b);
+    BTFP32 fa(m_a, 0);
+    BTFP32 fb(m_b, 0);
+    BTFP32 ab_rounded = fa * fb; // Rounded to 20 trits
+    BTFP32 fc = -ab_rounded;     // Exact negation of the rounded product
+
+    // Separate mul + add cancels to 0, losing the residual!
+    BTFP32 double_rounded = (fa * fb) + fc;
+    assert(double_rounded.is_zero());
+
+    // Single-rounding FMA retains the exact 128-bit residual: exact_prod - ab_rounded!
+    BTFP32 single_rounded = BTFP32::fma(fa, fb, fc);
+    __int128_t ab_val = static_cast<__int128_t>(ab_rounded.mantissa()) *
+                        fp_detail::pow3_128(ab_rounded.exponent());
+    __int128_t expected_residual = exact_prod - ab_val;
+    assert(expected_residual != 0);
+    BTFP32 expected_fma = BTFP32::normalize_128(expected_residual, 0);
+    assert(single_rounded == expected_fma);
+
+    // General FMA accuracy across various scales
+    BTFP32 x = BTFP32::from_double(3.5);
+    BTFP32 y = BTFP32::from_double(-4.0);
+    BTFP32 z = BTFP32::from_double(15.25);
+    BTFP32 fma_res = BTFP32::fma(x, y, z);
+    double exact_xyz = x.to_double() * y.to_double() + z.to_double();
+    assert(std::abs(fma_res.to_double() - exact_xyz) < 1e-9);
+    assert(std::abs(fma_res.to_double() - 1.25) < 1e-7);
+
+    // 3. sqrt() exact squares, parity alignment, midpoint rounding & negative guard
+    assert(BTFP32(0).sqrt().is_zero());
+    for (double sq_val : {1.0, 4.0, 9.0, 16.0, 25.0, 81.0, 729.0, 2.0, 3.0, 5.0, 0.25, 1.0 / 9.0}) {
+        BTFP32 s = BTFP32::from_double(sq_val).sqrt();
+        double expected = std::sqrt(sq_val);
+        assert(std::abs(s.to_double() - expected) / expected < 1e-8);
+    }
+
+    bool caught_neg_sqrt = false;
+    try {
+        [[maybe_unused]] auto bad = BTFP32(-9).sqrt();
+    } catch (const std::domain_error&) {
+        caught_neg_sqrt = true;
+    }
+    assert(caught_neg_sqrt && "BTFP32::sqrt on negative value must throw std::domain_error");
+
+    // 4. pow_int(exp) binary exponentiation
+    BTFP32 three(3);
+    assert(three.pow_int(0) == BTFP32(1));
+    assert(BTFP32(0).pow_int(0) == BTFP32(1));
+    assert(BTFP32(0).pow_int(5).is_zero());
+    assert(three.pow_int(4) == BTFP32(81));
+    assert(std::abs(three.pow_int(-2).to_double() - (1.0 / 9.0)) < 1e-12);
+    assert(BTFP32(-2).pow_int(5) == BTFP32(-32));
+    assert(BTFP32(-2).pow_int(6) == BTFP32(64));
+
+    // 5. Fix for BTFP::mul() exponent clamping when ExponentTrits > 0
+    // For BTFP<10, 3>, max_e = (3^3 - 1)/2 = 13.
+    // Multiply two values whose product has exponent < -13 and verify it matches
+    // direct normalization BTFP<10, 3>(m_prod, e_prod).
+    using ClampedFP3 = BTFP<10, 3>;
+    ClampedFP3 d1(ClampedFP3::min_norm_mantissa(), -12);
+    ClampedFP3 d2(ClampedFP3::min_norm_mantissa(), -12);
+    assert(d1.exponent() == -12 && d2.exponent() == -12);
+    ClampedFP3 d_prod = d1 * d2;
+    int64_t raw_p = d1.mantissa() * d2.mantissa();
+    int64_t q_norm = fp_detail::round_div_pow3_fast64(raw_p, 8);
+    ClampedFP3 d_expected(q_norm, -16);
+    assert(d_prod == d_expected);
+    assert(d_prod.exponent() == -13);
+    assert(std::abs(d_prod.to_double() - (d1.to_double() * d2.to_double())) /
+           std::abs(d1.to_double() * d2.to_double()) < 1e-2);
+}
+
 // ==============================================================================
 // Main Test Runner
 // ==============================================================================
@@ -567,6 +659,7 @@ int main() {
     test_btfp_arithmetic();
     test_btfp_zero_bias_rounding();
     test_btfp_fast_o1_mul_and_norm();
+    test_btfp_fma_sqrt_pow_and_clamping();
 
     // Phase 3.2: T-CSR Sparse Linear Algebra Tests
     test_tcsr_creation();

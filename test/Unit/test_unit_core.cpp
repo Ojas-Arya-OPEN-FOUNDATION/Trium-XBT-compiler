@@ -334,6 +334,95 @@ void test_base243_word64_block_transpose() {
     std::cout << "    -> Base-243 64-trit block transpose verified 100% lossless across 10,000 random words.\n";
 }
 
+void test_swar_to_int128() {
+    std::cout << "  [Core] Testing Full 64-Trit O(1) SWAR Evaluation (swar_to_int128)...\n";
+
+    auto seq_to_int128 = [](const TritWord64& word, size_t num_trits = 64) -> __int128_t {
+        __int128_t total = 0;
+        __int128_t p3 = 1;
+        for (size_t i = 0; i < num_trits && i < 64; ++i) {
+            total += static_cast<__int128_t>(to_int(word.getTrit(i))) * p3;
+            if (i + 1 < num_trits) p3 *= 3;
+        }
+        return total;
+    };
+
+    // Boundary cases: 0, all +1s, all -1s, alternating
+    TritWord64 w_zero(0ULL, 0ULL);
+    assert(swar_to_int128(w_zero) == 0);
+
+    TritWord64 w_all_pos(~0ULL, 0ULL);
+    assert(swar_to_int128(w_all_pos) == seq_to_int128(w_all_pos));
+    assert(swar_to_int128(-w_all_pos) == -seq_to_int128(w_all_pos));
+
+    // Single trit at every index 0..63
+    for (size_t i = 0; i < 64; ++i) {
+        TritWord64 wp, wn;
+        wp.setTrit(i, Trit::Pos);
+        wn.setTrit(i, Trit::Neg);
+        assert(swar_to_int128(wp) == seq_to_int128(wp));
+        assert(swar_to_int128(wn) == seq_to_int128(wn));
+        assert(swar_to_int128(wp) == -swar_to_int128(wn));
+    }
+
+    // 5,000 random full 64-trit words
+    uint32_t seed = 0x89ABCDEFU;
+    auto lcg = [&seed]() {
+        seed = seed * 1664525U + 1013904223U;
+        return seed;
+    };
+
+    for (int iter = 0; iter < 5000; ++iter) {
+        TritWord64 w;
+        for (size_t i = 0; i < 64; ++i) {
+            w.setTrit(i, from_int(static_cast<int8_t>(static_cast<int>(lcg() % 3) - 1)));
+        }
+        assert(swar_to_int128(w) == seq_to_int128(w));
+    }
+    std::cout << "    -> swar_to_int128 verified bit-exact across all 64-trit words.\n";
+}
+
+void test_generalized_trit_word() {
+    std::cout << "  [Core] Testing Generalized Width-Agnostic TritWord<UintT> (8, 16, 32, 64)...\n";
+
+    static_assert(TritWord8::BIT_WIDTH == 8);
+    static_assert(TritWord16::BIT_WIDTH == 16);
+    static_assert(TritWord32::BIT_WIDTH == 32);
+    static_assert(TritWord<uint64_t>::BIT_WIDTH == 64);
+
+    // Test TritWord16
+    TritWord16 w16_a, w16_b;
+    w16_a.setTrit(0, Trit::Pos);
+    w16_a.setTrit(15, Trit::Neg);
+    w16_b.setTrit(0, Trit::Pos);
+    w16_b.setTrit(15, Trit::Pos);
+
+    assert(w16_a.isValid() && w16_b.isValid());
+    TritWord16 w16_sum = w16_a + w16_b;
+    assert(w16_sum.isValid());
+    assert(w16_sum.getTrit(0) == Trit::Neg);  // 1 + 1 = -1 + 3
+    assert(w16_sum.getTrit(1) == Trit::Pos);  // carry into bit 1
+    assert(w16_sum.getTrit(15) == Trit::Zero); // -1 + 1 = 0
+    assert((w16_sum - w16_b) == w16_a);
+
+    // Conversion to/from TritWord64
+    TritWord64 as64 = w16_a;
+    assert(as64.getTrit(0) == Trit::Pos && as64.getTrit(15) == Trit::Neg);
+    TritWord16 back16 = as64;
+    assert(back16 == w16_a);
+
+    // Test TritWord32 carry-out at MSB (bit 31)
+    TritWord32 w32_all_pos(~0U, 0U);
+    TritWord32 w32_one(1U, 0U);
+    int8_t cout32 = 0;
+    TritWord32 w32_sum = TritWord32::add(w32_all_pos, w32_one, 0, &cout32);
+    assert(w32_sum.isValid());
+    assert(w32_sum.P == 0U && w32_sum.N == ~0U);
+    assert(cout32 == 1);
+
+    std::cout << "    -> TritWord<uint8_t/uint16_t/uint32_t/uint64_t> verified.\n";
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Core Primitives Tests...\n";
     test_primitives();
@@ -345,6 +434,8 @@ int main() {
     test_swar_tree_reduction();
     test_kogge_stone_add64();
     test_base243_word64_block_transpose();
+    test_swar_to_int128();
+    test_generalized_trit_word();
     std::cout << "  -> PASSED: All Core Unit Tests Verified.\n";
     return 0;
 }

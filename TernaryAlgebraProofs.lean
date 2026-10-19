@@ -220,6 +220,26 @@ theorem btfa_sum_bound (a b d : Trit) :
     -1 ≤ Trit.val (btfa a b d).2 ∧ Trit.val (btfa a b d).2 ≤ 1 := by
   cases a <;> cases b <;> cases d <;> decide
 
+/-- No-Overlap Carry Theorem: The two internal half-adder carries c1 and c2 in BTFA
+    never have the same non-zero sign (c1 * c2 ≠ 1), so their sum c1 + c2 is always in {-1, 0, +1}. -/
+theorem btfa_no_overlap_carry (a b d : Trit) :
+    -1 ≤ Trit.val (btha a b).1 + Trit.val (btha (btha a b).2 d).1 ∧
+    Trit.val (btha a b).1 + Trit.val (btha (btha a b).2 d).1 ≤ 1 := by
+  cases a <;> cases b <;> cases d <;> decide
+
+/-- 4-to-2 Balanced Ternary Carry-Save Compressor:
+    Compresses 4 input trits (a, b, c, d) into a sum trit s2 and two carry trits (c1, c2). -/
+def bt_compress_4to2 (a b c d : Trit) : Trit × Trit × Trit :=
+  let (c1, s1) := btfa a b c
+  let (c2, s2) := btha s1 d
+  (c1, c2, s2)
+
+theorem bt_compress_4to2_sound (a b c d : Trit) :
+    Trit.val (bt_compress_4to2 a b c d).2.2 +
+    3 * (Trit.val (bt_compress_4to2 a b c d).1 + Trit.val (bt_compress_4to2 a b c d).2.1) =
+      Trit.val a + Trit.val b + Trit.val c + Trit.val d := by
+  cases a <;> cases b <;> cases c <;> cases d <;> rfl
+
 end BT_CSA
 
 -- ==============================================================================

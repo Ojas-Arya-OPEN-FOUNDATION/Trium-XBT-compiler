@@ -81,6 +81,38 @@ bt_fp32_t bt_fp32_div(bt_fp32_t a, bt_fp32_t b) {
     return bt_fp32_t{ res.mantissa(), res.exponent() };
 }
 
+bt_fp32_t bt_fp32_fma(bt_fp32_t a, bt_fp32_t b, bt_fp32_t c) {
+    bt::BTFP32 fpa(a.mantissa, a.exponent);
+    bt::BTFP32 fpb(b.mantissa, b.exponent);
+    bt::BTFP32 fpc(c.mantissa, c.exponent);
+    bt::BTFP32 res = bt::BTFP32::fma(fpa, fpb, fpc);
+    return bt_fp32_t{ res.mantissa(), res.exponent() };
+}
+
+bt_fp32_t bt_fp32_sqrt(bt_fp32_t a) {
+    bt::BTFP32 fpa(a.mantissa, a.exponent);
+    bt::BTFP32 res = fpa.sqrt();
+    return bt_fp32_t{ res.mantissa(), res.exponent() };
+}
+
+bt_fp32_t bt_fp32_abs(bt_fp32_t a) {
+    bt::BTFP32 fpa(a.mantissa, a.exponent);
+    bt::BTFP32 res = fpa.abs();
+    return bt_fp32_t{ res.mantissa(), res.exponent() };
+}
+
+bt_fp32_t bt_fp32_neg(bt_fp32_t a) {
+    bt::BTFP32 fpa(a.mantissa, a.exponent);
+    bt::BTFP32 res = fpa.neg();
+    return bt_fp32_t{ res.mantissa(), res.exponent() };
+}
+
+bt_fp32_t bt_fp32_pow_int(bt_fp32_t a, int64_t exp) {
+    bt::BTFP32 fpa(a.mantissa, a.exponent);
+    bt::BTFP32 res = fpa.pow_int(exp);
+    return bt_fp32_t{ res.mantissa(), res.exponent() };
+}
+
 void bt_csr_spmv_exec(const bt_csr_t* mat, const int64_t* x, int64_t* y) {
     if (!mat || !x || !y) {
         return;
@@ -140,6 +172,27 @@ int bt_radix3_fft_inverse(const double* real_in, const double* imag_in, double* 
         imag_out[i] = vec[i].imag();
     }
     return 0;
+}
+
+int bt_radix3_convolve(const double* a, size_t na, const double* b, size_t nb, double* out) {
+    if (!a || !b || !out || na == 0 || nb == 0) {
+        return -1;
+    }
+    std::vector<double> va(a, a + na);
+    std::vector<double> vb(b, b + nb);
+    std::vector<double> res = bt::Radix3FFT::convolve_real_radix3(va, vb);
+    size_t out_len = na + nb - 1;
+    for (size_t i = 0; i < out_len && i < res.size(); ++i) {
+        out[i] = res[i];
+    }
+    return 0;
+}
+
+bt_word64_t bt_kogge_stone_add64_val(bt_word64_t a, bt_word64_t b, int8_t cin, int8_t* cout_msb) {
+    bt::TritWord64 wa{a.p, a.n};
+    bt::TritWord64 wb{b.p, b.n};
+    bt::TritWord64 wsum = bt::kogge_stone_add64(wa, wb, cin, cout_msb);
+    return bt_word64_t{wsum.P, wsum.N};
 }
 
 int64_t bt_dot_product_64_val(bt_word64_t a, bt_word64_t b) {

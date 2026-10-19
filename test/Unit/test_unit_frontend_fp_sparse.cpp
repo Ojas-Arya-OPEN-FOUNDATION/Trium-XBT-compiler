@@ -879,6 +879,68 @@ void test_dual_rail_ssa_intrinsics() {
     std::cout << "      -> Inline Dual-Rail Hardware SSA Intrinsics passed.\n";
 }
 
+void test_math_intrinsics_fma_sqrt_abs() {
+    std::cout << "  [21/21] Testing Math Intrinsics fma, sqrt, abs across JIT & Native LLVM...\n";
+
+    // 1. JIT execution
+    std::string jit_out = jit_capture_print(
+        "var a = 2.0;\n"
+        "var b = 3.0;\n"
+        "var c = 4.0;\n"
+        "var f = fma(a, b, c);\n"
+        "var s = sqrt(f * 2.0 + 5.0);\n"
+        "var a1 = abs(-7.5);\n"
+        "var a2 = abs(-42);\n"
+        "print(f);\n"
+        "print(s);\n"
+        "print(a1);\n"
+        "print(a2);\n");
+    assert(jit_out.find("10 [BTFP32:") != std::string::npos && "fma(2, 3, 4) must be 10.0");
+    assert(jit_out.find("5 [BTFP32:") != std::string::npos && "sqrt(25.0) must be 5.0");
+    assert(jit_out.find("7.5 [BTFP32:") != std::string::npos && "abs(-7.5) must be 7.5");
+    assert(jit_out.find("42 [") != std::string::npos && "abs(-42) must be 42");
+
+    // 2. Typechecker & LLVM IR CodeGen & NativeLLVMJIT
+    std::string src = "var a: float = 2.0;\n"
+                      "var b: float = 3.0;\n"
+                      "var c: float = 4.0;\n"
+                      "var f: float = fma(a, b, c);\n"
+                      "var s: float = sqrt(f * 2.0 + 5.0);\n"
+                      "var a1: float = abs(-7.0);\n"
+                      "var a2: int = abs(-42);\n"
+                      "var sum_f: float = f + s + a1 + 42.0;\n"
+                      "return sum_f;\n";
+
+    Parser parser(src);
+    auto prog = parser.parse_program();
+    assert(prog != nullptr);
+
+    SemanticAnalyzer sema;
+    sema.typecheck(*prog);
+    assert(sema.errors().empty());
+    assert(sema.get_symbol_type("f") == BTType::Float);
+    assert(sema.get_symbol_type("s") == BTType::Float);
+    assert(sema.get_symbol_type("a1") == BTType::Float);
+    assert(sema.get_symbol_type("a2") == BTType::Int || sema.get_symbol_type("a2") == BTType::TritWord);
+
+    LLVMCodeGenVisitor codegen;
+    std::string ir = codegen.generate(*prog);
+
+    assert(ir.find("declare double @llvm.fma.f64") != std::string::npos);
+    assert(ir.find("declare double @llvm.sqrt.f64") != std::string::npos);
+    assert(ir.find("declare double @llvm.fabs.f64") != std::string::npos);
+    assert(ir.find("declare i64 @llvm.abs.i64") != std::string::npos);
+    assert(ir.find("call double @llvm.fma.f64") != std::string::npos);
+    assert(ir.find("call double @llvm.sqrt.f64") != std::string::npos);
+    assert(ir.find("call double @llvm.fabs.f64") != std::string::npos);
+    assert(ir.find("call i64 @llvm.abs.i64") != std::string::npos);
+
+    int exit_code = NativeLLVMJIT::execute_program(*prog, false);
+    assert(exit_code == 64 && "NativeLLVMJIT execution of fma+sqrt+abs must equal 64!");
+
+    std::cout << "      -> Math Intrinsics (fma, sqrt, abs) across JIT & Native LLVM passed.\n";
+}
+
 // ==============================================================================
 // Main Entry Point
 // ==============================================================================
@@ -908,8 +970,9 @@ int main() {
     test_dwarf_debug_metadata_and_vectorization();
     test_module_imports();
     test_dual_rail_ssa_intrinsics();
+    test_math_intrinsics_fma_sqrt_abs();
 
-    std::cout << "\n  -> ALL 13 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC SUITES + 7 JIT/THREADPOOL FIX REGRESSIONS PASSED (100%)\n";
+    std::cout << "\n  -> ALL 14 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC SUITES + 7 JIT/THREADPOOL FIX REGRESSIONS PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

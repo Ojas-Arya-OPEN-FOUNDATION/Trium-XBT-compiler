@@ -2361,6 +2361,9 @@ private:
         func_return_types_["btha_carry_p"] = BTType::TritWord;
         func_return_types_["btha_sum_n"]   = BTType::TritWord;
         func_return_types_["btha_carry_n"] = BTType::TritWord;
+        func_return_types_["fma"]          = BTType::Float;
+        func_return_types_["sqrt"]         = BTType::Float;
+        func_return_types_["abs"]          = BTType::Float;
     }
 
 public:
@@ -2582,6 +2585,39 @@ public:
                 }
             }
             current_type_ = BTType::TritWord;
+            return;
+        }
+        if (node.callee == "fma") {
+            if (node.arguments.size() != 3) {
+                errors_.push_back("Built-in 'fma' requires 3 arguments (a, b, c), got " +
+                                  std::to_string(node.arguments.size()));
+            }
+            for (auto& arg : node.arguments) {
+                if (arg) arg->accept(*this);
+            }
+            current_type_ = BTType::Float;
+            return;
+        }
+        if (node.callee == "sqrt") {
+            if (node.arguments.size() != 1) {
+                errors_.push_back("Built-in 'sqrt' requires 1 argument (x), got " +
+                                  std::to_string(node.arguments.size()));
+            }
+            if (!node.arguments.empty() && node.arguments[0]) node.arguments[0]->accept(*this);
+            current_type_ = BTType::Float;
+            return;
+        }
+        if (node.callee == "abs") {
+            if (node.arguments.size() != 1) {
+                errors_.push_back("Built-in 'abs' requires 1 argument (x), got " +
+                                  std::to_string(node.arguments.size()));
+            }
+            BTType arg_t = BTType::Unknown;
+            if (!node.arguments.empty() && node.arguments[0]) {
+                node.arguments[0]->accept(*this);
+                arg_t = current_type_;
+            }
+            current_type_ = (arg_t == BTType::Float) ? BTType::Float : BTType::TritWord;
             return;
         }
         if (node.callee == "matmul") {

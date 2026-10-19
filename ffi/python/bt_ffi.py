@@ -122,6 +122,38 @@ _LIB.bt_fp32_mul.restype = BtFp32
 _LIB.bt_fp32_div.argtypes = [BtFp32, BtFp32]
 _LIB.bt_fp32_div.restype = BtFp32
 
+_LIB.bt_fp32_fma.argtypes = [BtFp32, BtFp32, BtFp32]
+_LIB.bt_fp32_fma.restype = BtFp32
+
+_LIB.bt_fp32_sqrt.argtypes = [BtFp32]
+_LIB.bt_fp32_sqrt.restype = BtFp32
+
+_LIB.bt_fp32_abs.argtypes = [BtFp32]
+_LIB.bt_fp32_abs.restype = BtFp32
+
+_LIB.bt_fp32_neg.argtypes = [BtFp32]
+_LIB.bt_fp32_neg.restype = BtFp32
+
+_LIB.bt_fp32_pow_int.argtypes = [BtFp32, ctypes.c_int64]
+_LIB.bt_fp32_pow_int.restype = BtFp32
+
+_LIB.bt_radix3_convolve.argtypes = [
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_double),
+]
+_LIB.bt_radix3_convolve.restype = ctypes.c_int
+
+_LIB.bt_kogge_stone_add64_val.argtypes = [
+    BtWord64,
+    BtWord64,
+    ctypes.c_int8,
+    ctypes.POINTER(ctypes.c_int8),
+]
+_LIB.bt_kogge_stone_add64_val.restype = BtWord64
+
 _LIB.bt_csr_spmv_exec.argtypes = [
     ctypes.POINTER(BtCsr),
     ctypes.POINTER(ctypes.c_int64),
@@ -226,6 +258,46 @@ def fp32_mul(a: BtFp32, b: BtFp32) -> BtFp32:
 def fp32_div(a: BtFp32, b: BtFp32) -> BtFp32:
     """Balanced ternary float division."""
     return _LIB.bt_fp32_div(a, b)
+
+def fp32_fma(a: BtFp32, b: BtFp32, c: BtFp32) -> BtFp32:
+    """Fused multiply-add with single unbiased rounding: (a * b) + c."""
+    return _LIB.bt_fp32_fma(a, b, c)
+
+def fp32_sqrt(a: BtFp32) -> BtFp32:
+    """Balanced ternary square root with exact midpoint rounding: sqrt(a)."""
+    return _LIB.bt_fp32_sqrt(a)
+
+def fp32_abs(a: BtFp32) -> BtFp32:
+    """Absolute value of a balanced ternary float."""
+    return _LIB.bt_fp32_abs(a)
+
+def fp32_neg(a: BtFp32) -> BtFp32:
+    """Zero-cost negation of a balanced ternary float."""
+    return _LIB.bt_fp32_neg(a)
+
+def fp32_pow_int(a: BtFp32, exp: int) -> BtFp32:
+    """Integer power of a balanced ternary float: a^exp."""
+    return _LIB.bt_fp32_pow_int(a, ctypes.c_int64(exp))
+
+def radix3_convolve(a: List[float], b: List[float]) -> List[float]:
+    """O(N log3 N) discrete spectral convolution via Radix-3 FFT."""
+    na, nb = len(a), len(b)
+    if na == 0 or nb == 0:
+        return []
+    out_len = na + nb - 1
+    c_a = (ctypes.c_double * na)(*a)
+    c_b = (ctypes.c_double * nb)(*b)
+    c_out = (ctypes.c_double * out_len)()
+    ret = _LIB.bt_radix3_convolve(c_a, na, c_b, nb, c_out)
+    if ret != 0:
+        raise RuntimeError(f"bt_radix3_convolve failed with code {ret}")
+    return [float(c_out[i]) for i in range(out_len)]
+
+def kogge_stone_add64(a: BtWord64, b: BtWord64, cin: int = 0) -> Tuple[BtWord64, int]:
+    """6-stage parallel-prefix Kogge-Stone addition with minimal monotone lattice."""
+    cout = ctypes.c_int8(0)
+    wsum = _LIB.bt_kogge_stone_add64_val(a, b, ctypes.c_int8(cin), ctypes.byref(cout))
+    return wsum, int(cout.value)
 
 def csr_spmv(
     rows: int,
@@ -357,16 +429,27 @@ def run_self_test():
     # 5. BT-FP32 Floating-Point Arithmetic
     fa = fp32_from_float(13.5)
     fb = fp32_from_float(4.5)
+    fc = fp32_from_float(2.0)
     f_sum = fp32_add(fa, fb)
     f_sub = fp32_sub(fa, fb)
     f_mul = fp32_mul(fa, fb)
     f_div = fp32_div(fa, fb)
+    f_fma = fp32_fma(fa, fb, fc) # 13.5 * 4.5 + 2.0 = 60.75 + 2.0 = 62.75
+    f_sqrt = fp32_sqrt(fp32_from_float(16.0)) # sqrt(16) = 4.0
+    f_abs = fp32_abs(fp32_from_float(-7.5)) # abs(-7.5) = 7.5
+    f_neg = fp32_neg(fp32_from_float(7.5)) # neg(7.5) = -7.5
+    f_pow = fp32_pow_int(fp32_from_float(3.0), 3) # 3^3 = 27
 
     assert abs(fp32_to_float(f_sum) - 18.0) < 1e-4, f"Sum error: {fp32_to_float(f_sum)}"
     assert abs(fp32_to_float(f_sub) - 9.0) < 1e-4, f"Sub error: {fp32_to_float(f_sub)}"
     assert abs(fp32_to_float(f_mul) - 60.75) < 1e-3, f"Mul error: {fp32_to_float(f_mul)}"
     assert abs(fp32_to_float(f_div) - 3.0) < 1e-4, f"Div error: {fp32_to_float(f_div)}"
-    print("  [FFI 5/7] BT-FP32 Arithmetic (Add/Sub/Mul/Div) ...... PASSED")
+    assert abs(fp32_to_float(f_fma) - 62.75) < 1e-3, f"FMA error: {fp32_to_float(f_fma)}"
+    assert abs(fp32_to_float(f_sqrt) - 4.0) < 1e-3, f"Sqrt error: {fp32_to_float(f_sqrt)}"
+    assert abs(fp32_to_float(f_abs) - 7.5) < 1e-4, f"Abs error: {fp32_to_float(f_abs)}"
+    assert abs(fp32_to_float(f_neg) - -7.5) < 1e-4, f"Neg error: {fp32_to_float(f_neg)}"
+    assert abs(fp32_to_float(f_pow) - 27.0) < 1e-3, f"Pow error: {fp32_to_float(f_pow)}"
+    print("  [FFI 5/7] BT-FP32 Arithmetic (Add/Sub/Mul/Div/FMA/Sqrt) . PASSED")
 
     # 6. Multiplier-Free T-CSR SpMV
     # 3x3 matrix:

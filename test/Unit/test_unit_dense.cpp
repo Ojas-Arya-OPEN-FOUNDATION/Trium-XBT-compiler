@@ -193,12 +193,72 @@ void test_cache_autotuner_and_gemm_autotuned() {
     }
 }
 
+void test_multitrit_encode_decode_and_gemm() {
+    std::cout << "  [Dense] Testing MultiTritMatrix encode_int_matrix, decode_int_matrix & gemm_multitrit...\n";
+
+    // 1. Test set_int64, get_int64, encode_int_matrix, decode_int_matrix round-trip
+    // With 5 planes, representable range is [-(3^5-1)/2, +(3^5-1)/2] = [-121, +121]
+    const size_t M = 17, K = 23, N = 19;
+    const size_t P_planes = 5, Q_planes = 6;
+
+    std::vector<int64_t> A_int(M * K);
+    std::vector<int64_t> B_int(K * N);
+
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t k = 0; k < K; ++k) {
+            int64_t val = static_cast<int64_t>((i * 31 + k * 17) % 243) - 121;
+            A_int[i * K + k] = val;
+        }
+    }
+    for (size_t k = 0; k < K; ++k) {
+        for (size_t j = 0; j < N; ++j) {
+            int64_t val = static_cast<int64_t>((k * 29 + j * 13) % 729) - 364;
+            B_int[k * N + j] = val;
+        }
+    }
+
+    MultiTritMatrix A_mt = MultiTritMatrix::encode_int_matrix(A_int, M, K, P_planes);
+    MultiTritMatrix B_mt = MultiTritMatrix::encode_int_matrix(B_int, K, N, Q_planes);
+
+    std::vector<int64_t> A_dec = A_mt.decode_int_matrix();
+    std::vector<int64_t> B_dec = B_mt.decode_int_matrix();
+    assert(A_dec == A_int);
+    assert(B_dec == B_int);
+
+    // Verify individual get_int64 / set_int64
+    A_mt.set_int64(0, 0, -121);
+    assert(A_mt.get_int64(0, 0) == -121);
+    A_mt.set_int64(0, 0, A_int[0]);
+    assert(A_mt.get_int64(0, 0) == A_int[0]);
+
+    // 2. Verify gemm_multitrit matches exact integer matrix multiplication 100% bit-exact
+    DenseMatrixInt64 C_mt(M, N);
+    gemm_multitrit(A_mt, B_mt, C_mt);
+
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            int64_t ref_sum = 0;
+            for (size_t k = 0; k < K; ++k) {
+                ref_sum += A_int[i * K + k] * B_int[k * N + j];
+            }
+            assert(C_mt(i, j) == ref_sum);
+        }
+    }
+
+    // 3. Verify Codec::to_int64 O(1) SWAR delegation across full 39-trit signed range
+    for (int64_t v : {0LL, 1LL, -1LL, 121LL, -121LL, 123456789012345LL, -123456789012345LL}) {
+        TritWord64 w = Codec::from_int64(v, 39);
+        assert(Codec::to_int64(w, 39) == v);
+    }
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Dense Algebra & GEMM Tests...\n";
     test_kleene_logic();
     test_tiled_gemm();
     test_codec_and_gemm_guards();
     test_cache_autotuner_and_gemm_autotuned();
+    test_multitrit_encode_decode_and_gemm();
     std::cout << "  -> PASSED: All Dense Algebra & CacheAutotuner Unit Tests Verified.\n";
     return 0;
 }

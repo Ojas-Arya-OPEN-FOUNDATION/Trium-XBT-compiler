@@ -119,12 +119,34 @@ static void test_fp32_arithmetic() {
     bt_fp32_t quot = bt_fp32_div(a, b);
     assert(std::abs(bt_fp32_to_double(quot) - 5.0) < 1e-4);
 
+    // FMA: 12.5 * 2.5 + 4.0 = 31.25 + 4.0 = 35.25
+    bt_fp32_t c = bt_fp32_from_double(4.0);
+    bt_fp32_t fma_res = bt_fp32_fma(a, b, c);
+    assert(std::abs(bt_fp32_to_double(fma_res) - 35.25) < 1e-3);
+
+    // Sqrt: sqrt(25.0) = 5.0
+    bt_fp32_t sq_in = bt_fp32_from_double(25.0);
+    bt_fp32_t sq_out = bt_fp32_sqrt(sq_in);
+    assert(std::abs(bt_fp32_to_double(sq_out) - 5.0) < 1e-3);
+
+    // Abs and Neg
+    bt_fp32_t neg_in = bt_fp32_from_double(-9.5);
+    bt_fp32_t abs_out = bt_fp32_abs(neg_in);
+    assert(std::abs(bt_fp32_to_double(abs_out) - 9.5) < 1e-4);
+    bt_fp32_t neg_out = bt_fp32_neg(a);
+    assert(std::abs(bt_fp32_to_double(neg_out) - -12.5) < 1e-4);
+
+    // Pow_int: 3.0^3 = 27.0
+    bt_fp32_t three = bt_fp32_from_double(3.0);
+    bt_fp32_t pow_out = bt_fp32_pow_int(three, 3);
+    assert(std::abs(bt_fp32_to_double(pow_out) - 27.0) < 1e-3);
+
     // Division by zero edge case
     bt_fp32_t zero = bt_fp32_from_double(0.0);
     bt_fp32_t div_zero = bt_fp32_div(a, zero);
     assert(div_zero.mantissa == 0 && div_zero.exponent == 0);
 
-    std::cout << "    -> PASSED: BT-FP32 0-bias truncation and rounding arithmetic verified." << std::endl;
+    std::cout << "    -> PASSED: BT-FP32 arithmetic, FMA, sqrt, and power verified." << std::endl;
 }
 
 static void test_csr_spmv() {
@@ -218,11 +240,28 @@ static void test_radix3_fft() {
         assert(std::abs(f_im[i]) < 1e-10);
     }
 
-    std::cout << "    -> PASSED: Radix-3 forward and inverse transforms verified." << std::endl;
+    // 4. Spectral convolution: [1, 2] * [3, 4] = [3, 10, 8]
+    double ca[2] = { 1.0, 2.0 };
+    double cb[2] = { 3.0, 4.0 };
+    double cout[3] = { 0.0, 0.0, 0.0 };
+    assert(bt_radix3_convolve(ca, 2, cb, 2, cout) == 0);
+    assert(std::abs(cout[0] - 3.0) < 1e-8);
+    assert(std::abs(cout[1] - 10.0) < 1e-8);
+    assert(std::abs(cout[2] - 8.0) < 1e-8);
+
+    std::cout << "    -> PASSED: Radix-3 forward, inverse, and spectral convolution verified." << std::endl;
 }
 
 static void test_exported_helpers() {
     std::cout << "  [C ABI 6/6] Testing Exported Helpers & Codecs..." << std::endl;
+
+    // Kogge-Stone addition via C-ABI
+    bt_word64_t ka = bt_make_word64(1, 0); // +1
+    bt_word64_t kb = bt_make_word64(1, 0); // +1
+    int8_t cout_msb = 0;
+    bt_word64_t ksum = bt_kogge_stone_add64_val(ka, kb, 0, &cout_msb);
+    // 1 + 1 = 2 = 3*(+1) + (-1): sum has trit 0 = -1 (n=1, p=0), trit 1 = +1 (p=2, n=0)
+    assert((ksum.n & 1ULL) == 1ULL && (ksum.p & 2ULL) == 2ULL);
 
     // Disjointness
     bt_word64_t w_ok = bt_make_word64(0x12345678ULL, 0x87654321ULL);

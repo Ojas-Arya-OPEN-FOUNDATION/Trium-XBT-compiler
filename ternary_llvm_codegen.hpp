@@ -187,6 +187,10 @@ public:
 
         // 2. Standard Intrinsics & Builtins
         ir_ << "declare i64 @llvm.ctpop.i64(i64) nounwind readnone speculatable willreturn\n";
+        ir_ << "declare double @llvm.fma.f64(double, double, double) nounwind readnone speculatable willreturn\n";
+        ir_ << "declare double @llvm.sqrt.f64(double) nounwind readnone speculatable willreturn\n";
+        ir_ << "declare double @llvm.fabs.f64(double) nounwind readnone speculatable willreturn\n";
+        ir_ << "declare i64 @llvm.abs.i64(i64, i1) nounwind readnone speculatable willreturn\n";
         ir_ << "declare i32 @printf(i8*, ...) nounwind\n\n";
 
         ir_ << "@.str_int = private unnamed_addr constant [14 x i8] c\"%lld [trits]\\0A\\00\", align 1\n";
@@ -1153,6 +1157,65 @@ public:
                 std::string nc = new_reg();
                 fn_body_ << "  " << nc << " = and i64 " << an << ", " << bn << dbg_tag() << "\n";
                 current_val_ = nc;
+                current_type_ = "i64";
+            }
+        } else if (node.callee == "fma" && node.arguments.size() == 3) {
+            node.arguments[0]->accept(*this);
+            std::string a_val = current_val_;
+            std::string a_type = current_type_;
+            node.arguments[1]->accept(*this);
+            std::string b_val = current_val_;
+            std::string b_type = current_type_;
+            node.arguments[2]->accept(*this);
+            std::string c_val = current_val_;
+            std::string c_type = current_type_;
+            if (node.location.line > 0) current_loc_ = node.location;
+
+            auto to_double_val = [&](const std::string& val, const std::string& type) -> std::string {
+                if (type == "double") return val;
+                std::string r = new_reg();
+                fn_body_ << "  " << r << " = sitofp i64 " << val << " to double" << dbg_tag() << "\n";
+                return r;
+            };
+            std::string ad = to_double_val(a_val, a_type);
+            std::string bd = to_double_val(b_val, b_type);
+            std::string cd = to_double_val(c_val, c_type);
+
+            std::string res = new_reg();
+            fn_body_ << "  " << res << " = call double @llvm.fma.f64(double " << ad
+                     << ", double " << bd << ", double " << cd << ")" << dbg_tag() << "\n";
+            current_val_ = res;
+            current_type_ = "double";
+        } else if (node.callee == "sqrt" && node.arguments.size() == 1) {
+            node.arguments[0]->accept(*this);
+            std::string val = current_val_;
+            std::string type = current_type_;
+            if (node.location.line > 0) current_loc_ = node.location;
+
+            if (type != "double") {
+                std::string conv = new_reg();
+                fn_body_ << "  " << conv << " = sitofp i64 " << val << " to double" << dbg_tag() << "\n";
+                val = conv;
+            }
+            std::string res = new_reg();
+            fn_body_ << "  " << res << " = call double @llvm.sqrt.f64(double " << val << ")" << dbg_tag() << "\n";
+            current_val_ = res;
+            current_type_ = "double";
+        } else if (node.callee == "abs" && node.arguments.size() == 1) {
+            node.arguments[0]->accept(*this);
+            std::string val = current_val_;
+            std::string type = current_type_;
+            if (node.location.line > 0) current_loc_ = node.location;
+
+            if (type == "double") {
+                std::string res = new_reg();
+                fn_body_ << "  " << res << " = call double @llvm.fabs.f64(double " << val << ")" << dbg_tag() << "\n";
+                current_val_ = res;
+                current_type_ = "double";
+            } else {
+                std::string res = new_reg();
+                fn_body_ << "  " << res << " = call i64 @llvm.abs.i64(i64 " << val << ", i1 false)" << dbg_tag() << "\n";
+                current_val_ = res;
                 current_type_ = "i64";
             }
         } else if (user_func_ret_types_.find(node.callee) != user_func_ret_types_.end()) {

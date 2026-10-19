@@ -487,33 +487,35 @@ public:
 
         // Scale-relative pivot threshold (see inverse() for rationale).
         double scale_base = 0.0;
-        if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-            for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
-                for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
-                    scale_base = std::abs(static_cast<double>(A(r, c)));
-                }
+        for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
+            for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
+                scale_base = std::abs(static_cast<double>(A(r, c)));
             }
-            if (scale_base == 0.0) scale_base = 1.0;
         }
+        if (scale_base == 0.0) scale_base = 1.0;
         const double singular_threshold = scale_base * 1e-15;
 
         for (size_t i = 0; i < n; ++i) {
             size_t pivot = i;
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-                double max_val = std::abs(static_cast<double>(A(i, i)));
-                for (size_t r = i + 1; r < n; ++r) {
-                    double val = std::abs(static_cast<double>(A(r, i)));
-                    if (val > max_val) {
-                        max_val = val;
-                        pivot = r;
-                    }
+            double max_val = std::abs(static_cast<double>(A(i, i)));
+            for (size_t r = i + 1; r < n; ++r) {
+                double val = std::abs(static_cast<double>(A(r, i)));
+                if (val > max_val) {
+                    max_val = val;
+                    pivot = r;
                 }
+            }
+
+            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
                 if (max_val < singular_threshold) return T{0};
             } else {
-                while (pivot < n && A(pivot, i) == T{0}) {
-                    ++pivot;
+                if (A(pivot, i) == T{0}) {
+                    pivot = i;
+                    while (pivot < n && A(pivot, i) == T{0}) {
+                        ++pivot;
+                    }
+                    if (pivot == n) return T{0}; // Singular
                 }
-                if (pivot == n) return T{0}; // Singular
             }
 
             if (pivot != i) {
@@ -556,40 +558,42 @@ public:
         // (e.g. scaled SI units). Pivot is singular only when it is ~1e-15 of the
         // matrix's own magnitude.
         double scale_base = 0.0;
-        if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-            for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
-                for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
-                    scale_base = std::abs(static_cast<double>(A(r, c)));
-                }
+        for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
+            for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
+                scale_base = std::abs(static_cast<double>(A(r, c)));
             }
-            if (scale_base == 0.0) scale_base = 1.0;
         }
+        if (scale_base == 0.0) scale_base = 1.0;
         const double singular_threshold = scale_base * 1e-15;
 
         for (size_t i = 0; i < n; ++i) {
             size_t pivot = i;
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-                double max_val = std::abs(static_cast<double>(A(i, i)));
-                for (size_t r = i + 1; r < n; ++r) {
-                    double val = std::abs(static_cast<double>(A(r, i)));
-                    if (val > max_val) {
-                        max_val = val;
-                        pivot = r;
-                    }
+            double max_val = std::abs(static_cast<double>(A(i, i)));
+            for (size_t r = i + 1; r < n; ++r) {
+                double val = std::abs(static_cast<double>(A(r, i)));
+                if (val > max_val) {
+                    max_val = val;
+                    pivot = r;
                 }
+            }
+
+            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
                 if (max_val < singular_threshold) {
                     if (invertible) *invertible = false;
                     else throw std::runtime_error("Matrix is singular (non-invertible)");
                     return Matrix<T>();
                 }
             } else {
-                while (pivot < n && A(pivot, i) == T{0}) {
-                    ++pivot;
-                }
-                if (pivot == n) {
-                    if (invertible) *invertible = false;
-                    else throw std::runtime_error("Matrix is singular (non-invertible)");
-                    return Matrix<T>();
+                if (A(pivot, i) == T{0}) {
+                    pivot = i;
+                    while (pivot < n && A(pivot, i) == T{0}) {
+                        ++pivot;
+                    }
+                    if (pivot == n) {
+                        if (invertible) *invertible = false;
+                        else throw std::runtime_error("Matrix is singular (non-invertible)");
+                        return Matrix<T>();
+                    }
                 }
             }
 
@@ -619,6 +623,111 @@ public:
 
         if (invertible) *invertible = true;
         return inv;
+    }
+
+    /**
+     * @brief Solves the general linear system A * X = B via augmented Gauss-Jordan
+     * elimination with partial pivoting.
+     * Over Matrix<Rational>, solves A * X = B with 100% exact rational arithmetic
+     * and zero rounding error.
+     */
+    Matrix<T> solve(const Matrix<T>& B) const {
+        if (rows != cols || rows != B.rows) {
+            throw std::invalid_argument("Matrix::solve(): dimension mismatch");
+        }
+        size_t n = rows;
+        size_t m = B.cols;
+        Matrix<T> A = *this;
+        Matrix<T> X = B;
+
+        double scale_base = 0.0;
+        for (size_t r = 0; r < n && scale_base == 0.0; ++r) {
+            for (size_t c = 0; c < n && scale_base == 0.0; ++c) {
+                scale_base = std::abs(static_cast<double>(A(r, c)));
+            }
+        }
+        if (scale_base == 0.0) scale_base = 1.0;
+        const double singular_threshold = scale_base * 1e-15;
+
+        for (size_t i = 0; i < n; ++i) {
+            size_t pivot = i;
+            double max_val = std::abs(static_cast<double>(A(i, i)));
+            for (size_t r = i + 1; r < n; ++r) {
+                double val = std::abs(static_cast<double>(A(r, i)));
+                if (val > max_val) {
+                    max_val = val;
+                    pivot = r;
+                }
+            }
+
+            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+                if (max_val < singular_threshold) {
+                    throw std::runtime_error("Matrix::solve(): matrix is singular");
+                }
+            } else {
+                if (A(pivot, i) == T{0}) {
+                    pivot = i;
+                    while (pivot < n && A(pivot, i) == T{0}) {
+                        ++pivot;
+                    }
+                    if (pivot == n) {
+                        throw std::runtime_error("Matrix::solve(): matrix is singular");
+                    }
+                }
+            }
+
+            if (pivot != i) {
+                for (size_t j = 0; j < n; ++j) {
+                    std::swap(A(i, j), A(pivot, j));
+                }
+                for (size_t j = 0; j < m; ++j) {
+                    std::swap(X(i, j), X(pivot, j));
+                }
+            }
+
+            T p = A(i, i);
+            for (size_t j = i; j < n; ++j) {
+                A(i, j) = A(i, j) / p;
+            }
+            for (size_t j = 0; j < m; ++j) {
+                X(i, j) = X(i, j) / p;
+            }
+
+            for (size_t r = 0; r < n; ++r) {
+                if (r != i && !(A(r, i) == T{0})) {
+                    T factor = A(r, i);
+                    for (size_t c = i; c < n; ++c) {
+                        A(r, c) = A(r, c) - factor * A(i, c);
+                    }
+                    for (size_t c = 0; c < m; ++c) {
+                        X(r, c) = X(r, c) - factor * X(i, c);
+                    }
+                }
+            }
+        }
+        return X;
+    }
+
+    /**
+     * @brief Solves the general linear system A * x = b via augmented Gauss-Jordan
+     * elimination with partial pivoting.
+     * Over Matrix<Rational>, solves A * x = b with 100% exact rational arithmetic
+     * and zero rounding error.
+     */
+    std::vector<T> solve(const std::vector<T>& b) const {
+        if (rows != cols || rows != b.size()) {
+            throw std::invalid_argument("Matrix::solve(): dimension mismatch");
+        }
+        Matrix<T> B(b.size(), 1);
+        for (size_t i = 0; i < b.size(); ++i) {
+            B(i, 0) = b[i];
+        }
+        Matrix<T> X = solve(B);
+        std::vector<T> x(b.size());
+        for (size_t i = 0; i < b.size(); ++i) {
+            x[i] = X(i, 0);
+        }
+        return x;
     }
 
     /**
@@ -671,11 +780,7 @@ public:
         for (size_t c = 0; c < cols; ++c) {
             double col_sum = 0.0;
             for (size_t r = 0; r < rows; ++r) {
-                if constexpr (std::is_same_v<T, Rational>) {
-                    col_sum += std::abs((*this)(r, c).to_double());
-                } else {
-                    col_sum += std::abs(static_cast<double>((*this)(r, c)));
-                }
+                col_sum += std::abs(static_cast<double>((*this)(r, c)));
             }
             if (col_sum > max_col_sum) max_col_sum = col_sum;
         }
@@ -687,11 +792,7 @@ public:
         for (size_t r = 0; r < rows; ++r) {
             double row_sum = 0.0;
             for (size_t c = 0; c < cols; ++c) {
-                if constexpr (std::is_same_v<T, Rational>) {
-                    row_sum += std::abs((*this)(r, c).to_double());
-                } else {
-                    row_sum += std::abs(static_cast<double>((*this)(r, c)));
-                }
+                row_sum += std::abs(static_cast<double>((*this)(r, c)));
             }
             if (row_sum > max_row_sum) max_row_sum = row_sum;
         }
@@ -701,12 +802,7 @@ public:
     double norm_frobenius() const noexcept {
         double sum_sq = 0.0;
         for (const auto& elem : data) {
-            double val = 0.0;
-            if constexpr (std::is_same_v<T, Rational>) {
-                val = elem.to_double();
-            } else {
-                val = static_cast<double>(elem);
-            }
+            double val = static_cast<double>(elem);
             sum_sq += val * val;
         }
         return std::sqrt(sum_sq);
@@ -790,11 +886,7 @@ template <typename T>
 inline double norm_l1(const std::vector<T>& v) noexcept {
     double sum = 0.0;
     for (const auto& elem : v) {
-        if constexpr (std::is_same_v<T, Rational>) {
-            sum += std::abs(elem.to_double());
-        } else {
-            sum += std::abs(static_cast<double>(elem));
-        }
+        sum += std::abs(static_cast<double>(elem));
     }
     return sum;
 }
@@ -812,12 +904,7 @@ template <typename T>
 inline double norm_l2(const std::vector<T>& v) noexcept {
     double sum_sq = 0.0;
     for (const auto& elem : v) {
-        double val = 0.0;
-        if constexpr (std::is_same_v<T, Rational>) {
-            val = elem.to_double();
-        } else {
-            val = static_cast<double>(elem);
-        }
+        double val = static_cast<double>(elem);
         sum_sq += val * val;
     }
     return std::sqrt(sum_sq);
@@ -827,12 +914,7 @@ template <typename T>
 inline double norm_linf(const std::vector<T>& v) noexcept {
     double max_val = 0.0;
     for (const auto& elem : v) {
-        double val = 0.0;
-        if constexpr (std::is_same_v<T, Rational>) {
-            val = std::abs(elem.to_double());
-        } else {
-            val = std::abs(static_cast<double>(elem));
-        }
+        double val = std::abs(static_cast<double>(elem));
         if (val > max_val) max_val = val;
     }
     return max_val;
@@ -892,6 +974,7 @@ inline double norm_linf(std::span<const Trit> trits) noexcept {
 class Radix3FFT {
 public:
     using cdouble = std::complex<double>;
+    using Complex = std::complex<double>;
 
     static constexpr bool is_power_of_3(size_t n) noexcept {
         if (n == 0) return false;
@@ -1022,6 +1105,54 @@ public:
         std::vector<cdouble> res = ifft(X);
         double scale = std::sqrt(static_cast<double>(X.size()));
         for (auto& v : res) v *= scale;
+        return res;
+    }
+
+    /**
+     * @brief O(N log_3 N) linear spectral convolution of two complex sequences.
+     * Zero-pads to the smallest power of 3 >= a.size() + b.size() - 1.
+     */
+    static std::vector<Complex> convolve_radix3(const std::vector<Complex>& a,
+                                                const std::vector<Complex>& b) {
+        if (a.empty() || b.empty()) return {};
+        size_t L = a.size() + b.size() - 1;
+        size_t N = 1;
+        while (N < L) {
+            N *= 3;
+        }
+        std::vector<Complex> A_pad(N, Complex(0.0, 0.0));
+        std::vector<Complex> B_pad(N, Complex(0.0, 0.0));
+        std::copy(a.begin(), a.end(), A_pad.begin());
+        std::copy(b.begin(), b.end(), B_pad.begin());
+
+        std::vector<Complex> FA = fft(A_pad);
+        std::vector<Complex> FB = fft(B_pad);
+        std::vector<Complex> FC(N);
+        for (size_t i = 0; i < N; ++i) {
+            FC[i] = FA[i] * FB[i];
+        }
+        std::vector<Complex> C = ifft(FC);
+        C.resize(L);
+        return C;
+    }
+
+    /**
+     * @brief O(N log_3 N) linear spectral convolution of two real sequences.
+     * Zero-pads to the smallest power of 3 >= a.size() + b.size() - 1.
+     */
+    static std::vector<double> convolve_real_radix3(const std::vector<double>& a,
+                                                    const std::vector<double>& b) {
+        if (a.empty() || b.empty()) return {};
+        std::vector<Complex> ca(a.size());
+        std::vector<Complex> cb(b.size());
+        for (size_t i = 0; i < a.size(); ++i) ca[i] = Complex(a[i], 0.0);
+        for (size_t i = 0; i < b.size(); ++i) cb[i] = Complex(b[i], 0.0);
+
+        std::vector<Complex> cc = convolve_radix3(ca, cb);
+        std::vector<double> res(cc.size());
+        for (size_t i = 0; i < cc.size(); ++i) {
+            res[i] = cc[i].real();
+        }
         return res;
     }
 
