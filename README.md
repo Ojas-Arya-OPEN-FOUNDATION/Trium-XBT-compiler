@@ -19,7 +19,6 @@
 ---
 
 [📖 Complete 31,000-Word Guide](NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.md) &nbsp;•&nbsp;
-[✨ OpenUI Interactive Visualizer](docs/Next_Gen_Foundation_Compiler_Guide.html) &nbsp;•&nbsp;
 [⚡ Quick Start](#quick-start-build-run-and-verify-in-60-seconds) &nbsp;•&nbsp;
 [📊 Benchmarks](#section-5-measured-hardware-cycle-accurate-benchmarks) &nbsp;•&nbsp;
 [🤝 Contributing](CONTRIBUTING.md)
