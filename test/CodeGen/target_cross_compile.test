@@ -6,10 +6,10 @@ var c = a + b;
 print(c);
 
 // CHECK: Target backend: ARM64 NEON
-// CHECK: _bt_main
+// CHECK: bt_main:
 // CHECK: ret
 // CHECK: Target backend: x86_64 AVX-512
-// CHECK: _bt_main
+// CHECK: bt_main:
 // CHECK: retq
 // CHECK: Target backend: LLVM Intermediate Representation
 // CHECK: RISC-V 64

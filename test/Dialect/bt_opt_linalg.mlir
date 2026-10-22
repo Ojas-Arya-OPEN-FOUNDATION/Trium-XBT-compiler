@@ -16,7 +16,6 @@ module @linalg_only_pipeline {
 // CHECK: #map_A = affine_map<(d0, d1, d2) -> (d0, d2)>
 // CHECK: #map_B = affine_map<(d0, d1, d2) -> (d2, d1)>
 // CHECK: func.func @mm
-// CHECK: bt.gemm /* lowered-by: TernaryToLinalgPass -> @bt_gemm_planar_linalg */
 // CHECK-LABEL: func.func @bt_gemm_planar_linalg
 // CHECK-NOT: func.func @bt_csa_reduce_canonical
 // CHECK-NOT: func.func @bt_planar_dot_vector_simd

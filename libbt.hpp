@@ -77,11 +77,23 @@ struct Rational {
         return r;
     }
 
+    // Greatest common divisor helper for __int128_t types.
+    static __int128_t gcd128(__int128_t a, __int128_t b) noexcept {
+        if (a < 0) a = -a;
+        if (b < 0) b = -b;
+        while (b != 0) {
+            __int128_t t = b;
+            b = a % b;
+            a = t;
+        }
+        return a;
+    }
+
     // Normalize a (n, d) pair to canonical reduced form with d > 0.
     static void reduce_128(__int128_t& n, __int128_t& d) {
         if (d < 0) { n = -n; d = -d; }
         __int128_t an = (n < 0) ? -n : n;
-        __int128_t g = std::gcd(an, d);
+        __int128_t g = gcd128(an, d);
         if (g > 1) { n /= g; d /= g; }
     }
 
