@@ -112,6 +112,8 @@ struct TritWord64 {
         return {N, P};
     }
 
+    constexpr bool operator==(const TritWord64& other) const noexcept = default;
+
     constexpr Trit getTrit(size_t index) const noexcept {
         if (index >= 64) return Trit::Zero;
         assert(index < 64);

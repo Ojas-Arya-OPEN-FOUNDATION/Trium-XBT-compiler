@@ -49,11 +49,17 @@ clang++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
 ./bin_sanitizer/unit_frontend_fp_sparse_asan
 echo "  -> ASan/UBSan Frontend FP & Sparse: 0 errors, 0 leaks, 0 UB."
 
-echo "[6/6] Compiling bt-compiler with ASan + UBSan and running self-test..."
+echo "[6/7] Compiling bt-compiler with ASan + UBSan and running self-test..."
 clang++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
   bt_compiler.cpp -o bin_sanitizer/bt_compiler_asan
 ./bin_sanitizer/bt_compiler_asan --test
 echo "  -> ASan/UBSan Compiler Driver: 0 errors, 0 leaks, 0 UB."
+
+echo "[7/7] Compiling and running Universal XBT Foundation with ASan + UBSan..."
+clang++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -I. \
+  test/Unit/test_unit_universal.cpp -o bin_sanitizer/unit_universal_asan
+./bin_sanitizer/unit_universal_asan
+echo "  -> ASan/UBSan Universal XBT Foundation: 0 errors, 0 leaks, 0 UB."
 
 echo "======================================================================"
 echo "  ALL SANITIZER TEST RUNS PASSED CLEANLY (0 LEAKS, 0 OUT-OF-BOUNDS, 0 UB)"

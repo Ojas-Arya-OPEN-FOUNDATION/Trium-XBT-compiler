@@ -65,6 +65,8 @@ clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_xbt_hw.cpp" -I"${SCRIP
 "${SCRIPT_DIR}/test/Unit/unit_xbt_hw"
 clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_phase3.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_phase3"
 "${SCRIPT_DIR}/test/Unit/unit_phase3"
+clang++ -std=c++20 -O3 "${SCRIPT_DIR}/test/Unit/test_unit_universal.cpp" -I"${SCRIPT_DIR}" -o "${SCRIPT_DIR}/test/Unit/unit_universal"
+"${SCRIPT_DIR}/test/Unit/unit_universal"
 
 
 

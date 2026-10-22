@@ -9,6 +9,8 @@
 #include "ternary_fp.hpp"
 #include "ternary_sparse.hpp"
 #include "libbt.hpp"
+#include "ternary_xbt_blas.hpp"
+#include "ternary_nonlinear_engine.hpp"
 
 #include <cmath>
 #include <vector>
@@ -247,6 +249,42 @@ int64_t bt_kleene_xor(int64_t a, int64_t b) {
     auto wb = bt::Codec::from_int64(b);
     auto wr = bt::kleene_xor(wa, wb);
     return bt::swar_to_int64(wr);
+}
+
+void xbt_sgemm(const float* a, const float* b, float* c, size_t m, size_t k, size_t n, int min_plane_sum_cutoff) {
+    bt::blas::xbt_sgemm_unmodified<8>(a, b, c, m, k, n, min_plane_sum_cutoff);
+}
+
+void xbt_rmsnorm(const float* x, const float* weight, float* out, size_t n, float eps) {
+    bt::nonlinear::xbt_rmsnorm(x, weight, out, n, eps);
+}
+
+void xbt_softmax(const float* x, float* out, size_t n) {
+    bt::nonlinear::xbt_softmax(x, out, n);
+}
+
+double xbt_exp(double x) {
+    return bt::nonlinear::xbt_exp_fast(x);
+}
+
+double xbt_tanh(double x) {
+    return bt::nonlinear::xbt_tanh_fast(x);
+}
+
+double xbt_sigmoid(double x) {
+    return bt::nonlinear::xbt_sigmoid_fast(x);
+}
+
+double xbt_silu(double x) {
+    return bt::nonlinear::xbt_silu_fast(x);
+}
+
+double xbt_gelu(double x) {
+    return bt::nonlinear::xbt_gelu_fast(x);
+}
+
+double xbt_rsqrt(double x) {
+    return bt::nonlinear::xbt_rsqrt_householder(x);
 }
 
 } // extern "C"

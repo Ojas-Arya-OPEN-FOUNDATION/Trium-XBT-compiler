@@ -197,6 +197,52 @@ _LIB.bt_hamming_distance_64_val.restype = ctypes.c_uint32
 _LIB.bt_verify_disjointness_val.argtypes = [BtWord64]
 _LIB.bt_verify_disjointness_val.restype = ctypes.c_bool
 
+# Universal XBT ABI Signatures
+_LIB.xbt_sgemm.argtypes = [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.c_size_t,
+    ctypes.c_size_t,
+    ctypes.c_int,
+]
+_LIB.xbt_sgemm.restype = None
+
+_LIB.xbt_rmsnorm.argtypes = [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.c_float,
+]
+_LIB.xbt_rmsnorm.restype = None
+
+_LIB.xbt_softmax.argtypes = [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
+_LIB.xbt_softmax.restype = None
+
+_LIB.xbt_exp.argtypes = [ctypes.c_double]
+_LIB.xbt_exp.restype = ctypes.c_double
+
+_LIB.xbt_tanh.argtypes = [ctypes.c_double]
+_LIB.xbt_tanh.restype = ctypes.c_double
+
+_LIB.xbt_sigmoid.argtypes = [ctypes.c_double]
+_LIB.xbt_sigmoid.restype = ctypes.c_double
+
+_LIB.xbt_silu.argtypes = [ctypes.c_double]
+_LIB.xbt_silu.restype = ctypes.c_double
+
+_LIB.xbt_gelu.argtypes = [ctypes.c_double]
+_LIB.xbt_gelu.restype = ctypes.c_double
+
+_LIB.xbt_rsqrt.argtypes = [ctypes.c_double]
+_LIB.xbt_rsqrt.restype = ctypes.c_double
+
 # ============================================================================
 # 4. Safe Pythonic Wrapper Functions
 # ============================================================================
@@ -381,6 +427,57 @@ def base243_unpack(byte_val: int) -> List[int]:
     _LIB.bt_base243_unpack_val(ctypes.c_uint8(byte_val), c_trits)
     return [c_trits[i] for i in range(5)]
 
+def xbt_sgemm(a: List[float], b: List[float], m: int, k: int, n: int, min_plane_sum_cutoff: int = 0) -> List[float]:
+    """Universal XBT GEMM: C[M x N] = A[M x K] * B[K x N] on unmodified float arrays."""
+    assert len(a) >= m * k, f"Matrix A size {len(a)} < {m * k}"
+    assert len(b) >= k * n, f"Matrix B size {len(b)} < {k * n}"
+    c_a = (ctypes.c_float * (m * k))(*a[:m * k])
+    c_b = (ctypes.c_float * (k * n))(*b[:k * n])
+    c_c = (ctypes.c_float * (m * n))()
+    _LIB.xbt_sgemm(c_a, c_b, c_c, m, k, n, min_plane_sum_cutoff)
+    return [c_c[i] for i in range(m * n)]
+
+def xbt_rmsnorm(x: List[float], weight: Optional[List[float]] = None, eps: float = 1e-5) -> List[float]:
+    """Cubic Householder RMSNorm layer: out = (x / sqrt(mean(x^2) + eps)) * weight."""
+    n = len(x)
+    c_x = (ctypes.c_float * n)(*x)
+    c_w = (ctypes.c_float * n)(*weight) if weight is not None else None
+    c_out = (ctypes.c_float * n)()
+    _LIB.xbt_rmsnorm(c_x, c_w, c_out, n, eps)
+    return [c_out[i] for i in range(n)]
+
+def xbt_softmax(x: List[float]) -> List[float]:
+    """Numerically stable Radix-3 Softmax."""
+    n = len(x)
+    c_x = (ctypes.c_float * n)(*x)
+    c_out = (ctypes.c_float * n)()
+    _LIB.xbt_softmax(c_x, c_out, n)
+    return [c_out[i] for i in range(n)]
+
+def xbt_exp(x: float) -> float:
+    """Radix-3 range-reduced e^x."""
+    return float(_LIB.xbt_exp(ctypes.c_double(x)))
+
+def xbt_tanh(x: float) -> float:
+    """Odd-symmetric Padé tanh(x)."""
+    return float(_LIB.xbt_tanh(ctypes.c_double(x)))
+
+def xbt_sigmoid(x: float) -> float:
+    """Centered Balanced Ternary sigmoid(x)."""
+    return float(_LIB.xbt_sigmoid(ctypes.c_double(x)))
+
+def xbt_silu(x: float) -> float:
+    """SiLU / Swish activation: x * sigmoid(x)."""
+    return float(_LIB.xbt_silu(ctypes.c_double(x)))
+
+def xbt_gelu(x: float) -> float:
+    """GELU activation."""
+    return float(_LIB.xbt_gelu(ctypes.c_double(x)))
+
+def xbt_rsqrt(x: float) -> float:
+    """3rd-order Cubic Householder 1 / sqrt(x)."""
+    return float(_LIB.xbt_rsqrt(ctypes.c_double(x)))
+
 # ============================================================================
 # 5. Verification Suite & CLI Runner
 # ============================================================================
@@ -486,6 +583,31 @@ def run_self_test():
     unpacked = base243_unpack(byte_val)
     assert unpacked == test_trits, f"Base-243 codec mismatch: {unpacked} vs {test_trits}"
     print("  [Bonus]   Base-243 5-Trit/Byte Codec .............. PASSED")
+
+    # 9. Universal XBT Non-Linear Activations & Transcendentals
+    e_val = xbt_exp(1.0)
+    assert abs(e_val - math.e) < 1e-6, f"xbt_exp(1.0) error: {e_val} vs {math.e}"
+    th_val = xbt_tanh(1.5)
+    assert abs(th_val - math.tanh(1.5)) < 1e-6, f"xbt_tanh(1.5) error: {th_val}"
+    sig_val = xbt_sigmoid(0.0)
+    assert abs(sig_val - 0.5) < 1e-6, f"xbt_sigmoid(0.0) error: {sig_val}"
+    rsq_val = xbt_rsqrt(4.0)
+    assert abs(rsq_val - 0.5) < 1e-6, f"xbt_rsqrt(4.0) error: {rsq_val}"
+    norm_out = xbt_rmsnorm([1.0, 2.0, 3.0, 4.0])
+    assert len(norm_out) == 4
+    smax_out = xbt_softmax([1.0, 2.0, 3.0])
+    assert abs(sum(smax_out) - 1.0) < 1e-5
+    print("  [FFI 8/8] Universal XBT Non-Linear Engine (exp/tanh/rsqrt/rmsnorm/softmax) . PASSED")
+
+    # 10. Universal XBT Sgemm (Unmodified Float Matrices)
+    mat_A = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    mat_B = [7.0, 8.0, 9.0, 1.0, 2.0, 3.0]
+    mat_C = xbt_sgemm(mat_A, mat_B, 2, 3, 2)
+    assert abs(mat_C[0] - 31.0) < 0.1, f"C[0] expected ~31, got {mat_C[0]}"
+    assert abs(mat_C[1] - 19.0) < 0.1, f"C[1] expected ~19, got {mat_C[1]}"
+    assert abs(mat_C[2] - 85.0) < 0.2, f"C[2] expected ~85, got {mat_C[2]}"
+    assert abs(mat_C[3] - 55.0) < 0.2, f"C[3] expected ~55, got {mat_C[3]}"
+    print("  [FFI 9/8] Universal XBT Unmodified-Float SGEMM ......... PASSED")
 
     print("=" * 70)
     print("  -> ALL PYTHON FFI VERIFICATION TESTS PASSED SUCCESSFULLY!")

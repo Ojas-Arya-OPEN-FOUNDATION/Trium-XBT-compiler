@@ -393,6 +393,53 @@ BT_API int64_t bt_kleene_or(int64_t a, int64_t b);
  */
 BT_API int64_t bt_kleene_xor(int64_t a, int64_t b);
 
+/**
+ * @brief Universal XBT GEMM for unmodified FP32 matrices: C[M x N] = A[M x K] * B[K x N].
+ * Uses 8-plane Balanced Ternary decomposition with active-plane bitmask skipping.
+ */
+BT_API void xbt_sgemm(const float* a, const float* b, float* c, size_t m, size_t k, size_t n, int min_plane_sum_cutoff);
+
+/**
+ * @brief Vectorized RMSNorm layer: out[i] = (x[i] / sqrt(mean(x^2) + eps)) * weight[i].
+ * Uses 3rd-order Cubic Householder inverse square root.
+ */
+BT_API void xbt_rmsnorm(const float* x, const float* weight, float* out, size_t n, float eps);
+
+/**
+ * @brief Numerically stable Radix-3 vector Softmax: out[i] = exp(x[i] - max) / sum.
+ */
+BT_API void xbt_softmax(const float* x, float* out, size_t n);
+
+/**
+ * @brief Radix-3 range-reduced exponential e^x.
+ */
+BT_API double xbt_exp(double x);
+
+/**
+ * @brief Odd-symmetric Balanced Ternary tanh(x).
+ */
+BT_API double xbt_tanh(double x);
+
+/**
+ * @brief Centered Balanced Ternary sigmoid(x).
+ */
+BT_API double xbt_sigmoid(double x);
+
+/**
+ * @brief Fast SiLU / Swish activation: x * sigmoid(x).
+ */
+BT_API double xbt_silu(double x);
+
+/**
+ * @brief Fast GELU activation.
+ */
+BT_API double xbt_gelu(double x);
+
+/**
+ * @brief 3rd-order Cubic Householder 1 / sqrt(x).
+ */
+BT_API double xbt_rsqrt(double x);
+
 #ifdef __cplusplus
 }
 #endif
