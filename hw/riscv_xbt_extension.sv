@@ -165,6 +165,205 @@ module xbt_planar_dot64 (
 endmodule
 
 // -----------------------------------------------------------------------------
+// 3b. 64-Trit Dual-Rail CMOS Compound AOI22 Planar Dot Product Unit
+//     Computes product rails using CMOS compound AOI22 gates:
+//       ~P_prod = AOI22(A_P, B_P, A_N, B_N) = ~((A_P & B_P) | (A_N & B_N))
+//       ~N_prod = AOI22(A_P, B_N, A_N, B_P) = ~((A_P & B_N) | (A_N & B_P))
+//     followed by parallel popcount tree reduction in 1 clock cycle.
+// -----------------------------------------------------------------------------
+module xbt_aoi22_planar_dot64 (
+    input  logic [63:0]        a_p,
+    input  logic [63:0]        a_n,
+    input  logic [63:0]        b_p,
+    input  logic [63:0]        b_n,
+    output logic [63:0]        prod_p_bar,
+    output logic [63:0]        prod_n_bar,
+    output logic [63:0]        prod_p,
+    output logic [63:0]        prod_n,
+    output logic signed [63:0] dot_out
+);
+    logic [6:0] cnt_p, cnt_n;
+
+    always_comb begin
+        // Compound AOI22 gates
+        prod_p_bar = ~((a_p & b_p) | (a_n & b_n));
+        prod_n_bar = ~((a_p & b_n) | (a_n & b_p));
+
+        // Active-high dual rails
+        prod_p = ~prod_p_bar;
+        prod_n = ~prod_n_bar;
+
+        cnt_p = 7'd0;
+        cnt_n = 7'd0;
+        for (int i = 0; i < 64; i++) begin
+            cnt_p = cnt_p + {6'd0, prod_p[i]};
+            cnt_n = cnt_n + {6'd0, prod_n[i]};
+        end
+
+        dot_out = 64'(signed'({1'b0, cnt_p})) - 64'(signed'({1'b0, cnt_n}));
+    end
+endmodule
+
+// -----------------------------------------------------------------------------
+// 3c. 32 x 128-bit Dual-Rail Ternary Register File (tr0 .. tr31)
+//     Each register stores 64 trits as dual rails (64 P bits + 64 N bits = 128 bits).
+//     Features 0-gate wire-swap negation bypass on read ports.
+//     Register tr0 is hardwired to 0 (P=0, N=0).
+// -----------------------------------------------------------------------------
+module xbt_regfile32x128 (
+    input  logic        clk,
+    input  logic        rst_n,
+    // Read Port 1
+    input  logic [4:0]  rs1_addr,
+    input  logic        rs1_neg,      // Wire-swap negation bypass control
+    output logic [63:0] rs1_p,
+    output logic [63:0] rs1_n,
+    // Read Port 2
+    input  logic [4:0]  rs2_addr,
+    input  logic        rs2_neg,      // Wire-swap negation bypass control
+    output logic [63:0] rs2_p,
+    output logic [63:0] rs2_n,
+    // Write Port
+    input  logic        we,
+    input  logic [4:0]  rd_addr,
+    input  logic [63:0] rd_p,
+    input  logic [63:0] rd_n
+);
+    logic [63:0] mem_p [0:31];
+    logic [63:0] mem_n [0:31];
+
+    // Asynchronous read ports with 0-gate wire-swap negation bypass
+    always_comb begin
+        logic [63:0] raw1_p, raw1_n;
+        logic [63:0] raw2_p, raw2_n;
+
+        raw1_p = (rs1_addr == 5'd0) ? 64'd0 : mem_p[rs1_addr];
+        raw1_n = (rs1_addr == 5'd0) ? 64'd0 : mem_n[rs1_addr];
+
+        raw2_p = (rs2_addr == 5'd0) ? 64'd0 : mem_p[rs2_addr];
+        raw2_n = (rs2_addr == 5'd0) ? 64'd0 : mem_n[rs2_addr];
+
+        rs1_p = rs1_neg ? raw1_n : raw1_p;
+        rs1_n = rs1_neg ? raw1_p : raw1_n;
+
+        rs2_p = rs2_neg ? raw2_n : raw2_p;
+        rs2_n = rs2_neg ? raw2_p : raw2_n;
+    end
+
+    // Synchronous write port
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int r = 0; r < 32; r++) begin
+                mem_p[r] <= 64'd0;
+                mem_n[r] <= 64'd0;
+            end
+        end else if (we && (rd_addr != 5'd0)) begin
+            mem_p[rd_addr] <= rd_p;
+            mem_n[rd_addr] <= rd_n;
+        end
+    end
+endmodule
+
+// -----------------------------------------------------------------------------
+// 3d. Pipelined Systolic BTFA Compressor Unit
+//     Streaming matrix operation unit with pipelined BTFA compressor stages.
+//     Each stage compresses 3 dual-rail inputs (A, B, C) into Sum and Carry,
+//     streaming intermediate matrix accumulators with zero carry stalls.
+// -----------------------------------------------------------------------------
+module xbt_systolic_btfa_unit #(
+    parameter int STAGES = 2
+) (
+    input  logic        clk,
+    input  logic        rst_n,
+    input  logic        valid_in,
+    input  logic [63:0] a_p,
+    input  logic [63:0] a_n,
+    input  logic [63:0] b_p,
+    input  logic [63:0] b_n,
+    input  logic [63:0] c_p,
+    input  logic [63:0] c_n,
+    output logic [63:0] sum_p,
+    output logic [63:0] sum_n,
+    output logic [63:0] carry_p,
+    output logic [63:0] carry_n,
+    output logic        valid_out
+);
+    // Stage 1 combinational BTFA
+    logic [63:0] s1_p, s1_n, c1_p, c1_n;
+    logic [63:0] s2_p, s2_n, c2_p, c2_n;
+    logic [63:0] btfa_sum_p, btfa_sum_n;
+    logic [63:0] btfa_carry_p, btfa_carry_n;
+
+    xbt_btha64 u_btha1 (
+        .a_p     (a_p),
+        .a_n     (a_n),
+        .b_p     (b_p),
+        .b_n     (b_n),
+        .sum_p   (s1_p),
+        .sum_n   (s1_n),
+        .carry_p (c1_p),
+        .carry_n (c1_n)
+    );
+
+    xbt_btha64 u_btha2 (
+        .a_p     (s1_p),
+        .a_n     (s1_n),
+        .b_p     (c_p),
+        .b_n     (c_n),
+        .sum_p   (s2_p),
+        .sum_n   (s2_n),
+        .carry_p (c2_p),
+        .carry_n (c2_n)
+    );
+
+    always_comb begin
+        btfa_sum_p   = s2_p;
+        btfa_sum_n   = s2_n;
+        btfa_carry_p = (c1_p | c2_p) & ~(c1_n | c2_n);
+        btfa_carry_n = (c1_n | c2_n) & ~(c1_p | c2_p);
+    end
+
+    // Pipeline registers
+    logic [63:0] pipe_sum_p   [0:STAGES-1];
+    logic [63:0] pipe_sum_n   [0:STAGES-1];
+    logic [63:0] pipe_carry_p [0:STAGES-1];
+    logic [63:0] pipe_carry_n [0:STAGES-1];
+    logic        pipe_valid   [0:STAGES-1];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int s = 0; s < STAGES; s++) begin
+                pipe_sum_p[s]   <= 64'd0;
+                pipe_sum_n[s]   <= 64'd0;
+                pipe_carry_p[s] <= 64'd0;
+                pipe_carry_n[s] <= 64'd0;
+                pipe_valid[s]   <= 1'b0;
+            end
+        end else begin
+            pipe_sum_p[0]   <= btfa_sum_p;
+            pipe_sum_n[0]   <= btfa_sum_n;
+            pipe_carry_p[0] <= btfa_carry_p;
+            pipe_carry_n[0] <= btfa_carry_n;
+            pipe_valid[0]   <= valid_in;
+
+            for (int s = 1; s < STAGES; s++) begin
+                pipe_sum_p[s]   <= pipe_sum_p[s-1];
+                pipe_sum_n[s]   <= pipe_sum_n[s-1];
+                pipe_carry_p[s] <= pipe_carry_p[s-1];
+                pipe_carry_n[s] <= pipe_carry_n[s-1];
+                pipe_valid[s]   <= pipe_valid[s-1];
+            end
+        end
+    end
+
+    assign sum_p     = pipe_sum_p[STAGES-1];
+    assign sum_n     = pipe_sum_n[STAGES-1];
+    assign carry_p   = pipe_carry_p[STAGES-1];
+    assign carry_n   = pipe_carry_n[STAGES-1];
+    assign valid_out = pipe_valid[STAGES-1];
+endmodule
+
+// -----------------------------------------------------------------------------
 // 4. Division-Free Base-243 Hardware Unpacker
 //    Unpacks an 8-bit Base-243 byte [0..242] into 5 Dual-Rail trits in 1 cycle
 //    using constant reciprocal multipliers (171, 57, 19, 203).

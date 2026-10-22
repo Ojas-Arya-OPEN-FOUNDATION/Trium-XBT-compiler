@@ -832,7 +832,139 @@ public:
         double cond = condition_number_1();
         return std::isfinite(cond) && cond <= max_cond;
     }
+
+    /**
+     * @brief Fraction-free matrix determinant using Bareiss algorithm.
+     * Applies Sylvester's determinant identity:
+     * A_{i,j}^{(k+1)} = (A_{k,k}^{(k)} A_{i,j}^{(k)} - A_{i,k}^{(k)} A_{k,j}^{(k)}) / c_{k-1}
+     * with exact integer division, preserving ring integrity over integer types
+     * (int64_t, TritBigInt, Rational).
+     */
+    static T bareiss_determinant(const Matrix<T>& mat) {
+        if (mat.rows != mat.cols) {
+            throw std::invalid_argument("bareiss_determinant: matrix must be square");
+        }
+        size_t n = mat.rows;
+        if (n == 0) return T{1};
+        if (n == 1) return mat(0, 0);
+
+        Matrix<T> A = mat;
+        T sign{1};
+        T c{1};
+
+        for (size_t k = 0; k < n - 1; ++k) {
+            if (A(k, k) == T{0}) {
+                size_t swap_row = n;
+                for (size_t r = k + 1; r < n; ++r) {
+                    if (!(A(r, k) == T{0})) {
+                        swap_row = r;
+                        break;
+                    }
+                }
+                if (swap_row == n) {
+                    return T{0};
+                }
+                for (size_t col = 0; col < n; ++col) {
+                    std::swap(A(k, col), A(swap_row, col));
+                }
+                sign = -sign;
+            }
+
+            T pivot = A(k, k);
+            for (size_t i = k + 1; i < n; ++i) {
+                for (size_t j = k + 1; j < n; ++j) {
+                    T num = pivot * A(i, j) - A(i, k) * A(k, j);
+                    A(i, j) = num / c;
+                }
+                A(i, k) = T{0};
+            }
+            c = pivot;
+        }
+
+        return sign * A(n - 1, n - 1);
+    }
+
+    /**
+     * @brief Fraction-free linear system solver A * x = b using Bareiss elimination.
+     * Operates over integer types (int64_t, TritBigInt) and exact rings.
+     */
+    static std::vector<T> bareiss_solve(const Matrix<T>& A, const std::vector<T>& b) {
+        if (A.rows != A.cols) {
+            throw std::invalid_argument("bareiss_solve: matrix must be square");
+        }
+        if (A.rows != b.size()) {
+            throw std::invalid_argument("bareiss_solve: dimension mismatch between A and b");
+        }
+        size_t n = A.rows;
+        if (n == 0) return {};
+
+        Matrix<T> aug(n, n + 1, T{0});
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                aug(i, j) = A(i, j);
+            }
+            aug(i, n) = b[i];
+        }
+
+        T c{1};
+        for (size_t k = 0; k < n - 1; ++k) {
+            if (aug(k, k) == T{0}) {
+                size_t swap_row = n;
+                for (size_t r = k + 1; r < n; ++r) {
+                    if (!(aug(r, k) == T{0})) {
+                        swap_row = r;
+                        break;
+                    }
+                }
+                if (swap_row == n) {
+                    throw std::runtime_error("bareiss_solve: matrix is singular");
+                }
+                for (size_t col = 0; col <= n; ++col) {
+                    std::swap(aug(k, col), aug(swap_row, col));
+                }
+            }
+
+            T pivot = aug(k, k);
+            for (size_t i = k + 1; i < n; ++i) {
+                for (size_t j = k + 1; j <= n; ++j) {
+                    T num = pivot * aug(i, j) - aug(i, k) * aug(k, j);
+                    aug(i, j) = num / c;
+                }
+                aug(i, k) = T{0};
+            }
+            c = pivot;
+        }
+
+        if (aug(n - 1, n - 1) == T{0}) {
+            throw std::runtime_error("bareiss_solve: matrix is singular");
+        }
+
+        // Back substitution
+        std::vector<T> x(n, T{0});
+        for (int i = static_cast<int>(n) - 1; i >= 0; --i) {
+            T s = aug(static_cast<size_t>(i), n);
+            for (size_t j = static_cast<size_t>(i) + 1; j < n; ++j) {
+                s = s - aug(static_cast<size_t>(i), j) * x[j];
+            }
+            x[static_cast<size_t>(i)] = s / aug(static_cast<size_t>(i), static_cast<size_t>(i));
+        }
+        return x;
+    }
+
+    T bareiss_det() const {
+        return bareiss_determinant(*this);
+    }
 };
+
+template <typename T>
+inline T bareiss_determinant(const Matrix<T>& mat) {
+    return Matrix<T>::bareiss_determinant(mat);
+}
+
+template <typename T>
+inline std::vector<T> bareiss_solve(const Matrix<T>& A, const std::vector<T>& b) {
+    return Matrix<T>::bareiss_solve(A, b);
+}
 
 using RationalMatrix = Matrix<Rational>;
 using RealMatrix = Matrix<double>;
@@ -1218,6 +1350,197 @@ inline std::vector<std::complex<double>> fft_radix3_unitary(const std::vector<st
 
 inline std::vector<std::complex<double>> ifft_radix3_unitary(const std::vector<std::complex<double>>& X) {
     return Radix3FFT::ifft_unitary(X);
+}
+
+// ==============================================================================
+// 4b. Exact Radix-3 Number Theoretic Transform (NTT) over GF(p)
+// ==============================================================================
+
+/**
+ * @brief Exact Radix-3 Number Theoretic Transform (NTT) Engine.
+ * Operates over Galois field GF(p) with Fermat-theoretic precision, eliminating
+ * all floating-point roundoff errors and epsilon drift in linear convolutions.
+ * 
+ * Verified prime: p = 3,874,204,891 = 10 * 3^18 + 1
+ * Primitive root of GF(p): g = 2
+ * Order-3 principal root: omega_3 = g^((p-1)/3) mod p = 2,094,712,797
+ */
+class Radix3NTT {
+public:
+    static constexpr uint64_t P = 3874204891ULL;      // 10 * 3^18 + 1
+    static constexpr uint64_t G = 2ULL;               // Primitive root
+    static constexpr uint64_t OMEGA_3 = 2094712797ULL; // 2^((p-1)/3) mod p
+    static constexpr size_t MAX_EXPONENT = 18;        // Maximum 3-power length 3^18
+
+    static constexpr uint64_t mod_pow(uint64_t base, uint64_t exp) noexcept {
+        uint64_t res = 1;
+        base %= P;
+        while (exp > 0) {
+            if (exp & 1) res = static_cast<uint64_t>((static_cast<__uint128_t>(res) * base) % P);
+            base = static_cast<uint64_t>((static_cast<__uint128_t>(base) * base) % P);
+            exp >>= 1;
+        }
+        return res;
+    }
+
+    static constexpr uint64_t mod_inv(uint64_t n) noexcept {
+        return mod_pow(n, P - 2);
+    }
+
+    static bool is_power_of_3(size_t n) noexcept {
+        if (n == 0) return false;
+        while (n % 3 == 0) n /= 3;
+        return n == 1;
+    }
+
+    static size_t get_power_of_3_exponent(size_t n) {
+        if (n == 0) throw std::invalid_argument("Radix-3 NTT: sequence length cannot be 0");
+        size_t k = 0;
+        size_t temp = n;
+        while (temp > 1) {
+            if (temp % 3 != 0) {
+                throw std::invalid_argument("Radix-3 NTT: sequence length must be exact power of 3 (N = 3^k)");
+            }
+            temp /= 3;
+            k++;
+        }
+        if (k > MAX_EXPONENT) {
+            throw std::invalid_argument("Radix-3 NTT: sequence length exceeds maximum 3^18");
+        }
+        return k;
+    }
+
+    static inline size_t trit_reverse(size_t n, size_t k) noexcept {
+        size_t res = 0;
+        for (size_t i = 0; i < k; ++i) {
+            res = res * 3 + (n % 3);
+            n /= 3;
+        }
+        return res;
+    }
+
+    static void transform_inplace(std::vector<uint64_t>& a, bool inverse = false) {
+        size_t N = a.size();
+        if (N <= 1) return;
+        size_t k = get_power_of_3_exponent(N);
+
+        // Stage 1: Trit-reversal permutation
+        for (size_t i = 0; i < N; ++i) {
+            size_t rev = trit_reverse(i, k);
+            if (i < rev) {
+                std::swap(a[i], a[rev]);
+            }
+        }
+
+        // Stage 2: Radix-3 Cooley-Tukey Butterflies over GF(P)
+        uint64_t w3_1 = inverse ? mod_inv(OMEGA_3) : OMEGA_3;
+        uint64_t w3_2 = static_cast<uint64_t>((static_cast<__uint128_t>(w3_1) * w3_1) % P);
+
+        for (size_t length = 3; length <= N; length *= 3) {
+            size_t m = length / 3;
+            uint64_t w_step = mod_pow(G, (P - 1) / length);
+            if (inverse) {
+                w_step = mod_inv(w_step);
+            }
+
+            // Precompute twiddle factor tables
+            std::vector<uint64_t> w(m);
+            std::vector<uint64_t> w2(m);
+            uint64_t curr = 1;
+            for (size_t j = 0; j < m; ++j) {
+                w[j] = curr;
+                w2[j] = static_cast<uint64_t>((static_cast<__uint128_t>(curr) * curr) % P);
+                curr = static_cast<uint64_t>((static_cast<__uint128_t>(curr) * w_step) % P);
+            }
+
+            for (size_t i = 0; i < N; i += length) {
+                for (size_t j = 0; j < m; ++j) {
+                    uint64_t u0 = a[i + j] % P;
+                    uint64_t u1 = static_cast<uint64_t>((static_cast<__uint128_t>(a[i + j + m] % P) * w[j]) % P);
+                    uint64_t u2 = static_cast<uint64_t>((static_cast<__uint128_t>(a[i + j + 2 * m] % P) * w2[j]) % P);
+
+                    uint64_t t0 = (u0 + u1 + u2) % P;
+                    uint64_t t1 = (u0 + (static_cast<__uint128_t>(u1) * w3_1) % P + (static_cast<__uint128_t>(u2) * w3_2) % P) % P;
+                    uint64_t t2 = (u0 + (static_cast<__uint128_t>(u1) * w3_2) % P + (static_cast<__uint128_t>(u2) * w3_1) % P) % P;
+
+                    a[i + j]         = t0;
+                    a[i + j + m]     = t1;
+                    a[i + j + 2 * m] = t2;
+                }
+            }
+        }
+
+        // Stage 3: Normalization for inverse transform
+        if (inverse) {
+            uint64_t inv_N = mod_inv(N);
+            for (size_t i = 0; i < N; ++i) {
+                a[i] = static_cast<uint64_t>((static_cast<__uint128_t>(a[i]) * inv_N) % P);
+            }
+        }
+    }
+
+    static std::vector<uint64_t> forward(const std::vector<uint64_t>& in) {
+        std::vector<uint64_t> res = in;
+        transform_inplace(res, false);
+        return res;
+    }
+
+    static std::vector<uint64_t> inverse(const std::vector<uint64_t>& in) {
+        std::vector<uint64_t> res = in;
+        transform_inplace(res, true);
+        return res;
+    }
+
+    static std::vector<int64_t> convolve(const std::vector<int64_t>& a, const std::vector<int64_t>& b) {
+        if (a.empty() || b.empty()) return {};
+        size_t L = a.size() + b.size() - 1;
+        size_t N = 1;
+        while (N < L) N *= 3;
+
+        std::vector<uint64_t> A(N, 0);
+        std::vector<uint64_t> B(N, 0);
+        for (size_t i = 0; i < a.size(); ++i) {
+            int64_t v = a[i] % static_cast<int64_t>(P);
+            if (v < 0) v += static_cast<int64_t>(P);
+            A[i] = static_cast<uint64_t>(v);
+        }
+        for (size_t i = 0; i < b.size(); ++i) {
+            int64_t v = b[i] % static_cast<int64_t>(P);
+            if (v < 0) v += static_cast<int64_t>(P);
+            B[i] = static_cast<uint64_t>(v);
+        }
+
+        std::vector<uint64_t> FA = forward(A);
+        std::vector<uint64_t> FB = forward(B);
+        std::vector<uint64_t> FC(N);
+        for (size_t i = 0; i < N; ++i) {
+            FC[i] = static_cast<uint64_t>((static_cast<__uint128_t>(FA[i]) * FB[i]) % P);
+        }
+
+        std::vector<uint64_t> C = inverse(FC);
+        std::vector<int64_t> res(L);
+        for (size_t i = 0; i < L; ++i) {
+            uint64_t v = C[i];
+            if (v > P / 2) {
+                res[i] = static_cast<int64_t>(v) - static_cast<int64_t>(P);
+            } else {
+                res[i] = static_cast<int64_t>(v);
+            }
+        }
+        return res;
+    }
+};
+
+inline std::vector<uint64_t> ntt_radix3(const std::vector<uint64_t>& in) {
+    return Radix3NTT::forward(in);
+}
+
+inline std::vector<uint64_t> intt_radix3(const std::vector<uint64_t>& in) {
+    return Radix3NTT::inverse(in);
+}
+
+inline std::vector<int64_t> convolve_radix3_ntt(const std::vector<int64_t>& a, const std::vector<int64_t>& b) {
+    return Radix3NTT::convolve(a, b);
 }
 
 // ==============================================================================

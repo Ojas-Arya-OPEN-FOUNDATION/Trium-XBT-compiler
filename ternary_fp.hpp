@@ -207,6 +207,375 @@ constexpr inline __int128_t round_div_pow3_128(__int128_t val, int k) noexcept {
     return round_div_pow3_fast128(val, k);
 }
 
+// ==============================================================================
+// 1b. Multiplier-Free Balanced Ternary CORDIC Constants & Detail Functions
+// ==============================================================================
+
+// CORDIC Mathematical Constants
+constexpr double CORDIC_PI     = 3.141592653589793238462643383279502884;
+constexpr double CORDIC_TWO_PI = 6.283185307179586476925286766559005768;
+constexpr double CORDIC_PI_2   = 1.570796326794896619231321691639751442;
+constexpr double CORDIC_PI_4   = 0.785398163397448309615660845819875721;
+constexpr double CORDIC_LN3    = 1.098612288668109691395245231132844143;
+
+// Circular micro-angles theta_i = atan(3^-i) for i = 0..20
+constexpr std::array<double, 21> CORDIC_CIRC_THETA = {
+    7.853981633974482790e-01, // i = 0 (pi / 4)
+    3.217505543966421855e-01, // i = 1
+    1.106572211738956341e-01, // i = 2
+    3.702011587393002484e-02, // i = 3
+    1.234505184422448817e-02, // i = 4
+    4.115203107111478978e-03, // i = 5
+    1.371741252092227191e-03, // i = 6
+    4.572474026939744472e-04, // i = 7
+    1.524157890956372044e-04, // i = 8
+    5.080526338157843419e-05, // i = 9
+    1.693508780681130752e-05, // i = 10
+    5.645029269416799853e-06, // i = 11
+    1.881676423156699871e-06, // i = 12
+    6.272254743862246624e-07, // i = 13
+    2.090751581287659240e-07, // i = 14
+    6.969171937625620355e-08, // i = 15
+    2.323057312541876981e-08, // i = 16
+    7.743524375139591591e-09, // i = 17
+    2.581174791713197059e-09, // i = 18
+    8.603915972377323531e-10, // i = 19
+    2.867971990792441349e-10  // i = 20
+};
+
+// Circular scale factors 1 / sqrt(1 + 3^(-2i)) for i = 0..20
+constexpr std::array<double, 21> CORDIC_CIRC_K = {
+    7.071067811865474617e-01, // i = 0
+    9.486832980505137680e-01, // i = 1
+    9.938837346736189016e-01, // i = 2
+    9.993148337667671077e-01, // i = 3
+    9.999238008152206980e-01, // i = 4
+    9.999915325636431485e-01, // i = 5
+    9.999990591631161552e-01, // i = 6
+    9.999998954624373937e-01, // i = 7
+    9.999999883847136006e-01, // i = 8
+    9.999999987094125853e-01, // i = 9
+    9.999999998566013737e-01, // i = 10
+    9.999999999840669673e-01, // i = 11
+    9.999999999982296384e-01, // i = 12
+    9.999999999998032685e-01, // i = 13
+    9.999999999999782396e-01, // i = 14
+    9.999999999999975575e-01, // i = 15
+    9.999999999999997780e-01, // i = 16
+    1.000000000000000000e+00, // i = 17
+    1.000000000000000000e+00, // i = 18
+    1.000000000000000000e+00, // i = 19
+    1.000000000000000000e+00  // i = 20
+};
+
+// Hyperbolic iteration sequence: i = 1, 1, 2, 3, ..., 20 (21 steps)
+constexpr std::array<int, 21> CORDIC_HYP_SEQ = {
+    1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+};
+
+// Hyperbolic micro-angles theta^H_i = artanh(3^-i) for sequence i = 1, 1, 2..20
+constexpr std::array<double, 21> CORDIC_HYP_THETA = {
+    3.465735902799725876e-01, // seq 0 (i = 1)
+    3.465735902799725876e-01, // seq 1 (i = 1)
+    1.115717756571049657e-01, // seq 2 (i = 2)
+    3.705398607686091750e-02, // seq 3 (i = 3)
+    1.234630629518581636e-02, // seq 4 (i = 4)
+    4.115249568257721771e-03, // seq 5 (i = 5)
+    1.371742972875416959e-03, // seq 6 (i = 6)
+    4.572474026939744472e-04, // seq 7 (i = 7)
+    1.524157914561913665e-04, // seq 8 (i = 8)
+    5.080526346899224790e-05, // seq 9 (i = 9)
+    1.693508781012337237e-05, // seq 10 (i = 10)
+    5.645029269619373712e-06, // seq 11 (i = 11)
+    1.881676423133759678e-06, // seq 12 (i = 12)
+    6.272254743877697564e-07, // seq 13 (i = 13)
+    2.090751581055819175e-07, // seq 14 (i = 14)
+    6.969171931243800169e-08, // seq 15 (i = 15)
+    2.323057303623466749e-08, // seq 16 (i = 16)
+    7.743524317306160569e-09, // seq 17 (i = 17)
+    2.581174822767747215e-09, // seq 18 (i = 18)
+    8.603916460772305399e-10, // seq 19 (i = 19)
+    2.867972525310162694e-10  // seq 20 (i = 20)
+};
+
+// Hyperbolic scale factors 1 / sqrt(1 - 3^(-2i)) for sequence i = 1, 1, 2..20
+constexpr std::array<double, 21> CORDIC_HYP_K = {
+    1.060660171779821193e+00, // seq 0 (i = 1)
+    1.060660171779821193e+00, // seq 1 (i = 1)
+    1.006230589874905323e+00, // seq 2 (i = 2)
+    1.000686577492486684e+00, // seq 3 (i = 3)
+    1.000076216607709512e+00, // seq 4 (i = 4)
+    1.000008467651454680e+00, // seq 5 (i = 5)
+    1.000000940839539165e+00, // seq 6 (i = 6)
+    1.000000104537595469e+00, // seq 7 (i = 7)
+    1.000000011615286732e+00, // seq 8 (i = 8)
+    1.000000001290587415e+00, // seq 9 (i = 9)
+    1.000000000143398626e+00, // seq 10 (i = 10)
+    1.000000000015933255e+00, // seq 11 (i = 11)
+    1.000000000001770362e+00, // seq 12 (i = 12)
+    1.000000000000196732e+00, // seq 13 (i = 13)
+    1.000000000000021982e+00, // seq 14 (i = 14)
+    1.000000000000002442e+00, // seq 15 (i = 15)
+    1.000000000000000444e+00, // seq 16 (i = 16)
+    1.000000000000000222e+00, // seq 17 (i = 17)
+    1.000000000000000000e+00, // seq 18 (i = 18)
+    1.000000000000000000e+00, // seq 19 (i = 19)
+    1.000000000000000000e+00  // seq 20 (i = 20)
+};
+
+// Powers of 3 as double for O(1) multiplier-free step division:
+constexpr std::array<double, 21> POW3_DOUBLE = []() constexpr {
+    std::array<double, 21> arr{};
+    double p = 1.0;
+    for (int i = 0; i < 21; ++i) {
+        arr[i] = p;
+        p *= 3.0;
+    }
+    return arr;
+}();
+
+constexpr std::array<double, 21> POW3_INV_DOUBLE = []() constexpr {
+    std::array<double, 21> arr{};
+    double p = 1.0;
+    for (int i = 0; i < 21; ++i) {
+        arr[i] = 1.0 / p;
+        p *= 3.0;
+    }
+    return arr;
+}();
+
+// 3-trit initial seed lookup for Householder cubic reciprocal:
+// For D in [5/9, 13/9], index = round(D * 9) - 5
+constexpr std::array<double, 9> HOUSEHOLDER_SEED_TABLE = {
+    9.0 / 5.0,  // v = 5
+    9.0 / 6.0,  // v = 6
+    9.0 / 7.0,  // v = 7
+    9.0 / 8.0,  // v = 8
+    9.0 / 9.0,  // v = 9
+    9.0 / 10.0, // v = 10
+    9.0 / 11.0, // v = 11
+    9.0 / 12.0, // v = 12
+    9.0 / 13.0  // v = 13
+};
+
+/**
+ * @brief Multiplier-Free Balanced Ternary Circular CORDIC:
+ * Computes sin(rad) and cos(rad) simultaneously.
+ * Uses base-3 angle symmetries: x mod 2pi, quadrant reflection, octant swap.
+ * Dynamic scale factor K = prod_{d_i != 0} 1 / sqrt(1 + 3^(-2i)).
+ */
+inline void cordic_circ_sincos(double rad, double& out_sin, double& out_cos) noexcept {
+    if (rad == 0.0) {
+        out_sin = 0.0;
+        out_cos = 1.0;
+        return;
+    }
+
+    bool neg_sin = false;
+    bool neg_cos = false;
+    bool swap_sc = false;
+
+    if (rad < 0.0) {
+        rad = -rad;
+        neg_sin = true;
+    }
+
+    // Range reduction mod 2*pi
+    rad = std::fmod(rad, CORDIC_TWO_PI);
+    if (rad < 0.0) rad += CORDIC_TWO_PI;
+
+    // Quadrant reflection
+    if (rad >= CORDIC_PI) {
+        rad -= CORDIC_PI;
+        neg_sin = !neg_sin;
+        neg_cos = !neg_cos;
+    }
+    if (rad >= CORDIC_PI_2) {
+        rad = CORDIC_PI - rad;
+        neg_cos = !neg_cos;
+    }
+
+    // Octant swap: sin(x) = cos(pi/2 - x)
+    if (rad > CORDIC_PI_4) {
+        rad = CORDIC_PI_2 - rad;
+        swap_sc = true;
+    }
+
+    // Balanced Ternary CORDIC in [0, pi/4]
+    double x = 1.0;
+    double y = 0.0;
+    double z = rad;
+    double scale = 1.0;
+
+    for (size_t i = 0; i < 21; ++i) {
+        double th = CORDIC_CIRC_THETA[i];
+        double thresh = 0.5 * th;
+        int d = 0;
+        if (z > thresh) {
+            d = 1;
+        } else if (z < -thresh) {
+            d = -1;
+        }
+
+        if (d != 0) {
+            scale *= CORDIC_CIRC_K[i];
+            double step = POW3_INV_DOUBLE[i];
+            double x_new = x - d * (step * y);
+            double y_new = y + d * (step * x);
+            x = x_new;
+            y = y_new;
+            z -= d * th;
+        }
+    }
+
+    double c = x * scale;
+    double s = y * scale;
+
+    // Small angle residual rotation: cos(z) ~ 1 - z^2/2, sin(z) ~ z
+    double cz = 1.0 - 0.5 * z * z;
+    double sz = z;
+    double c_rot = c * cz - s * sz;
+    double s_rot = s * cz + c * sz;
+
+    if (swap_sc) {
+        std::swap(s_rot, c_rot);
+    }
+    out_sin = neg_sin ? -s_rot : s_rot;
+    out_cos = neg_cos ? -c_rot : c_rot;
+}
+
+/**
+ * @brief Helper for CORDIC atan2 octant: computes atan(y/x) for 0 <= y <= x.
+ */
+inline double cordic_atan_octant(double y, double x) noexcept {
+    double cur_x = x;
+    double cur_y = y;
+    double z = 0.0;
+    for (size_t i = 0; i < 21; ++i) {
+        double step = POW3_INV_DOUBLE[i];
+        double target = step * cur_x;
+        double thresh = 0.5 * target;
+        int d = 0;
+        if (cur_y > thresh) d = 1;
+        else if (cur_y < -thresh) d = -1;
+        if (d != 0) {
+            double x_new = cur_x + d * (step * cur_y);
+            double y_new = cur_y - d * target;
+            cur_x = x_new;
+            cur_y = y_new;
+            z += d * CORDIC_CIRC_THETA[i];
+        }
+    }
+    double yx = cur_y / cur_x;
+    z += yx - (yx * yx * yx) / 3.0;
+    return z;
+}
+
+/**
+ * @brief Multiplier-Free Balanced Ternary CORDIC atan2(y, x).
+ */
+inline double cordic_circ_atan2(double y, double x) noexcept {
+    if (x == 0.0 && y == 0.0) return 0.0;
+    if (x == 0.0) return (y > 0.0) ? CORDIC_PI_2 : -CORDIC_PI_2;
+    if (x > 0.0) {
+        if (y >= 0.0) {
+            return (y <= x) ? cordic_atan_octant(y, x) : (CORDIC_PI_2 - cordic_atan_octant(x, y));
+        } else {
+            double ay = -y;
+            return (ay <= x) ? -cordic_atan_octant(ay, x) : -(CORDIC_PI_2 - cordic_atan_octant(x, ay));
+        }
+    } else {
+        double ax = -x;
+        if (y >= 0.0) {
+            return (y <= ax) ? (CORDIC_PI - cordic_atan_octant(y, ax)) : (CORDIC_PI_2 + cordic_atan_octant(ax, y));
+        } else {
+            double ay = -y;
+            return (ay <= ax) ? -(CORDIC_PI - cordic_atan_octant(ay, ax)) : -(CORDIC_PI_2 + cordic_atan_octant(ax, ay));
+        }
+    }
+}
+
+/**
+ * @brief Multiplier-Free Balanced Ternary Hyperbolic CORDIC:
+ * Computes sinh(r) and cosh(r) simultaneously for r in [-ln(3)/2, ln(3)/2].
+ * Iteration sequence: i = 1, 1, 2, 3, ..., 20.
+ */
+inline void cordic_hyp_sincos(double r, double& out_sinh, double& out_cosh) noexcept {
+    if (r == 0.0) {
+        out_sinh = 0.0;
+        out_cosh = 1.0;
+        return;
+    }
+
+    double x = 1.0;
+    double y = 0.0;
+    double z = r;
+    double scale = 1.0;
+
+    for (size_t idx = 0; idx < 21; ++idx) {
+        int i = CORDIC_HYP_SEQ[idx];
+        double th = CORDIC_HYP_THETA[idx];
+        double thresh = 0.5 * th;
+        int d = 0;
+        if (z > thresh) d = 1;
+        else if (z < -thresh) d = -1;
+
+        if (d != 0) {
+            scale *= CORDIC_HYP_K[idx];
+            double step = POW3_INV_DOUBLE[static_cast<size_t>(i)];
+            double x_new = x + d * (step * y);
+            double y_new = y + d * (step * x);
+            x = x_new;
+            y = y_new;
+            z -= d * th;
+        }
+    }
+
+    double c0 = x * scale;
+    double s0 = y * scale;
+
+    // Small angle hyperbolic residual: cosh(z) and sinh(z)
+    double z2 = z * z;
+    double cz = 1.0 + z2 * (0.5 + z2 * (1.0 / 24.0 + z2 * (1.0 / 720.0)));
+    double sz = z * (1.0 + z2 * (1.0 / 6.0 + z2 * (1.0 / 120.0 + z2 * (1.0 / 5040.0))));
+
+    out_cosh = c0 * cz + s0 * sz;
+    out_sinh = s0 * cz + c0 * sz;
+}
+
+/**
+ * @brief Multiplier-Free Balanced Ternary Hyperbolic CORDIC Natural Logarithm:
+ * Computes ln(M) for M in [1/2, 3/2] in vectoring mode.
+ */
+inline double cordic_hyp_ln(double M) noexcept {
+    double x = M + 1.0;
+    double y = M - 1.0;
+    double z = 0.0;
+
+    for (size_t idx = 0; idx < 21; ++idx) {
+        int i = CORDIC_HYP_SEQ[idx];
+        double step = POW3_INV_DOUBLE[static_cast<size_t>(i)];
+        double target = step * x;
+        double thresh = 0.5 * target;
+        int d = 0;
+        if (y > thresh) d = 1;
+        else if (y < -thresh) d = -1;
+
+        if (d != 0) {
+            double x_new = x - d * (step * y);
+            double y_new = y - d * (step * x);
+            x = x_new;
+            y = y_new;
+            z += d * CORDIC_HYP_THETA[idx];
+        }
+    }
+
+    double yx = y / x;
+    double yx2 = yx * yx;
+    double residual = 2.0 * yx * (1.0 + yx2 * (1.0 / 3.0 + yx2 * (1.0 / 5.0 + yx2 * (1.0 / 7.0))));
+    return 2.0 * z + residual;
+}
+
 } // namespace fp_detail
 
 // ==============================================================================
@@ -833,6 +1202,204 @@ public:
     }
 
     // --------------------------------------------------------------------------
+    // 3rd-Order Householder Cubic-Convergence Reciprocal & Division
+    // --------------------------------------------------------------------------
+
+    /**
+     * @brief 3rd-Order Householder Cubic-Convergence Reciprocal: computes 1 / (*this).
+     * Normalized mantissa D in [1/2, 3/2], 3-trit initial seed X_0,
+     * R_k = 1 - D * X_k, X_{k+1} = X_k * (1 + R_k + R_k^2).
+     * Triples accurate trits per step (R_{k+1} = R_k^3).
+     */
+    BTFP reciprocal_householder() const {
+        if (is_zero()) {
+            throw std::domain_error("Division by zero in BTFP");
+        }
+        int8_t s = sign();
+        int64_t abs_m = (m_mantissa < 0) ? -m_mantissa : m_mantissa;
+        int32_t e_scale = m_exponent + (MantissaTrits - 1);
+
+        // Normalized mantissa D in [1/2, 3/2]
+        BTFP D(abs_m, -(MantissaTrits - 1));
+
+        // 3-trit initial seed lookup based on leading trits
+        double d_val = D.to_double();
+        int v = static_cast<int>(std::round(d_val * 9.0));
+        v = std::clamp(v, 5, 13);
+        double seed_val = fp_detail::HOUSEHOLDER_SEED_TABLE[static_cast<size_t>(v - 5)];
+        BTFP X = BTFP::from_double(seed_val);
+
+        // Householder iteration: R = 1 - D * X, X = X * (1 + R + R^2)
+        BTFP one(1);
+        int steps = (MantissaTrits <= 9) ? 1 : ((MantissaTrits <= 27) ? 2 : 3);
+        for (int k = 0; k < steps; ++k) {
+            BTFP R = one.sub(D.mul(X));
+            BTFP R2 = R.mul(R);
+            BTFP factor = one.add(R).add(R2);
+            X = X.mul(factor);
+        }
+
+        // Apply exponent shift and sign
+        BTFP res(X.mantissa(), X.exponent() - e_scale);
+        return (s < 0) ? -res : res;
+    }
+
+    /**
+     * @brief 3rd-Order Householder Cubic-Convergence Division: returns *this * b.reciprocal_householder().
+     */
+    BTFP div_householder(const BTFP& b) const {
+        if (b.is_zero()) {
+            throw std::domain_error("Division by zero in BTFP");
+        }
+        if (is_zero()) {
+            return BTFP(0, 0);
+        }
+        return mul(b.reciprocal_householder());
+    }
+
+    // --------------------------------------------------------------------------
+    // Multiplier-Free Balanced Ternary CORDIC Transcendental Functions
+    // --------------------------------------------------------------------------
+
+    /**
+     * @brief Sine function via Balanced Ternary CORDIC in [0, pi/4].
+     */
+    BTFP sin() const {
+        if (is_zero()) return BTFP(0, 0);
+        double s = 0.0, c = 0.0;
+        fp_detail::cordic_circ_sincos(to_double(), s, c);
+        return BTFP::from_double(s);
+    }
+
+    /**
+     * @brief Cosine function via Balanced Ternary CORDIC in [0, pi/4].
+     */
+    BTFP cos() const {
+        if (is_zero()) return BTFP(1);
+        double s = 0.0, c = 0.0;
+        fp_detail::cordic_circ_sincos(to_double(), s, c);
+        return BTFP::from_double(c);
+    }
+
+    /**
+     * @brief Tangent function via Balanced Ternary CORDIC: tan(x) = sin(x) / cos(x).
+     */
+    BTFP tan() const {
+        if (is_zero()) return BTFP(0, 0);
+        double s = 0.0, c = 0.0;
+        fp_detail::cordic_circ_sincos(to_double(), s, c);
+        if (std::abs(c) < 1e-15) {
+            throw std::domain_error("BTFP::tan: tangent undefined at odd multiples of pi/2");
+        }
+        return BTFP::from_double(s / c);
+    }
+
+    /**
+     * @brief Multiplier-Free Balanced Ternary CORDIC atan2(y, x).
+     */
+    static BTFP atan2(const BTFP& y, const BTFP& x) {
+        if (x.is_zero() && y.is_zero()) return BTFP(0, 0);
+        double rad = fp_detail::cordic_circ_atan2(y.to_double(), x.to_double());
+        return BTFP::from_double(rad);
+    }
+
+    /**
+     * @brief Exponential function via base-3 hyperbolic CORDIC:
+     * u = k * ln(3) + r, e^u = 3^k * e^r, where multiplying by 3^k is simply
+     * adding k to the exponent in BTFP.
+     * e^r = cosh(r) + sinh(r) computed via hyperbolic CORDIC (sequence i = 1, 1, 2..20).
+     */
+    BTFP exp() const {
+        if (is_zero()) return BTFP(1);
+        double u = to_double();
+        double k_est = std::round(u / fp_detail::CORDIC_LN3);
+        double r = u - k_est * fp_detail::CORDIC_LN3;
+
+        double sh = 0.0, ch = 0.0;
+        fp_detail::cordic_hyp_sincos(r, sh, ch);
+        double er_val = ch + sh;
+
+        BTFP e_r = BTFP::from_double(er_val);
+        int64_t k = static_cast<int64_t>(k_est);
+        BTFP res(e_r.mantissa(), static_cast<int32_t>(e_r.exponent() + k));
+        return res;
+    }
+
+    /**
+     * @brief Natural logarithm via base-3 hyperbolic CORDIC:
+     * For x = M * 3^E with M in [1/2, 3/2], ln(x) = ln(M) + E * ln(3).
+     */
+    BTFP ln() const {
+        if (m_mantissa <= 0) {
+            throw std::domain_error("BTFP::ln: non-positive argument");
+        }
+        if (m_mantissa == 1 && m_exponent == 0) {
+            return BTFP(0, 0);
+        }
+
+        int32_t e_prime = m_exponent + (MantissaTrits - 1);
+        double m_norm = static_cast<double>(m_mantissa) / static_cast<double>(fp_detail::pow3_128(MantissaTrits - 1));
+        double ln_m = fp_detail::cordic_hyp_ln(m_norm);
+        double total_ln = ln_m + static_cast<double>(e_prime) * fp_detail::CORDIC_LN3;
+        return BTFP::from_double(total_ln);
+    }
+
+    /**
+     * @brief Natural logarithm alias.
+     */
+    BTFP log() const {
+        return ln();
+    }
+
+    /**
+     * @brief Hyperbolic sine via Balanced Ternary CORDIC.
+     */
+    BTFP sinh() const {
+        if (is_zero()) return BTFP(0, 0);
+        double u = to_double();
+        if (std::abs(u) <= 0.5 * fp_detail::CORDIC_LN3) {
+            double sh = 0.0, ch = 0.0;
+            fp_detail::cordic_hyp_sincos(u, sh, ch);
+            return BTFP::from_double(sh);
+        }
+        BTFP ep = exp();
+        BTFP em = (-*this).exp();
+        return (ep.sub(em)).mul(BTFP::from_double(0.5));
+    }
+
+    /**
+     * @brief Hyperbolic cosine via Balanced Ternary CORDIC.
+     */
+    BTFP cosh() const {
+        if (is_zero()) return BTFP(1);
+        double u = to_double();
+        if (std::abs(u) <= 0.5 * fp_detail::CORDIC_LN3) {
+            double sh = 0.0, ch = 0.0;
+            fp_detail::cordic_hyp_sincos(u, sh, ch);
+            return BTFP::from_double(ch);
+        }
+        BTFP ep = exp();
+        BTFP em = (-*this).exp();
+        return (ep.add(em)).mul(BTFP::from_double(0.5));
+    }
+
+    /**
+     * @brief Hyperbolic tangent via Balanced Ternary CORDIC.
+     */
+    BTFP tanh() const {
+        if (is_zero()) return BTFP(0, 0);
+        double u = to_double();
+        if (u > 25.0) return BTFP(1);
+        if (u < -25.0) return BTFP(-1);
+        if (std::abs(u) <= 0.5 * fp_detail::CORDIC_LN3) {
+            double sh = 0.0, ch = 0.0;
+            fp_detail::cordic_hyp_sincos(u, sh, ch);
+            return BTFP::from_double(sh / ch);
+        }
+        return sinh().div(cosh());
+    }
+
+    // --------------------------------------------------------------------------
     // Operator Overloads
     // --------------------------------------------------------------------------
 
@@ -951,6 +1518,61 @@ using BTFP32 = BTFP<20>;
  */
 using BTFP16T = BTFP<16>;
 using BTFP32T = BTFP<32>;
+
+// ==============================================================================
+// 4. Namespace-level Mathematical Functions for BTFP
+// ==============================================================================
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> sin(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.sin();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> cos(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.cos();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> tan(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.tan();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> atan2(const BTFP<MantissaTrits, ExponentTrits>& y,
+                                               const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return BTFP<MantissaTrits, ExponentTrits>::atan2(y, x);
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> sinh(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.sinh();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> cosh(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.cosh();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> tanh(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.tanh();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> exp(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.exp();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> ln(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.ln();
+}
+
+template <int MantissaTrits, int ExponentTrits>
+inline BTFP<MantissaTrits, ExponentTrits> log(const BTFP<MantissaTrits, ExponentTrits>& x) {
+    return x.ln();
+}
 
 } // namespace bt
 

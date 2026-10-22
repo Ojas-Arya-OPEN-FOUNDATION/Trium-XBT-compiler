@@ -218,13 +218,31 @@ inline TritWord64 rtl_base243_decoder(uint8_t packed_byte) noexcept {
     return TritWord64(out_p, out_n);
 }
 
+/**
+ * @brief Bit-accurate model of `module xbt_aoi22_planar_dot64` in SystemVerilog.
+ * Computes product rails via CMOS compound AOI22 gates:
+ *   prod_p_bar = ~((a.P & b.P) | (a.N & b.N))
+ *   prod_n_bar = ~((a.P & b.N) | (a.N & b.P))
+ * followed by parallel popcount dot product.
+ */
+inline int64_t rtl_aoi22_planar_dot64(const TritWord64& a, const TritWord64& b,
+                                      TritWord64* prod_out = nullptr) noexcept {
+    uint64_t prod_p = (a.P & b.P) | (a.N & b.N);
+    uint64_t prod_n = (a.P & b.N) | (a.N & b.P);
+    if (prod_out) {
+        *prod_out = TritWord64(prod_p, prod_n);
+    }
+    return static_cast<int64_t>(TritWord64::popcount64(prod_p)) -
+           static_cast<int64_t>(TritWord64::popcount64(prod_n));
+}
+
 // ==============================================================================
 // 3. Cycle-Accurate RISC-V "Xbt" Coprocessor & Register File
 // ==============================================================================
 
 class RiscvXbtCoprocessor {
 public:
-    TritWord64 treg[32]{}; // 32 Dual-Rail 128-bit ternary registers (t0..t31)
+    TritWord64 treg[32]{}; // 32 Dual-Rail 128-bit ternary registers (tr0..tr31)
     int64_t    xreg[32]{}; // 32 Scalar 64-bit RISC-V integer registers (x0..x31)
     TritWord64 last_carry{0, 0}; // Auxiliary carry output latch from BTHA / KSADD
 
@@ -232,6 +250,15 @@ public:
     uint64_t cycles{0};
     uint64_t instructions_retired{0};
     uint64_t zero_gate_negations{0};
+
+    // Systolic BTFA Compressor Pipeline Stages
+    struct SystolicBtfaStage {
+        TritWord64 sum{0, 0};
+        TritWord64 carry{0, 0};
+        bool valid{false};
+    };
+    static constexpr size_t SYSTOLIC_STAGES = 2;
+    std::array<SystolicBtfaStage, SYSTOLIC_STAGES> systolic_pipeline{};
 
     RiscvXbtCoprocessor() noexcept {
         reset();
@@ -246,6 +273,59 @@ public:
         cycles = 0;
         instructions_retired = 0;
         zero_gate_negations = 0;
+        flush_systolic_pipeline();
+    }
+
+    /**
+     * @brief Read from 32 dual-rail ternary register file (tr0..tr31).
+     * Supports 0-gate wire-swap negation bypass (rs_neg).
+     * Register tr0 is hardwired to 0 (P=0, N=0).
+     */
+    TritWord64 read_tr(size_t idx, bool rs_neg = false) noexcept {
+        if (idx >= 32) return TritWord64(0, 0);
+        TritWord64 val = (idx == 0) ? TritWord64(0, 0) : treg[idx];
+        if (rs_neg) {
+            zero_gate_negations += 1;
+            return TritWord64(val.N, val.P);
+        }
+        return val;
+    }
+
+    /**
+     * @brief Write to 32 dual-rail ternary register file (tr0..tr31).
+     * Writes to tr0 are discarded (hardwired to 0).
+     */
+    void write_tr(size_t idx, const TritWord64& val) noexcept {
+        if (idx > 0 && idx < 32) {
+            treg[idx] = val;
+        }
+    }
+
+    /**
+     * @brief Advance the pipelined Systolic BTFA compressor unit by 1 clock cycle.
+     * Compresses 3 dual-rail inputs (A, B, C) via BTFA into (Sum, Carry)
+     * and streams through the pipeline stages with zero carry ripples.
+     */
+    SystolicBtfaStage step_systolic_btfa(const TritWord64& a, const TritWord64& b,
+                                        const TritWord64& c, bool valid_in = true) noexcept {
+        AdderOutput fa = BTFA(a, b, c);
+
+        for (size_t s = SYSTOLIC_STAGES - 1; s > 0; --s) {
+            systolic_pipeline[s] = systolic_pipeline[s - 1];
+        }
+        systolic_pipeline[0] = SystolicBtfaStage{ fa.Sum, fa.Carry, valid_in };
+
+        cycles += 1;
+        if (valid_in) {
+            instructions_retired += 1;
+        }
+        return systolic_pipeline[SYSTOLIC_STAGES - 1];
+    }
+
+    void flush_systolic_pipeline() noexcept {
+        for (auto& stage : systolic_pipeline) {
+            stage = SystolicBtfaStage{};
+        }
     }
 
     /**

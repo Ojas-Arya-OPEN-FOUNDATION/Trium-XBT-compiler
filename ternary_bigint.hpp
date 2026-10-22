@@ -236,6 +236,102 @@ public:
     }
 
     /**
+     * @brief Symmetric Toom-3 Multiplication.
+     * Evaluates polynomials A(Y) and B(Y) of degree 2 at points {0, 1, -1, -2, inf},
+     * multiplies the 5 sub-blocks, and interpolates using Bodrato's exact Toom-3 formulas.
+     * Division by 2 and 3 in Bodrato interpolation is guaranteed exact in balanced ternary.
+     */
+    static TritBigInt toom3_mul(const TritBigInt& a, const TritBigInt& b) noexcept {
+        if (a.is_zero() || b.is_zero()) {
+            return TritBigInt{};
+        }
+
+        int top_a = a.highest_non_zero_trit();
+        int top_b = b.highest_non_zero_trit();
+        int k = std::max(top_a, top_b) + 1;
+
+        // Base case: for small numbers or when Toom-3 would exceed word capacity, use shift-and-add
+        size_t m = static_cast<size_t>((k + 2) / 3);
+        if (k <= 27 || 4 * m + 4 >= 64 * NumWords) {
+            return mul(a, b);
+        }
+
+        // Slice a and b into 3 degree-0 blocks: a0 + a1 * 3^m + a2 * 3^(2m)
+        TritBigInt a0{}, a1{}, a2{};
+        TritBigInt b0{}, b1{}, b2{};
+        for (size_t i = 0; i < m; ++i) {
+            a0.setTrit(i, a.getTrit(i));
+            if (m + i < 64 * NumWords) a1.setTrit(i, a.getTrit(m + i));
+            if (2 * m + i < 64 * NumWords) a2.setTrit(i, a.getTrit(2 * m + i));
+
+            b0.setTrit(i, b.getTrit(i));
+            if (m + i < 64 * NumWords) b1.setTrit(i, b.getTrit(m + i));
+            if (2 * m + i < 64 * NumWords) b2.setTrit(i, b.getTrit(2 * m + i));
+        }
+
+        // Evaluation at {0, 1, -1, -2, inf}
+        // u(0) = a0
+        // u(1) = a0 + a1 + a2
+        // u(-1) = a0 - a1 + a2
+        // u(-2) = a0 - 2*a1 + 4*a2 = 2 * (2*a2 - a1) + a0
+        // u(inf) = a2
+        TritBigInt u0 = a0;
+        TritBigInt u1 = add(add(a0, a1), a2);
+        TritBigInt um1 = add(sub(a0, a1), a2);
+        TritBigInt ta = sub(add(a2, a2), a1);
+        TritBigInt um2 = add(add(ta, ta), a0);
+        TritBigInt uinf = a2;
+
+        TritBigInt v0 = b0;
+        TritBigInt v1 = add(add(b0, b1), b2);
+        TritBigInt vm1 = add(sub(b0, b1), b2);
+        TritBigInt tb = sub(add(b2, b2), b1);
+        TritBigInt vm2 = add(add(tb, tb), b0);
+        TritBigInt vinf = b2;
+
+        // 5 Pointwise Sub-Multiplications (recursive Toom-3)
+        TritBigInt w0 = toom3_mul(u0, v0);
+        TritBigInt w1 = toom3_mul(u1, v1);
+        TritBigInt wm1 = toom3_mul(um1, vm1);
+        TritBigInt wm2 = toom3_mul(um2, vm2);
+        TritBigInt winf = toom3_mul(uinf, vinf);
+
+        // Bodrato exact Toom-3 interpolation:
+        // r0 = w0
+        // rinf = winf
+        // r1 = (w1 - wm1) / 2
+        // r2 = (w1 + wm1) / 2 - r0
+        // rm2 = (wm2 - w1) / 3
+        // diff = r2 - rm2
+        // c3 = 2 * rinf - (r1 - diff) / 2
+        // c1 = r1 - c3
+        // c2 = r2 - rinf
+        // c0 = r0
+        // c4 = rinf
+        TritBigInt two = from_int64(2);
+        TritBigInt three = from_int64(3);
+        TritBigInt r0 = w0;
+        TritBigInt rinf = winf;
+        TritBigInt r1 = divmod(sub(w1, wm1), two).first;
+        TritBigInt r2 = sub(divmod(add(w1, wm1), two).first, r0);
+        TritBigInt rm2 = divmod(sub(wm2, w1), three).first;
+        TritBigInt diff = sub(r2, rm2);
+        TritBigInt c3 = sub(add(rinf, rinf), divmod(sub(r1, diff), two).first);
+        TritBigInt c1 = sub(r1, c3);
+        TritBigInt c2 = sub(r2, rinf);
+        TritBigInt c0 = r0;
+        TritBigInt c4 = rinf;
+
+        // Recombine: C(Y) = c0 + c1*Y + c2*Y^2 + c3*Y^3 + c4*Y^4 where Y = 3^m
+        TritBigInt res = add(c0,
+            add(c1.shift_trits_left(m),
+            add(c2.shift_trits_left(2 * m),
+            add(c3.shift_trits_left(3 * m),
+                c4.shift_trits_left(4 * m)))));
+        return res;
+    }
+
+    /**
      * @brief Exact Balanced Ternary Euclidean Division: a = q * b + r
      * Satisfies centered minimal-magnitude remainder 2 * |r| <= |b| and
      * odd symmetry: divmod(-a, b) = (-q, -r), divmod(a, -b) = (-q, r).
@@ -294,6 +390,142 @@ public:
             Q = -Q;
         }
         return {Q, R};
+    }
+
+    /**
+     * @brief Householder 3rd-Order Cubic Reciprocal & Division for TritBigInt.
+     * Computes quotient Q and centered remainder R such that a = Q * b + R
+     * using the 3rd-order reciprocal iteration X_{k+1} = X_k * (1 + R_k + R_k^2)
+     * where R_k = 1 - b * X_k.
+     * Converges cubically (triples the number of correct trits per step).
+     */
+    static std::pair<TritBigInt, TritBigInt> divmod_householder(const TritBigInt& a, const TritBigInt& b) {
+        if (b.is_zero()) {
+            throw std::domain_error("TritBigInt::divmod_householder: division by zero");
+        }
+        if (a.is_zero()) {
+            return {TritBigInt{}, TritBigInt{}};
+        }
+
+        const int sign_a = a.sign();
+        const int sign_b = b.sign();
+        const TritBigInt A = a.abs();
+        const TritBigInt B = b.abs();
+
+        int top_a = A.highest_non_zero_trit();
+        int top_b = B.highest_non_zero_trit();
+
+        // If A < B:
+        if (A < B) {
+            TritBigInt two_A = add(A, A);
+            TritBigInt Q{}, R{};
+            if (two_A > B) {
+                Q = from_int64(1);
+                R = sub(A, B);
+            } else {
+                Q = TritBigInt{};
+                R = A;
+            }
+            if (sign_a < 0) {
+                Q = -Q;
+                R = -R;
+            }
+            if (sign_b < 0) {
+                Q = -Q;
+            }
+            return {Q, R};
+        }
+
+        // For small quotient widths, standard digit recurrence is exact and optimal
+        int q_trits = top_a - top_b + 1;
+        if (q_trits <= 6) {
+            return divmod(a, b);
+        }
+
+        // Householder 3rd-order reciprocal iteration:
+        // Scale precision F trits: capped at 18 trits to ensure no intermediate overflow
+        size_t F = static_cast<size_t>(std::min(q_trits + 4, 18));
+        int shift_B = top_b - static_cast<int>(F);
+
+        TritBigInt B_norm{};
+        if (shift_B > 0) {
+            B_norm = B.shift_trits_right(static_cast<size_t>(shift_B));
+        } else if (shift_B < 0) {
+            B_norm = B.shift_trits_left(static_cast<size_t>(-shift_B));
+        } else {
+            B_norm = B;
+        }
+
+        // S = 3^F, S^2 = 3^(2F)
+        TritBigInt S2 = from_int64(1).shift_trits_left(2 * F);
+
+        // Initial seed X_0 from top 3 trits
+        int top_norm = B_norm.highest_non_zero_trit();
+        size_t seed_shift = (top_norm > 2) ? static_cast<size_t>(top_norm - 2) : 0;
+        TritBigInt B_seed = B_norm.shift_trits_right(seed_shift);
+        TritBigInt X = divmod(from_int64(1).shift_trits_left(2 * F - seed_shift), B_seed).first;
+
+        // Cubic Householder reciprocal iterations: X_{k+1} = X_k * (1 + R_k + R_k^2)
+        // Scaled: R = S^2 - B_norm * X
+        // term1 = (X * R) / S^2
+        // term2 = (X * R^2) / S^4
+        // X_next = X + term1 + term2
+        TritBigInt S_tol = from_int64(1).shift_trits_left(F);
+        for (int iter = 0; iter < 4; ++iter) {
+            TritBigInt BX = mul(B_norm, X);
+            TritBigInt R = sub(S2, BX);
+
+            TritBigInt XR = mul(X, R);
+            TritBigInt term1 = XR.shift_trits_right(2 * F);
+
+            TritBigInt R2 = mul(R, R);
+            TritBigInt XR2 = mul(X, R2);
+            TritBigInt term2 = XR2.shift_trits_right(4 * F);
+
+            X = add(X, add(term1, term2));
+
+            if (R.abs() < S_tol) {
+                break;
+            }
+        }
+
+        // Q_approx = A * X / (S^2 * 3^shift_B)
+        TritBigInt AX = mul(A, X);
+        TritBigInt Q{};
+        if (shift_B >= 0) {
+            Q = AX.shift_trits_right(2 * F + static_cast<size_t>(shift_B));
+        } else {
+            Q = AX.shift_trits_left(static_cast<size_t>(-shift_B)).shift_trits_right(2 * F);
+        }
+
+        // Exact residual correction
+        TritBigInt rem = sub(A, mul(Q, B));
+        while (rem >= B) {
+            Q = add(Q, from_int64(1));
+            rem = sub(rem, B);
+        }
+        while (rem < TritBigInt{}) {
+            Q = sub(Q, from_int64(1));
+            rem = add(rem, B);
+        }
+
+        // Centered remainder condition: 2 * |rem| <= B
+        TritBigInt two_rem = add(rem, rem);
+        if (two_rem > B) {
+            Q = add(Q, from_int64(1));
+            rem = sub(rem, B);
+        }
+
+        // Restore signs
+        if (sign_a < 0) {
+            Q = -Q;
+            rem = -rem;
+        }
+        if (sign_b < 0) {
+            Q = -Q;
+        }
+
+        return {Q, rem};
     }
 
     /**
@@ -417,6 +649,16 @@ public:
 // Aliases for 256-trit and 512-trit BigInts
 using TritBigInt256 = TritBigInt<4>; // 256 trits ~= 405.7 bits
 using TritBigInt512 = TritBigInt<8>; // 512 trits ~= 811.5 bits
+
+template <size_t NumWords>
+inline TritBigInt<NumWords> toom3_mul(const TritBigInt<NumWords>& a, const TritBigInt<NumWords>& b) noexcept {
+    return TritBigInt<NumWords>::toom3_mul(a, b);
+}
+
+template <size_t NumWords>
+inline std::pair<TritBigInt<NumWords>, TritBigInt<NumWords>> divmod_householder(const TritBigInt<NumWords>& a, const TritBigInt<NumWords>& b) {
+    return TritBigInt<NumWords>::divmod_householder(a, b);
+}
 
 template <size_t NumWords>
 inline std::ostream& operator<<(std::ostream& os, const TritBigInt<NumWords>& val) {

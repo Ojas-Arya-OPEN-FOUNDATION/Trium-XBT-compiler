@@ -23,6 +23,7 @@
 #define TERNARY_DENSE_ALGEBRA_HPP
 
 #include "ternary_core.hpp"
+#include "bt_backend_emitters.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -187,6 +188,38 @@ inline int64_t dotProduct64(const TritWord64& a, const TritWord64& b) noexcept {
     uint64_t N_prod = (a.P & b.N) | (a.N & b.P);
     return static_cast<int64_t>(TritWord64::popcount64(P_prod)) - 
            static_cast<int64_t>(TritWord64::popcount64(N_prod));
+}
+
+/**
+ * @brief Streaming dot product across arrays of TritWord64 using 9-to-2 CSA Popcount Contraction.
+ * Evaluates in chunks of 9 words via CSAContractor9to2::dot_product_9words,
+ * reducing popcounts from 18 to 8 per chunk. Remainder words (< 9) are handled via standard dotProduct64.
+ */
+inline int64_t dot_product_array_csa9(const TritWord64* a, const TritWord64* b, size_t num_words) noexcept {
+    int64_t total = 0;
+    const size_t chunks = num_words / 9;
+    const size_t rem = num_words % 9;
+
+    for (size_t c = 0; c < chunks; ++c) {
+        const size_t base = c * 9;
+        TritWord64 prod[9];
+        #pragma unroll
+        for (size_t k = 0; k < 9; ++k) {
+            const uint64_t ap = a[base + k].P;
+            const uint64_t an = a[base + k].N;
+            const uint64_t bp = b[base + k].P;
+            const uint64_t bn = b[base + k].N;
+            prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+        }
+        total += CSAContractor9to2::dot_product_9words(prod);
+    }
+
+    const size_t rem_start = chunks * 9;
+    for (size_t k = 0; k < rem; ++k) {
+        total += dotProduct64(a[rem_start + k], b[rem_start + k]);
+    }
+
+    return total;
 }
 
 /**
@@ -790,6 +823,113 @@ inline void gemm_autotuned(const TernaryMatrix& A, const TernaryMatrix& B, Dense
     DenseDualRailPlanes A_planes(A);
     DenseDualRailPlanes BT_planes(B.transpose());
     gemm_autotuned(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
+}
+
+/**
+ * @brief High-Performance Dual-Rail GEMM utilizing 9-to-2 CSA Popcount Contraction.
+ * Computes C = A * B, where B_T is the transposed matrix B (N x K_trits).
+ * Dimensions: A is M x K_trits, B_T is N x K_trits, C is M x N.
+ * Compresses inner products in 9-word blocks using CSAContractor9to2, reducing
+ * popcount instructions from 18 to 8 per chunk (55.6% reduction).
+ */
+template <typename DualRailPlanes = DenseDualRailPlanes>
+inline void gemm_csa9(const DualRailPlanes& A, const DualRailPlanes& B_T,
+                      std::vector<int64_t>& C, size_t M, size_t N, size_t K_trits) {
+    if (C.size() < M * N) {
+        C.resize(M * N, 0);
+    } else {
+        std::fill(C.begin(), C.begin() + static_cast<std::ptrdiff_t>(M * N), 0);
+    }
+    if (M == 0 || N == 0 || K_trits == 0) return;
+
+    const size_t K_words = (K_trits + 63) / 64;
+    size_t stride_A = K_words;
+    if constexpr (requires { A.words_per_row; }) {
+        if (A.words_per_row > 0) stride_A = A.words_per_row;
+    }
+    size_t stride_B = K_words;
+    if constexpr (requires { B_T.words_per_row; }) {
+        if (B_T.words_per_row > 0) stride_B = B_T.words_per_row;
+    }
+
+    const uint64_t* a_p_base = nullptr;
+    const uint64_t* a_n_base = nullptr;
+    if constexpr (requires { A.P(); }) {
+        a_p_base = A.P();
+        a_n_base = A.N();
+    } else if constexpr (requires { A.P.data(); }) {
+        a_p_base = A.P.data();
+        a_n_base = A.N.data();
+    }
+
+    const uint64_t* b_p_base = nullptr;
+    const uint64_t* b_n_base = nullptr;
+    if constexpr (requires { B_T.P(); }) {
+        b_p_base = B_T.P();
+        b_n_base = B_T.N();
+    } else if constexpr (requires { B_T.P.data(); }) {
+        b_p_base = B_T.P.data();
+        b_n_base = B_T.N.data();
+    }
+
+    const uint64_t tail_mask = (K_trits % 64 == 0) ? ~0ULL : ((1ULL << (K_trits % 64)) - 1ULL);
+    const size_t chunks = K_words / 9;
+    const size_t rem = K_words % 9;
+
+    for (size_t i = 0; i < M; ++i) {
+        const uint64_t* a_p = a_p_base + i * stride_A;
+        const uint64_t* a_n = a_n_base + i * stride_A;
+
+        for (size_t j = 0; j < N; ++j) {
+            const uint64_t* b_p = b_p_base + j * stride_B;
+            const uint64_t* b_n = b_n_base + j * stride_B;
+
+            int64_t acc = 0;
+
+            for (size_t c = 0; c < chunks; ++c) {
+                const size_t base = c * 9;
+                TritWord64 prod[9];
+                #pragma unroll
+                for (size_t k = 0; k < 9; ++k) {
+                    const size_t w = base + k;
+                    const uint64_t mask = (w + 1 == K_words) ? tail_mask : ~0ULL;
+                    const uint64_t ap = a_p[w] & mask;
+                    const uint64_t an = a_n[w] & mask;
+                    const uint64_t bp = b_p[w] & mask;
+                    const uint64_t bn = b_n[w] & mask;
+                    prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+                }
+                acc += CSAContractor9to2::dot_product_9words(prod);
+            }
+
+            const size_t rem_start = chunks * 9;
+            for (size_t k = 0; k < rem; ++k) {
+                const size_t w = rem_start + k;
+                const uint64_t mask = (w + 1 == K_words) ? tail_mask : ~0ULL;
+                const uint64_t ap = a_p[w] & mask;
+                const uint64_t an = a_n[w] & mask;
+                const uint64_t bp = b_p[w] & mask;
+                const uint64_t bn = b_n[w] & mask;
+                const uint64_t p_prod = (ap & bp) | (an & bn);
+                const uint64_t n_prod = (ap & bn) | (an & bp);
+                acc += static_cast<int64_t>(TritWord64::popcount64(p_prod)) -
+                       static_cast<int64_t>(TritWord64::popcount64(n_prod));
+            }
+
+            C[i * N + j] = acc;
+        }
+    }
+}
+
+/**
+ * @brief Convenience overload of gemm_csa9 for TernaryMatrix and DenseMatrixInt64.
+ */
+inline void gemm_csa9(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
+    assert(A.cols == B.rows);
+    assert(C.rows == A.rows && C.cols == B.cols);
+    DenseDualRailPlanes A_planes(A);
+    DenseDualRailPlanes BT_planes(B.transpose());
+    gemm_csa9(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
 }
 
 // ==============================================================================

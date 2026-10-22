@@ -41,6 +41,8 @@
 #include <chrono>
 #include <atomic>
 #include <stdexcept>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #if defined(__ARM_NEON) || defined(__aarch64__)
 #include <arm_neon.h>
@@ -930,6 +932,13 @@ public:
                 }
 
                 if (is_zero) {
+#if !defined(_WIN32)
+#if defined(MADV_DONTNEED)
+                    ::madvise(page, PAGE_SIZE, MADV_DONTNEED);
+#elif defined(MADV_FREE)
+                    ::madvise(page, PAGE_SIZE, MADV_FREE);
+#endif
+#endif
                     free_aligned(page);
                     dir->pages[l2] = nullptr;
                     if (physical_committed_ >= PAGE_SIZE) {
@@ -1201,6 +1210,231 @@ public:
     }
 };
 
+// ==============================================================================
+// 9. HardwareMMUZeroMatrix: OS MMU Kernel Paged Zero Matrix
+// ==============================================================================
+
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
+#ifndef MAP_ANON
+#define MAP_ANON MAP_ANONYMOUS
+#endif
+
+/**
+ * @brief OS MMU Hardware Virtual Page Backed Balanced Ternary Matrix.
+ * 
+ * Reserves massive virtual address spaces (e.g. 1 GB - 1 TB) using OS kernel page tables
+ * via mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0).
+ * Initial physical memory footprint is 0 bytes (zero-page mapping in OS page tables).
+ * Physical frames are materialized dynamically on demand via OS Hardware Page Faults (Hardware CoW).
+ * Empty or cleared 64 KB blocks are uncommitted back to the OS via madvise(..., MADV_DONTNEED).
+ */
+class HardwareMMUZeroMatrix {
+private:
+    size_t rows_{0};
+    size_t cols_{0};
+    size_t virtual_capacity_{0}; // elements/bytes requested
+    size_t mmap_size_{0};        // rounded up to 64 KB page boundary
+    uint8_t* data_{nullptr};
+
+public:
+    static constexpr size_t BLOCK_SIZE_64K = PAGE_SIZE_64K; // 65,536 bytes (64 KB)
+
+    static size_t checked_virtual_capacity(size_t rows, size_t cols) {
+        const unsigned __int128 total =
+            static_cast<unsigned __int128>(rows) * static_cast<unsigned __int128>(cols);
+        constexpr unsigned __int128 kLimit =
+            static_cast<unsigned __int128>(std::numeric_limits<size_t>::max() / 2);
+        if (total > kLimit) {
+            throw std::overflow_error(
+                "HardwareMMUZeroMatrix: rows*cols overflows virtual capacity limit");
+        }
+        return static_cast<size_t>(total);
+    }
+
+    HardwareMMUZeroMatrix(size_t rows, size_t cols)
+        : rows_(rows), cols_(cols), virtual_capacity_(checked_virtual_capacity(rows, cols)) {
+        if (virtual_capacity_ == 0) {
+            mmap_size_ = 0;
+            data_ = nullptr;
+            return;
+        }
+        // Round up to multiple of 64 KB block size
+        mmap_size_ = (virtual_capacity_ + BLOCK_SIZE_64K - 1) & ~(BLOCK_SIZE_64K - 1);
+        void* ptr = ::mmap(nullptr, mmap_size_, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+        if (ptr == MAP_FAILED) {
+            throw std::bad_alloc();
+        }
+        data_ = static_cast<uint8_t*>(ptr);
+    }
+
+    ~HardwareMMUZeroMatrix() noexcept {
+        release();
+    }
+
+    HardwareMMUZeroMatrix(const HardwareMMUZeroMatrix&) = delete;
+    HardwareMMUZeroMatrix& operator=(const HardwareMMUZeroMatrix&) = delete;
+
+    HardwareMMUZeroMatrix(HardwareMMUZeroMatrix&& o) noexcept
+        : rows_(o.rows_), cols_(o.cols_), virtual_capacity_(o.virtual_capacity_),
+          mmap_size_(o.mmap_size_), data_(o.data_) {
+        o.rows_ = 0;
+        o.cols_ = 0;
+        o.virtual_capacity_ = 0;
+        o.mmap_size_ = 0;
+        o.data_ = nullptr;
+    }
+
+    HardwareMMUZeroMatrix& operator=(HardwareMMUZeroMatrix&& o) noexcept {
+        if (this != &o) {
+            release();
+            rows_ = o.rows_;
+            cols_ = o.cols_;
+            virtual_capacity_ = o.virtual_capacity_;
+            mmap_size_ = o.mmap_size_;
+            data_ = o.data_;
+            o.rows_ = 0;
+            o.cols_ = 0;
+            o.virtual_capacity_ = 0;
+            o.mmap_size_ = 0;
+            o.data_ = nullptr;
+        }
+        return *this;
+    }
+
+    void release() noexcept {
+        if (data_ && data_ != MAP_FAILED && mmap_size_ > 0) {
+            ::munmap(data_, mmap_size_);
+            data_ = nullptr;
+        }
+        rows_ = 0;
+        cols_ = 0;
+        virtual_capacity_ = 0;
+        mmap_size_ = 0;
+    }
+
+    [[nodiscard]] constexpr size_t rows() const noexcept { return rows_; }
+    [[nodiscard]] constexpr size_t cols() const noexcept { return cols_; }
+    [[nodiscard]] constexpr size_t total_elements() const noexcept { return rows_ * cols_; }
+    [[nodiscard]] constexpr size_t virtual_capacity() const noexcept { return virtual_capacity_; }
+    [[nodiscard]] constexpr size_t mmap_size() const noexcept { return mmap_size_; }
+
+    [[nodiscard]] uint8_t* raw_data() noexcept { return data_; }
+    [[nodiscard]] const uint8_t* raw_data() const noexcept { return data_; }
+
+    [[nodiscard]] Trit get(size_t r, size_t c) const {
+        if (r >= rows_ || c >= cols_) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: index out of bounds");
+        }
+        return static_cast<Trit>(static_cast<int8_t>(data_[r * cols_ + c]));
+    }
+
+    void set(size_t r, size_t c, Trit t) {
+        if (r >= rows_ || c >= cols_) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: index out of bounds");
+        }
+        data_[r * cols_ + c] = static_cast<uint8_t>(static_cast<int8_t>(t));
+    }
+
+    [[nodiscard]] uint8_t get_byte(size_t offset) const {
+        if (offset >= virtual_capacity_) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: offset out of bounds");
+        }
+        return data_[offset];
+    }
+
+    void set_byte(size_t offset, uint8_t val) {
+        if (offset >= virtual_capacity_) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: offset out of bounds");
+        }
+        data_[offset] = val;
+    }
+
+    [[nodiscard]] TritWord64 get_word(size_t word_index) const {
+        if (virtual_capacity_ < 64 || word_index > (virtual_capacity_ - 64) / 64) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: word offset exceeds virtual capacity");
+        }
+        const size_t trit_offset = word_index * 64;
+        TritWord64 w{0, 0};
+        for (size_t i = 0; i < 64; ++i) {
+            w.setTrit(i, static_cast<Trit>(static_cast<int8_t>(data_[trit_offset + i])));
+        }
+        return w;
+    }
+
+    void set_word(size_t word_index, const TritWord64& w) {
+        if (virtual_capacity_ < 64 || word_index > (virtual_capacity_ - 64) / 64) {
+            throw std::out_of_range("HardwareMMUZeroMatrix: word offset exceeds virtual capacity");
+        }
+        const size_t trit_offset = word_index * 64;
+        for (size_t i = 0; i < 64; ++i) {
+            data_[trit_offset + i] = static_cast<uint8_t>(static_cast<int8_t>(w.getTrit(i)));
+        }
+    }
+
+    /**
+     * @brief Advises the OS kernel to discard and reclaim empty 64 KB leaf blocks.
+     * Uses madvise(addr, 65536, MADV_DONTNEED) to drop physical memory frames.
+     * Returns the count of zeroed 64 KB blocks reclaimed.
+     */
+    size_t reclaim_empty_pages() noexcept {
+        if (!data_ || mmap_size_ == 0) return 0;
+        const size_t num_blocks = mmap_size_ / BLOCK_SIZE_64K;
+        size_t reclaimed = 0;
+        constexpr size_t words_per_block = BLOCK_SIZE_64K / sizeof(uint64_t);
+
+        for (size_t b = 0; b < num_blocks; ++b) {
+            uint8_t* block_addr = data_ + b * BLOCK_SIZE_64K;
+            const uint64_t* words = reinterpret_cast<const uint64_t*>(block_addr);
+            bool is_zero = true;
+            for (size_t w = 0; w < words_per_block; ++w) {
+                if (words[w] != 0) {
+                    is_zero = false;
+                    break;
+                }
+            }
+            if (is_zero) {
+#if defined(MADV_DONTNEED)
+                ::madvise(block_addr, BLOCK_SIZE_64K, MADV_DONTNEED);
+#elif defined(MADV_FREE)
+                ::madvise(block_addr, BLOCK_SIZE_64K, MADV_FREE);
+#endif
+                ++reclaimed;
+            }
+        }
+        return reclaimed;
+    }
+
+    /**
+     * @brief Immediately releases all physical memory for a specific 64 KB block.
+     */
+    void reclaim_block(size_t block_index) noexcept {
+        if (!data_ || block_index * BLOCK_SIZE_64K >= mmap_size_) return;
+        uint8_t* block_addr = data_ + block_index * BLOCK_SIZE_64K;
+#if defined(MADV_DONTNEED)
+        ::madvise(block_addr, BLOCK_SIZE_64K, MADV_DONTNEED);
+#elif defined(MADV_FREE)
+        ::madvise(block_addr, BLOCK_SIZE_64K, MADV_FREE);
+#endif
+    }
+
+    /**
+     * @brief Discards all physical backing pages across the entire matrix.
+     */
+    void reset() noexcept {
+        if (data_ && mmap_size_ > 0) {
+#if defined(MADV_DONTNEED)
+            ::madvise(data_, mmap_size_, MADV_DONTNEED);
+#elif defined(MADV_FREE)
+            ::madvise(data_, mmap_size_, MADV_FREE);
+#endif
+        }
+    }
+};
+
 } // namespace mem
 
 // Bring primary memory types into bt namespace for developer convenience
@@ -1212,6 +1446,7 @@ using mem::Base243Block;
 using mem::Base243Arena;
 using mem::HierarchicalZeroPage;
 using mem::HierarchicalZeroMatrix;
+using mem::HardwareMMUZeroMatrix;
 using mem::MemoryStats;
 
 } // namespace bt
