@@ -3,7 +3,7 @@
  * @brief MLIR Dialect Definition, TableGen Emitters, and Larq-Style Bit-Sliced Lowering Engine
  * @author Antigravity Prime Research & Engineering Engine
  * 
- * Part of the Universal Balanced Ternary Compiler Infrastructure.
+ * Part of the Trium-XBT Foundational Compiler Infrastructure.
  * Compliant with C++20 and modern MLIR / IREE compiler pipeline designs.
  * 
  * Lowering Patterns Provided:

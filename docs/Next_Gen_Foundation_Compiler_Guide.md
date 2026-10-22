@@ -1,10 +1,10 @@
-# Next-Gen Foundation Compiler: The Complete Guide
+# Trium-XBT Foundational Compiler: The Complete Guide
 
 *From zero knowledge to rebuilding the whole project*
 
 ## Table of Contents
 
-- [Chapter 0: Welcome to the Next-Gen Foundation Compiler](#chapter-0-welcome-to-the-next-gen-foundation-compiler)
+- [Chapter 0: Welcome to the Trium-XBT Foundational Compiler](#chapter-0-welcome-to-the-trium-xbt-foundational-compiler)
   - [1. What Is This Project in One Sentence?](#1-what-is-this-project-in-one-sentence)
   - [2. Why Does This Project Exist? (The Big Problem with Binary)](#2-why-does-this-project-exist-the-big-problem-with-binary)
   - [3. The 70-Year Mystery: If Ternary Is So Great, Why Doesn't Everyone Use It?](#3-the-70-year-mystery-if-ternary-is-so-great-why-doesnt-everyone-use-it)
@@ -75,7 +75,7 @@
 
 ---
 
-# Chapter 0: Welcome to the Next-Gen Foundation Compiler
+# Chapter 0: Welcome to the Trium-XBT Foundational Compiler
 
 Hello and welcome! If you are holding or reading this document, you are about to explore one of the most exciting, unconventional frontiers in modern computing: **Balanced Ternary Computing**.
 
@@ -87,7 +87,7 @@ You do **not** need a PhD in computer science. You do not need to already know w
 
 ## 1. What Is This Project in One Sentence?
 
-> **The Next-Gen Foundation Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (`-1, 0, +1`) at speeds faster than standard binary 32-bit floating-point arithmetic.**
+> **The Trium-XBT Foundational Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (`-1, 0, +1`) at speeds faster than standard binary 32-bit floating-point arithmetic.**
 
 ---
 
@@ -3042,7 +3042,7 @@ flowchart TD
         LowLevelIR --> MachineCode["CPU Machine Code (ARM / x86)"]
     end
     
-    subgraph MLIRPipeline["Next-Gen Multi-Level Pipeline (MLIR)"]
+    subgraph MLIRPipeline["Trium-XBT Multi-Level Pipeline (MLIR)"]
         TernarySource[".bt / Python / ML Model"] --> DialectBT["High-Level Dialect ('bt')<br/>bt.gemm, bt.planar_dot, bt.btha"]
         DialectBT --> DialectLinalg["Structured Loops ('linalg.generic')"]
         DialectLinalg --> DialectVector["SIMD Vector Lanes ('vector.reduction')"]

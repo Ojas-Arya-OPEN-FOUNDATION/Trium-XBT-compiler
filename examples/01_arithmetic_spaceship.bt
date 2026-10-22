@@ -1,6 +1,6 @@
 // ==============================================================================
 // Example 1: Arithmetic & Ternary Spaceship (<=>) Operator
-// Universal Balanced Ternary Programming Language (.bt)
+// Trium-XBT Programming Language (.bt)
 // ==============================================================================
 
 var a = 84;

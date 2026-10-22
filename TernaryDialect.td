@@ -1,6 +1,6 @@
 //===-- TernaryDialect.td - Balanced Ternary Dialect Definition -*- tablegen -*-===//
 //
-// Part of the Universal Balanced Ternary Compiler Infrastructure.
+// Part of the Trium-XBT Foundational Compiler Infrastructure.
 // Grounded in Lean 4 formal proofs and Z3 SMT bit-level verification.
 //
 //===----------------------------------------------------------------------===//

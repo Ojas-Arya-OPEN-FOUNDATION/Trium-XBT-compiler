@@ -1,6 +1,6 @@
 // ==============================================================================
 // Example 5: Multiplier-Free Sparse Matrix Multiplication (sparse_matrix)
-// Universal Balanced Ternary Programming Language (.bt)
+// Trium-XBT Programming Language (.bt)
 // ==============================================================================
 
 var S = sparse_matrix(3, 3,

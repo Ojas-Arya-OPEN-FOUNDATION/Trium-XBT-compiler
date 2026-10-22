@@ -28,8 +28,10 @@ OUT_MD = DOCS / "Next_Gen_Foundation_Compiler_Guide.md"
 OUT_HTML = DOCS / "Next_Gen_Foundation_Compiler_Guide.html"
 ROOT_MD = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.md"
 ROOT_HTML = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.html"
+ROOT_TRIUM_MD = ROOT / "TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.md"
+ROOT_TRIUM_HTML = ROOT / "TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.html"
 
-TITLE = "Next-Gen Foundation Compiler: The Complete Guide"
+TITLE = "Trium-XBT Foundational Compiler: The Complete Guide"
 SUBTITLE = "From zero knowledge to rebuilding the whole project"
 
 PATH_RE = re.compile(r"`([A-Za-z0-9_./\-]+\.(?:hpp|cpp|h|py|sh|td|mlir|bt|test|lean|metal|comp|mm|rs|toml|md|txt|dylib))`")
@@ -250,6 +252,8 @@ def main() -> int:
     OUT_HTML.write_text(html_content, encoding="utf-8")
     ROOT_MD.write_text(md, encoding="utf-8")
     ROOT_HTML.write_text(html_content, encoding="utf-8")
+    ROOT_TRIUM_MD.write_text(md, encoding="utf-8")
+    ROOT_TRIUM_HTML.write_text(html_content, encoding="utf-8")
 
     print(f"Chapters : {len(chapters)}")
     for p, t in chapters:

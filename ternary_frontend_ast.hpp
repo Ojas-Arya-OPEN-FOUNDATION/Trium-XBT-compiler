@@ -3,7 +3,7 @@
  * @brief High-Performance C++20 Frontend AST, Lexer, and Recursive-Descent Parser for Balanced Ternary (.bt)
  * @author Antigravity Prime Research & Engineering Engine
  * 
- * Part of the Universal Balanced Ternary Compiler Infrastructure.
+ * Part of the Trium-XBT Foundational Compiler Infrastructure.
  * Fully compliant with C++20 standard, targeting hardware-agnostic ternary computing.
  */
 

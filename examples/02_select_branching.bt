@@ -1,6 +1,6 @@
 // ==============================================================================
 // Example 2: 3-Way Branchless select(cond, pos, zero, neg) Multiplexing
-// Universal Balanced Ternary Programming Language (.bt)
+// Trium-XBT Programming Language (.bt)
 // ==============================================================================
 
 var threshold = 50;

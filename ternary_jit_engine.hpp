@@ -3,7 +3,7 @@
  * @brief AST Interpreter and JIT Execution Engine for Balanced Ternary (.bt)
  * @author Antigravity Prime Research & Engineering Engine
  * 
- * Direct execution engine for the Universal Balanced Ternary Compiler:
+ * Direct execution engine for the Trium-XBT Foundational Compiler:
  * 1. Executes AST nodes from ternary_frontend_ast.hpp using native ternary operations.
  * 2. Evaluates dual-rail expressions (+, -, *, &, |, ^, <=>, ~) via ternary_dense_algebra.hpp.
  * 3. Branchless 3-way select multiplexing: select(cond, pos, zero, neg) and block selects.

@@ -1,4 +1,4 @@
-# Universal Balanced Ternary Compiler (BT-Compiler): Architectural Masterplan, Mathematical Foundations & Modern Toolchain Ecosystem
+# Trium-XBT Foundational Compiler (BT-Compiler): Architectural Masterplan, Mathematical Foundations & Modern Toolchain Ecosystem
 
 **Author**: Antigravity Prime Research Engine  
 **Frameworks Evaluated**: MLIR (LLVM), Lean 4 / Lean-MLIR, Z3 SMT, Alive2, NVIDIA CUTLASS 3.x, OpenAI Triton, Apache TVM, CIRCT  

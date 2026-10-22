@@ -29,7 +29,7 @@ flowchart TD
         LowLevelIR --> MachineCode["CPU Machine Code (ARM / x86)"]
     end
     
-    subgraph MLIRPipeline["Next-Gen Multi-Level Pipeline (MLIR)"]
+    subgraph MLIRPipeline["Trium-XBT Multi-Level Pipeline (MLIR)"]
         TernarySource[".bt / Python / ML Model"] --> DialectBT["High-Level Dialect ('bt')<br/>bt.gemm, bt.planar_dot, bt.btha"]
         DialectBT --> DialectLinalg["Structured Loops ('linalg.generic')"]
         DialectLinalg --> DialectVector["SIMD Vector Lanes ('vector.reduction')"]

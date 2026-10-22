@@ -1,5 +1,5 @@
 # ==============================================================================
-# Universal Balanced Ternary Compiler & MLIR Dialect Build Infrastructure
+# Trium-XBT Foundational Compiler & MLIR Dialect Build Infrastructure
 # ==============================================================================
 # Supports both:
 # 1. Out-of-tree LLVM/MLIR monorepo builds via find_package(MLIR / LLVM)
@@ -7,9 +7,9 @@
 # ==============================================================================
 
 cmake_minimum_required(VERSION 3.20)
-project(BalancedTernaryCompiler
-    VERSION 1.0.0
-    DESCRIPTION "Universal Balanced Ternary Compiler & MLIR Dialect Infrastructure"
+project(TriumXBTCompiler
+    VERSION 2.0.0
+    DESCRIPTION "Trium-XBT Foundational Compiler & MLIR Dialect Infrastructure"
     LANGUAGES CXX
 )
 

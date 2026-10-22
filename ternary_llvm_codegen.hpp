@@ -1,7 +1,7 @@
 /**
  * @file ternary_llvm_codegen.hpp
  * @brief AST-to-LLVM IR Lowering Visitor & Native JIT Engine
- * @author Universal Balanced Ternary Compiler Engineering Team
+ * @author Trium-XBT Foundational Compiler Engineering Team
  */
 
 #ifndef TERNARY_LLVM_CODEGEN_HPP

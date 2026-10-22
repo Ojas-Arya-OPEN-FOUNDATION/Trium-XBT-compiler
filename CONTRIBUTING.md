@@ -1,6 +1,6 @@
-# Contributing to Next-Gen Foundation Compiler
+# Contributing to Trium-XBT Foundational Compiler
 
-Thank you for your interest in contributing to the **Next-Gen Foundation Compiler**, hosted by **Ojas-Arya OPEN-FOUNDATION**!
+Thank you for your interest in contributing to the **Trium-XBT Foundational Compiler**, hosted by **Ojas-Arya OPEN-FOUNDATION**!
 
 We welcome contributions from mathematicians, compiler engineers, hardware architects, and open-source enthusiasts.
 

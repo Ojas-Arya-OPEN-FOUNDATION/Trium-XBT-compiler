@@ -482,7 +482,7 @@ void run_compiler_self_test() {
 // ==============================================================================
 
 void print_help() {
-    std::cout << "Universal Balanced Ternary Compiler (bt-compiler) v2.0.0\n"
+    std::cout << "Trium-XBT Foundational Compiler (bt-compiler) v2.0.0\n"
               << "Hardware-Agnostic, Multi-Target Compiling & JIT Execution Engine\n\n"
               << "Usage:\n"
               << "  bt-compiler run <program.bt> [--kokkos] [--threads=N]   Parse and JIT-execute script\n"
@@ -649,7 +649,7 @@ int main(int argc, char** argv) {
 
         if (opts.runNative) {
             std::cout << "======================================================================\n";
-            std::cout << "  Universal Balanced Ternary Native LLVM JIT Engine (bt-native-jit)\n";
+            std::cout << "  Trium-XBT Foundational Compiler: Native LLVM JIT Engine (bt-native-jit)\n";
             std::cout << "  Input File: " << opts.inputFile << " (Bare-Metal Clang Machine Code)\n";
             std::cout << "======================================================================\n\n";
 
@@ -695,7 +695,7 @@ int main(int argc, char** argv) {
         }
 
         std::cout << "======================================================================\n";
-        std::cout << "  Universal Balanced Ternary JIT Execution Engine (bt-jit)\n";
+        std::cout << "  Trium-XBT Foundational Compiler: JIT Execution Engine (bt-jit)\n";
         std::cout << "  Input File: " << opts.inputFile << "\n";
         std::cout << "  Kokkos Multi-Threading: " 
                   << (opts.enableKokkos ? ("ENABLED (" + std::to_string(opts.kokkosThreads > 0 ? opts.kokkosThreads : std::thread::hardware_concurrency()) + " threads)") : "DISABLED (Serial)") << "\n";
@@ -893,7 +893,7 @@ int main(int argc, char** argv) {
 
                 std::string riscv_asm = 
                     "; ==============================================================================\n"
-                    "; Universal Balanced Ternary Target Output: RISC-V 64 (" + (opts.enableRiscvXbt ? std::string("riscv64-xbt") : triple) + ")\n"
+                    "; Trium-XBT Target Output: RISC-V 64 (" + (opts.enableRiscvXbt ? std::string("riscv64-xbt") : triple) + ")\n"
                     "; Target Datalayout: " + datalayout + "\n"
                     "; LLVM IR Equivalent:\n"
                     "; target triple = \"" + triple + "\"\n"

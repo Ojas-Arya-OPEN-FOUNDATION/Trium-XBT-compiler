@@ -1,4 +1,4 @@
-# Chapter 0: Welcome to the Next-Gen Foundation Compiler
+# Chapter 0: Welcome to the Trium-XBT Foundational Compiler
 
 Hello and welcome! If you are holding or reading this document, you are about to explore one of the most exciting, unconventional frontiers in modern computing: **Balanced Ternary Computing**.
 
@@ -10,7 +10,7 @@ You do **not** need a PhD in computer science. You do not need to already know w
 
 ## 1. What Is This Project in One Sentence?
 
-> **The Next-Gen Foundation Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (`-1, 0, +1`) at speeds faster than standard binary 32-bit floating-point arithmetic.**
+> **The Trium-XBT Foundational Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (`-1, 0, +1`) at speeds faster than standard binary 32-bit floating-point arithmetic.**
 
 ---
 

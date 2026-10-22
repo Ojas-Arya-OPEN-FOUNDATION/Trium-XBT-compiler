@@ -1,6 +1,6 @@
 // ==============================================================================
 // Example 3: While Loops and Variable Mutation (Factorial Calculation)
-// Universal Balanced Ternary Programming Language (.bt)
+// Trium-XBT Programming Language (.bt)
 // ==============================================================================
 
 var n = 6;

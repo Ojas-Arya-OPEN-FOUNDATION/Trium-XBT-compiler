@@ -1,7 +1,7 @@
 /**
  * @file ternary_memory_arena.hpp
  * @brief Production C++20 Custom Memory Management for Balanced Ternary Arithmetic
- * @author Universal Balanced Ternary Compiler Engineering Team
+ * @author Trium-XBT Foundational Compiler Engineering Team
  * @version 1.0.0
  * 
  * Features:

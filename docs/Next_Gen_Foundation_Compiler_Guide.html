@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Next-Gen Foundation Compiler: The Complete Guide</title>
+<title>Trium-XBT Foundational Compiler: The Complete Guide</title>
 <style>
  body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px;margin:2rem auto;padding:0 1.2rem;line-height:1.65;color:#1f2328}
  h1,h2,h3{line-height:1.25} h1{border-bottom:2px solid #d0d7de;padding-bottom:.3rem}
@@ -14,11 +14,11 @@
  th{background:#f6f8fa} blockquote{border-left:4px solid #8250df;margin:1rem 0;padding:.2rem 1rem;background:#f6f0ff}
  a{color:#0969da}
 </style></head><body>
-<h1 id="next-gen-foundation-compiler-the-complete-guide">Next-Gen Foundation Compiler: The Complete Guide</h1>
+<h1 id="trium-xbt-foundational-compiler-the-complete-guide">Trium-XBT Foundational Compiler: The Complete Guide</h1>
 <p><em>From zero knowledge to rebuilding the whole project</em></p>
 <h2 id="table-of-contents">Table of Contents</h2>
 <ul>
-<li><a href="#chapter-0-welcome-to-the-next-gen-foundation-compiler">Chapter 0: Welcome to the Next-Gen Foundation Compiler</a></li>
+<li><a href="#chapter-0-welcome-to-the-trium-xbt-foundational-compiler">Chapter 0: Welcome to the Trium-XBT Foundational Compiler</a></li>
 <li><a href="#1-what-is-this-project-in-one-sentence">1. What Is This Project in One Sentence?</a></li>
 <li><a href="#2-why-does-this-project-exist-the-big-problem-with-binary">2. Why Does This Project Exist? (The Big Problem with Binary)</a></li>
 <li><a href="#3-the-70-year-mystery-if-ternary-is-so-great-why-doesnt-everyone-use-it">3. The 70-Year Mystery: If Ternary Is So Great, Why Doesn&#x27;t Everyone Use It?</a></li>
@@ -88,13 +88,13 @@
 <li><a href="#6-future-horizons-the-research-roadmap">6. Future Horizons: The Research Roadmap</a></li>
 </ul>
 <hr>
-<h1 id="chapter-0-welcome-to-the-next-gen-foundation-compiler">Chapter 0: Welcome to the Next-Gen Foundation Compiler</h1>
+<h1 id="chapter-0-welcome-to-the-trium-xbt-foundational-compiler">Chapter 0: Welcome to the Trium-XBT Foundational Compiler</h1>
 <p>Hello and welcome! If you are holding or reading this document, you are about to explore one of the most exciting, unconventional frontiers in modern computing: <strong>Balanced Ternary Computing</strong>.</p>
 <p>Whether you are 18 years old, a first-year student opening a code editor for the very first time, a seasoned software engineer curious about radical architectures, or someone who simply loves deep mathematics and physical simulation—<strong>this guide was written specifically for you.</strong></p>
 <p>You do <strong>not</strong> need a PhD in computer science. You do not need to already know what a compiler or an LLVM intermediate representation is. Every single concept—from what a &quot;bit&quot; and &quot;trit&quot; are, to how silicon processors execute math, to how a compiler turns text into electricity—will be explained step by step, using everyday analogies, visual diagrams, and worked examples done by hand.</p>
 <hr>
 <h2 id="1-what-is-this-project-in-one-sentence">1. What Is This Project in One Sentence?</h2>
-<blockquote><strong>The Next-Gen Foundation Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (<code>-1, 0, +1</code>) at speeds faster than standard binary 32-bit floating-point arithmetic.</strong></blockquote>
+<blockquote><strong>The Trium-XBT Foundational Compiler is a complete, hardware-agnostic compiler and numerical computing engine that allows everyday computers (like your MacBook, PC, or server) to compute using base-3 balanced numbers (<code>-1, 0, +1</code>) at speeds faster than standard binary 32-bit floating-point arithmetic.</strong></blockquote>
 <hr>
 <h2 id="2-why-does-this-project-exist-the-big-problem-with-binary">2. Why Does This Project Exist? (The Big Problem with Binary)</h2>
 <p>Every computer in the world today—your smartphone, laptop, supercomputers, and cloud data centers—thinks in <strong>binary</strong>. Binary means &quot;base 2&quot;, meaning everything is built out of <strong>bits</strong> that can only be <code>0</code> or <code>1</code>.</p>
@@ -2692,7 +2692,7 @@ for (size_t w = 0; w &lt; NumWords; ++w) {
         LowLevelIR --&gt; MachineCode[&quot;CPU Machine Code (ARM / x86)&quot;]
     end
     
-    subgraph MLIRPipeline[&quot;Next-Gen Multi-Level Pipeline (MLIR)&quot;]
+    subgraph MLIRPipeline[&quot;Trium-XBT Multi-Level Pipeline (MLIR)&quot;]
         TernarySource[&quot;.bt / Python / ML Model&quot;] --&gt; DialectBT[&quot;High-Level Dialect (&#x27;bt&#x27;)&lt;br/&gt;bt.gemm, bt.planar_dot, bt.btha&quot;]
         DialectBT --&gt; DialectLinalg[&quot;Structured Loops (&#x27;linalg.generic&#x27;)&quot;]
         DialectLinalg --&gt; DialectVector[&quot;SIMD Vector Lanes (&#x27;vector.reduction&#x27;)&quot;]

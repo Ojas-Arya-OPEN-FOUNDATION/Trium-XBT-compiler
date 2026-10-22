@@ -1,7 +1,7 @@
 /**
  * @file test_ternary_memory.cpp
  * @brief Comprehensive Verification Test Suite for ternary_memory_arena.hpp
- * @author Universal Balanced Ternary Compiler Engineering Team
+ * @author Trium-XBT Foundational Compiler Engineering Team
  * 
  * Verifies:
  * 1. 64-byte alignment checks for SIMD (AVX-512 & ARM NEON).
@@ -436,7 +436,7 @@ void test_hierarchical_zeropage_cow() {
 // ==============================================================================
 int main() {
     std::cout << ANSI_BOLD << "==============================================================================\n";
-    std::cout << " Universal Balanced Ternary Compiler: Memory Systems Test Suite\n";
+    std::cout << " Trium-XBT Foundational Compiler: Memory Systems Test Suite\n";
     std::cout << "==============================================================================" << ANSI_RESET << "\n";
 
     try {

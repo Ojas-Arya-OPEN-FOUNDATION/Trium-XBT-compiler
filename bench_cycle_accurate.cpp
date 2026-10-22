@@ -1,7 +1,7 @@
 /**
  * @file bench_cycle_accurate.cpp
  * @brief Hardware Cycle-Accurate Microbenchmark Engine for Balanced Ternary Operations
- * @author Universal Balanced Ternary Research & Engineering Team
+ * @author Trium-XBT Foundational Compiler Engineering Team
  * 
  * Hardware Timing Mechanism:
  * - Apple Silicon / ARM64: Direct reading of virtual cycle counter register:

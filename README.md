@@ -1,4 +1,4 @@
-# Next-Gen Foundation Compiler (Balanced Ternary System)
+# Trium-XBT Foundational Compiler (Balanced Ternary System)
 
 <div align="center">
 
@@ -18,7 +18,7 @@
 
 ---
 
-[📖 Complete 31,000-Word Guide](NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.md) &nbsp;•&nbsp;
+[📖 Complete 31,000-Word Guide](TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.md) &nbsp;•&nbsp;
 [⚡ Quick Start](#quick-start-build-run-and-verify-in-60-seconds) &nbsp;•&nbsp;
 [📊 Benchmarks](#section-5-measured-hardware-cycle-accurate-benchmarks) &nbsp;•&nbsp;
 [🤝 Contributing](CONTRIBUTING.md)
@@ -29,7 +29,7 @@
 
 ## 📌 Executive Summary
 
-We built the **Next-Gen Foundation Compiler** to solve a 70-year-old fundamental dilemma in computer science: **how to run Balanced Ternary (`{-1, 0, +1}`) mathematics on standard binary computers (`{0, 1}`) at speeds faster than native binary floating-point arithmetic.**
+We built the **Trium-XBT Foundational Compiler** to solve a 70-year-old fundamental dilemma in computer science: **how to run Balanced Ternary (`{-1, 0, +1}`) mathematics on standard binary computers (`{0, 1}`) at speeds faster than native binary floating-point arithmetic.**
 
 This repository delivers an end-to-end, production-grade toolchain:
 - **Domain-Specific Language (`.bt`)**: Custom grammar with native 3-way spaceship `<=>`, `select` branching, and dual-rail types.
@@ -113,7 +113,7 @@ If balanced ternary is mathematically superior, why was it abandoned? Because gl
 
 **Our Core Principle**: We do not need to wait for ternary chip factories. By turning 64-bit binary registers sideways into **Dual-Rail Bitplanes** (storing 64 positive signs in register `P` and 64 negative signs in register `N`), our compiler turns a standard 64-bit binary CPU into a **64-lane parallel balanced ternary SIMD processor**.
 
-| Metric / Operation | Standard Binary (IEEE-754 FP32 / INT) | Next-Gen Foundation Compiler (Balanced Ternary) | Practical Advantage | 
+| Metric / Operation | Standard Binary (IEEE-754 FP32 / INT) | Trium-XBT Foundational Compiler (Balanced Ternary) | Practical Advantage | 
 | :--- | :--- | :--- | :--- | 
 | **Basic Digit Set** | `{0, 1}` (Asymmetric) | `{-1, 0, +1}` (Symmetric around 0) | Natural positive, neutral, and negative states | 
 | **Sign Negation (`-X`)** | Invert all bits + ripple-add `1` | Swap register pointers `{P ↔ N}` | **0 clock cycles** (instant wire swap / register rename) | 
@@ -384,7 +384,7 @@ let res = a.fma(b, c); // 10.0
 
 Today, advanced computing is locked behind massive hardware and software monopolies. Training frontier AI models, running large-scale physical simulations, or developing algorithms often requires millions of dollars in proprietary GPU clusters, closed vendor compilers, and massive energy budgets.
 
-We released the **Next-Gen Foundation Compiler** under the **GNU Affero General Public License v3.0 (AGPL-3.0)** under **Ojas-Arya OPEN-FOUNDATION** to democratize high-performance computing:
+We released the **Trium-XBT Foundational Compiler** under the **GNU Affero General Public License v3.0 (AGPL-3.0)** under **Ojas-Arya OPEN-FOUNDATION** to democratize high-performance computing:
 
 * **Running Frontier Math on Everyday Hardware**: By eliminating hardware multipliers in sparse matrix algebra (`T-CSR` reduces weight value memory by **32x**) and eliminating intermediate activation storage in reversible networks (`SymplecticLeapfrogEngine` reduces trajectory memory from $O(N)$ **to** $O(1)$), workloads that previously demanded an 80 GB data-center GPU can fit inside the cache and RAM of a standard laptop or edge device.
 * **Zero Vendor Lock-In**: Our compiler does not trap you inside one vendor's chip ecosystem. The exact same balanced ternary math runs across ARM64, x86_64, RISC-V, Apple Metal, and open Vulkan SPIR-V shaders.

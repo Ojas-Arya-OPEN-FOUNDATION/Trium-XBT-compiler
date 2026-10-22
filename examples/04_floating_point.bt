@@ -1,6 +1,6 @@
 // ==============================================================================
 // Example 4: Balanced Ternary Floating-Point (BT-FP32) Calculations
-// Universal Balanced Ternary Programming Language (.bt)
+// Trium-XBT Programming Language (.bt)
 // ==============================================================================
 
 var x: float = 3.5;
