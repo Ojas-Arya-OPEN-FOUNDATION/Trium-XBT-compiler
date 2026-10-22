@@ -941,6 +941,54 @@ void test_math_intrinsics_fma_sqrt_abs() {
     std::cout << "      -> Math Intrinsics (fma, sqrt, abs) across JIT & Native LLVM passed.\n";
 }
 
+void test_phase3_compiler_fixes() {
+    std::cout << "  [22/22] Testing Phase 3 Compiler Fixes (Multi-Trit Literals, @bt_select, Stmt Select & Kleene Ops)...\n";
+
+    // 1. Multi-trit literal (+-0+ = 27 - 9 + 0 + 1 = 19) in Native LLVM JIT
+    std::string src1 = "var lit = +-0+;\nreturn lit;\n";
+    Parser p1(src1);
+    auto prog1 = p1.parse_program();
+    int exit1 = NativeLLVMJIT::execute_program(*prog1, false);
+    assert(exit1 == 19 && "Multi-trit literal +-0+ must evaluate to 19 in Native LLVM JIT!");
+
+    // 2. Expression select with condition > 1 (select(19, 100, 200, 300) must return 100)
+    std::string src2 = "var x = 19;\nvar s = select(x, 100, 200, 300);\nreturn s;\n";
+    Parser p2(src2);
+    auto prog2 = p2.parse_program();
+    int exit2 = NativeLLVMJIT::execute_program(*prog2, false);
+    assert(exit2 == 100 && "select(19, ...) must return positive branch (100)!");
+
+    // 3. Statement select branching with basic blocks
+    std::string src3 = 
+        "var c = 10;\n"
+        "var res = 0;\n"
+        "select (c) {\n"
+        "    pos {\n"
+        "        res = 55;\n"
+        "    }\n"
+        "    zero {\n"
+        "        res = 66;\n"
+        "    }\n"
+        "    neg {\n"
+        "        res = 77;\n"
+        "    }\n"
+        "}\n"
+        "return res;\n";
+    Parser p3(src3);
+    auto prog3 = p3.parse_program();
+    int exit3 = NativeLLVMJIT::execute_program(*prog3, false);
+    assert(exit3 == 55 && "Statement select must execute only positive block!");
+
+    // 4. Kleene 3-valued logic on integers: 84 & 27 == 0, 84 | 27 == 111, 84 ^ 27 == 0
+    std::string src4 = "var a = 84;\nvar b = 27;\nvar res = a | b;\nreturn res;\n";
+    Parser p4(src4);
+    auto prog4 = p4.parse_program();
+    int exit4 = NativeLLVMJIT::execute_program(*prog4, false);
+    assert(exit4 == 111 && "84 | 27 must evaluate to 111 via balanced ternary Kleene OR in Native LLVM JIT!");
+
+    std::cout << "      -> Phase 3 Compiler Fixes verified across Native LLVM JIT.\n";
+}
+
 // ==============================================================================
 // Main Entry Point
 // ==============================================================================
@@ -971,8 +1019,9 @@ int main() {
     test_module_imports();
     test_dual_rail_ssa_intrinsics();
     test_math_intrinsics_fma_sqrt_abs();
+    test_phase3_compiler_fixes();
 
-    std::cout << "\n  -> ALL 14 FRONTEND FP, SPARSE, MODULE IMPORT & INTRINSIC SUITES + 7 JIT/THREADPOOL FIX REGRESSIONS PASSED (100%)\n";
+    std::cout << "\n  -> ALL FRONTEND FP, SPARSE, MODULE IMPORT, INTRINSIC & PHASE 3 COMPILER FIXES PASSED (100%)\n";
     std::cout << "======================================================================\n";
     return 0;
 }

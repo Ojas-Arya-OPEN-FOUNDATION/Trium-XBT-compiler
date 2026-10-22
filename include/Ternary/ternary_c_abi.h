@@ -378,6 +378,21 @@ BT_API uint32_t bt_hamming_distance_64_val(bt_word64_t a, bt_word64_t b);
  */
 BT_API bool bt_verify_disjointness_val(bt_word64_t word);
 
+/**
+ * @brief Exported Kleene 3-valued AND for 64-bit integer scalars.
+ */
+BT_API int64_t bt_kleene_and(int64_t a, int64_t b);
+
+/**
+ * @brief Exported Kleene 3-valued OR for 64-bit integer scalars.
+ */
+BT_API int64_t bt_kleene_or(int64_t a, int64_t b);
+
+/**
+ * @brief Exported Ternary XOR (GF(3) product) for 64-bit integer scalars.
+ */
+BT_API int64_t bt_kleene_xor(int64_t a, int64_t b);
+
 #ifdef __cplusplus
 }
 #endif

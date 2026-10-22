@@ -223,6 +223,92 @@ inline int64_t dot_product_array_csa9(const TritWord64* a, const TritWord64* b, 
 }
 
 /**
+ * @brief Streaming dot product across arrays of TritWord64 using 27-to-4 CSA Popcount Contraction.
+ * Evaluates in chunks of 27 words (1,728 trits) via CSAContractor40to4::dot_product_27words,
+ * reducing popcounts from 54 down to 8 per chunk (85.2% reduction in popcounts!).
+ */
+inline int64_t dot_product_array_csa27(const TritWord64* a, const TritWord64* b, size_t num_words) noexcept {
+    int64_t total = 0;
+    const size_t chunks = num_words / 27;
+    const size_t rem = num_words % 27;
+
+    for (size_t c = 0; c < chunks; ++c) {
+        const size_t base = c * 27;
+        TritWord64 prod[27];
+        #pragma unroll
+        for (size_t k = 0; k < 27; ++k) {
+            const uint64_t ap = a[base + k].P;
+            const uint64_t an = a[base + k].N;
+            const uint64_t bp = b[base + k].P;
+            const uint64_t bn = b[base + k].N;
+            prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+        }
+        total += CSAContractor40to4::dot_product_27words(prod);
+    }
+
+    const size_t rem_start = chunks * 27;
+    const size_t chunks9 = rem / 9;
+    for (size_t c = 0; c < chunks9; ++c) {
+        const size_t base = rem_start + c * 9;
+        TritWord64 prod[9];
+        for (size_t k = 0; k < 9; ++k) {
+            const uint64_t ap = a[base + k].P;
+            const uint64_t an = a[base + k].N;
+            const uint64_t bp = b[base + k].P;
+            const uint64_t bn = b[base + k].N;
+            prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+        }
+        total += CSAContractor9to2::dot_product_9words(prod);
+    }
+
+    const size_t rem9_start = rem_start + chunks9 * 9;
+    const size_t tail = rem % 9;
+    for (size_t k = 0; k < tail; ++k) {
+        total += dotProduct64(a[rem9_start + k], b[rem9_start + k]);
+    }
+
+    return total;
+}
+
+/**
+ * @brief Bit-Sliced INT8 Activation Word (64 x int8_t transposed into 8 x uint64_t bitplanes).
+ * Enables BitNet b1.58 Ternary-Weight x INT8-Activation GEMM via pure POPCNT!
+ */
+struct BitSlicedInt8Word64 {
+    uint64_t planes[8]{}; // planes[0..6] weight +2^b, planes[7] (sign bit) weight -128
+
+    static inline BitSlicedInt8Word64 pack64(const int8_t x[64]) noexcept {
+        BitSlicedInt8Word64 out{};
+        for (size_t k = 0; k < 64; ++k) {
+            uint8_t u = static_cast<uint8_t>(x[k]);
+            for (int b = 0; b < 8; ++b) {
+                out.planes[b] |= static_cast<uint64_t>((u >> b) & 1U) << k;
+            }
+        }
+        return out;
+    }
+};
+
+/**
+ * @brief 64-element Ternary-Weight x INT8-Activation Dot Product (BitNet b1.58 Kernel).
+ * Executes 64 multiply-accumulates using only 16 bitwise ANDs and 16 POPCNTs (0 multipliers!).
+ */
+inline int64_t dotProductBitNet64(const TritWord64& w, const BitSlicedInt8Word64& x) noexcept {
+    int64_t acc = 0;
+    #pragma unroll
+    for (int b = 0; b < 7; ++b) {
+        int64_t bit_dot = static_cast<int64_t>(std::popcount(w.P & x.planes[b])) -
+                          static_cast<int64_t>(std::popcount(w.N & x.planes[b]));
+        acc += (bit_dot << b);
+    }
+    // Sign plane (bit 7 has two's-complement weight -128)
+    int64_t sign_dot = static_cast<int64_t>(std::popcount(w.P & x.planes[7])) -
+                       static_cast<int64_t>(std::popcount(w.N & x.planes[7]));
+    acc -= (sign_dot << 7);
+    return acc;
+}
+
+/**
  * @brief Planar Balanced Ternary Matrix Storage.
  * Dimensions: Rows x Cols.
  * Storage: Each row is stored as an array of TritWord64 words (64 trits per word).
@@ -930,6 +1016,147 @@ inline void gemm_csa9(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatri
     DenseDualRailPlanes A_planes(A);
     DenseDualRailPlanes BT_planes(B.transpose());
     gemm_csa9(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
+}
+
+/**
+ * @brief BitNet b1.58 Mixed-Precision GEMM: Ternary Weights (M x K) x INT8 Activations (K x N).
+ * C[M x N] = W[M x K] * X[K x N] computed with ZERO hardware multipliers!
+ */
+inline void gemm_bitnet_i8_ternary(
+    const TernaryMatrix& W,
+    const std::vector<int8_t>& X, // K x N (row-major: K rows, N cols)
+    std::vector<int64_t>& C,       // M x N
+    size_t M, size_t N, size_t K
+) {
+    C.assign(M * N, 0);
+    const size_t K_words = (K + 63) / 64;
+
+    std::vector<BitSlicedInt8Word64> X_sliced(N * K_words);
+    for (size_t col = 0; col < N; ++col) {
+        for (size_t kw = 0; kw < K_words; ++kw) {
+            int8_t chunk[64]{0};
+            for (size_t b = 0; b < 64 && (kw * 64 + b) < K; ++b) {
+                chunk[b] = X[(kw * 64 + b) * N + col];
+            }
+            X_sliced[col * K_words + kw] = BitSlicedInt8Word64::pack64(chunk);
+        }
+    }
+
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            int64_t sum = 0;
+            for (size_t kw = 0; kw < K_words; ++kw) {
+                sum += dotProductBitNet64(W.word(i, kw), X_sliced[j * K_words + kw]);
+            }
+            C[i * N + j] = sum;
+        }
+    }
+}
+
+/**
+ * @brief Universal Harley-Seal GEMM utilizing 27-to-4 CSA Popcount Contraction.
+ * Compresses inner products in 27-word blocks using CSAContractor40to4, reducing
+ * popcounts by 85.2% and running fast on BOTH modern CPUs (AVX-512 / Apple Silicon)
+ * and less-capable CPUs (via shared-tree fast_rail_diff SWAR).
+ */
+template <typename DualRailPlanes = DenseDualRailPlanes>
+inline void gemm_universal_harley_seal(const DualRailPlanes& A, const DualRailPlanes& B_T,
+                                       std::vector<int64_t>& C, size_t M, size_t N, size_t K_trits) {
+    if (C.size() < M * N) {
+        C.resize(M * N, 0);
+    } else {
+        std::fill(C.begin(), C.begin() + static_cast<std::ptrdiff_t>(M * N), 0);
+    }
+    if (M == 0 || N == 0 || K_trits == 0) return;
+
+    const size_t K_words = (K_trits + 63) / 64;
+    size_t stride_A = K_words;
+    size_t stride_B = K_words;
+    if constexpr (requires { A.stride_words; }) stride_A = A.stride_words;
+    if constexpr (requires { B_T.stride_words; }) stride_B = B_T.stride_words;
+
+    const size_t chunks27 = K_words / 27;
+    const size_t rem27 = K_words % 27;
+    const size_t chunks9 = rem27 / 9;
+    const size_t tail = rem27 % 9;
+
+    const uint64_t tail_mask = (K_trits % 64 != 0) ? ((1ULL << (K_trits % 64)) - 1ULL) : ~0ULL;
+
+    for (size_t i = 0; i < M; ++i) {
+        const uint64_t* a_p = A.P.data() + i * stride_A;
+        const uint64_t* a_n = A.N.data() + i * stride_A;
+
+        for (size_t j = 0; j < N; ++j) {
+            const uint64_t* b_p = B_T.P.data() + j * stride_B;
+            const uint64_t* b_n = B_T.N.data() + j * stride_B;
+
+            int64_t acc = 0;
+
+            // 27-word chunks (85.2% popcount reduction)
+            for (size_t c = 0; c < chunks27; ++c) {
+                const size_t base = c * 27;
+                TritWord64 prod[27];
+                #pragma unroll
+                for (size_t k = 0; k < 27; ++k) {
+                    uint64_t ap = a_p[base + k];
+                    uint64_t an = a_n[base + k];
+                    uint64_t bp = b_p[base + k];
+                    uint64_t bn = b_n[base + k];
+                    if (c == chunks27 - 1 && rem27 == 0 && k == 26 && tail_mask != ~0ULL) {
+                        ap &= tail_mask; an &= tail_mask;
+                        bp &= tail_mask; bn &= tail_mask;
+                    }
+                    prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+                }
+                acc += CSAContractor40to4::dot_product_27words(prod);
+            }
+
+            // 9-word chunks
+            const size_t base9 = chunks27 * 27;
+            for (size_t c = 0; c < chunks9; ++c) {
+                const size_t base = base9 + c * 9;
+                TritWord64 prod[9];
+                for (size_t k = 0; k < 9; ++k) {
+                    uint64_t ap = a_p[base + k];
+                    uint64_t an = a_n[base + k];
+                    uint64_t bp = b_p[base + k];
+                    uint64_t bn = b_n[base + k];
+                    if (tail == 0 && c == chunks9 - 1 && k == 8 && tail_mask != ~0ULL) {
+                        ap &= tail_mask; an &= tail_mask;
+                        bp &= tail_mask; bn &= tail_mask;
+                    }
+                    prod[k] = TritWord64((ap & bp) | (an & bn), (ap & bn) | (an & bp));
+                }
+                acc += CSAContractor9to2::dot_product_9words(prod);
+            }
+
+            // Remainder scalar words (< 9)
+            const size_t tail_start = base9 + chunks9 * 9;
+            for (size_t k = 0; k < tail; ++k) {
+                uint64_t ap = a_p[tail_start + k];
+                uint64_t an = a_n[tail_start + k];
+                uint64_t bp = b_p[tail_start + k];
+                uint64_t bn = b_n[tail_start + k];
+                if (k == tail - 1 && tail_mask != ~0ULL) {
+                    ap &= tail_mask; an &= tail_mask;
+                    bp &= tail_mask; bn &= tail_mask;
+                }
+                uint64_t p_prod = (ap & bp) | (an & bn);
+                uint64_t n_prod = (ap & bn) | (an & bp);
+                acc += CSAContractor40to4::fast_rail_diff(TritWord64(p_prod, n_prod));
+            }
+
+            C[i * N + j] = acc;
+        }
+    }
+}
+
+inline void gemm_universal_harley_seal(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
+    assert(A.cols == B.rows);
+    assert(C.rows == A.rows && C.cols == B.cols);
+    DenseDualRailPlanes A_planes(A);
+    DenseDualRailPlanes BT_planes(B.transpose());
+    gemm_universal_harley_seal(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
 }
 
 // ==============================================================================

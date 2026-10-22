@@ -252,6 +252,74 @@ void test_multitrit_encode_decode_and_gemm() {
     }
 }
 
+void test_universal_harley_seal_and_bitnet() {
+    std::cout << "  [Dense] Testing Universal Harley-Seal (CSA 27-to-4) & BitNet b1.58 INT8 GEMM...\n";
+
+    // 1. Verify CSAContractor40to4::compress27 and dot_product_27words against 27 dotProduct64 calls
+    TritWord64 words27[27];
+    for (size_t i = 0; i < 27; ++i) {
+        uint64_t p = (0x123456789ABCDEF0ULL ^ (i * 0x0101010101010101ULL));
+        uint64_t n = (~p & 0x5555555555555555ULL);
+        words27[i] = TritWord64(p & ~n, n);
+    }
+    int64_t ref_dot27 = 0;
+    for (size_t i = 0; i < 27; ++i) {
+        ref_dot27 += CSAContractor40to4::fast_rail_diff(words27[i]);
+    }
+    int64_t csa_dot27 = CSAContractor40to4::dot_product_27words(words27);
+    assert(csa_dot27 == ref_dot27 && "CSAContractor40to4::dot_product_27words must match sum of 27 words!");
+
+    // 2. Verify gemm_universal_harley_seal against standard gemm
+    const size_t M = 32, K = 128, N = 32;
+    TernaryMatrix A_mat(M, K);
+    TernaryMatrix B_mat(K, N);
+    for (size_t r = 0; r < M; ++r) {
+        for (size_t c = 0; c < K; ++c) {
+            A_mat.set(r, c, (r + c) % 3 == 0 ? Trit::Pos : ((r + c) % 3 == 1 ? Trit::Neg : Trit::Zero));
+        }
+    }
+    for (size_t r = 0; r < K; ++r) {
+        for (size_t c = 0; c < N; ++c) {
+            B_mat.set(r, c, (r * 2 + c) % 3 == 0 ? Trit::Pos : ((r * 2 + c) % 3 == 1 ? Trit::Neg : Trit::Zero));
+        }
+    }
+    DenseMatrixInt64 C_ref(M, N);
+    gemm(A_mat, B_mat, C_ref);
+
+    DenseMatrixInt64 C_harley(M, N);
+    gemm_universal_harley_seal(A_mat, B_mat, C_harley);
+
+    for (size_t r = 0; r < M; ++r) {
+        for (size_t c = 0; c < N; ++c) {
+            assert(C_harley(r, c) == C_ref(r, c) && "gemm_universal_harley_seal must match reference gemm!");
+        }
+    }
+
+    // 3. Verify BitNet b1.58 Ternary-Weight x INT8-Activation GEMM (gemm_bitnet_i8_ternary)
+    std::vector<int8_t> X_act(K * N);
+    for (size_t k = 0; k < K; ++k) {
+        for (size_t j = 0; j < N; ++j) {
+            X_act[k * N + j] = static_cast<int8_t>((static_cast<int>(k * 7 + j * 13) % 255) - 128);
+        }
+    }
+
+    std::vector<int64_t> C_bitnet(M * N, 0);
+    gemm_bitnet_i8_ternary(A_mat, X_act, C_bitnet, M, N, K);
+
+    // Reference compute
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            int64_t ref_val = 0;
+            for (size_t k = 0; k < K; ++k) {
+                int64_t w = to_int(A_mat.get(i, k));
+                int64_t x = X_act[k * N + j];
+                ref_val += w * x;
+            }
+            assert(C_bitnet[i * N + j] == ref_val && "BitNet b1.58 GEMM must match exact integer reference!");
+        }
+    }
+}
+
 int main() {
     std::cout << "[LLVM Unit Test Layer 1] Running Dense Algebra & GEMM Tests...\n";
     test_kleene_logic();
@@ -259,6 +327,7 @@ int main() {
     test_codec_and_gemm_guards();
     test_cache_autotuner_and_gemm_autotuned();
     test_multitrit_encode_decode_and_gemm();
+    test_universal_harley_seal_and_bitnet();
     std::cout << "  -> PASSED: All Dense Algebra & CacheAutotuner Unit Tests Verified.\n";
     return 0;
 }

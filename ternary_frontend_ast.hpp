@@ -1063,10 +1063,16 @@ public:
         return node;
     }
 
-    static std::shared_ptr<LiteralNode> make_vector(const std::vector<bt::Trit>& v, const std::string& text, SourceLocation loc = {}) {
+    static std::shared_ptr<LiteralNode> make_vector(const std::vector<bt::Trit>& v_msb_first, const std::string& text, SourceLocation loc = {}) {
         auto node = std::make_shared<LiteralNode>();
         node->kind = LiteralKind::Vector;
-        node->vector_val = v;
+        // Convert big-endian (MSB-first) text into little-endian (LSB-first) trit vector
+        node->vector_val.assign(v_msb_first.rbegin(), v_msb_first.rend());
+        uint64_t uval = 0;
+        for (bt::Trit t : v_msb_first) {
+            uval = uval * 3ULL + static_cast<uint64_t>(static_cast<int64_t>(bt::to_int(t)));
+        }
+        node->int_val = static_cast<int64_t>(uval);
         node->raw_text = text;
         node->location = loc;
         return node;

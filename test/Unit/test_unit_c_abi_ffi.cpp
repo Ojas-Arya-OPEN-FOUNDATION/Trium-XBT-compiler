@@ -286,7 +286,21 @@ static void test_exported_helpers() {
         assert(trits_out[i] == trits_in[i]);
     }
 
-    std::cout << "    -> PASSED: Exported helpers, BTHA, and Base-243 codec verified." << std::endl;
+    // Exported Kleene 3-valued Logic
+    assert(bt_kleene_and(1, 1) == 1);
+    assert(bt_kleene_and(1, -1) == -1);
+    assert(bt_kleene_and(1, 0) == 0);
+    assert(bt_kleene_and(84, 27) == 0);
+
+    assert(bt_kleene_or(1, 0) == 1);
+    assert(bt_kleene_or(-1, -1) == -1);
+    assert(bt_kleene_or(84, 27) == 111);
+
+    assert(bt_kleene_xor(1, -1) == -1);
+    assert(bt_kleene_xor(-1, -1) == 1);
+    assert(bt_kleene_xor(84, 27) == 0);
+
+    std::cout << "    -> PASSED: Exported helpers, BTHA, Base-243 codec, and Kleene logic verified." << std::endl;
 }
 
 int main() {

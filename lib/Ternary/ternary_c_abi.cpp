@@ -219,4 +219,34 @@ bool bt_verify_disjointness_val(bt_word64_t word) {
     return bt_verify_disjointness(word);
 }
 
+int64_t bt_kleene_and(int64_t a, int64_t b) {
+    if (a >= -1 && a <= 1 && b >= -1 && b <= 1) {
+        return (a < b) ? a : b;
+    }
+    auto wa = bt::Codec::from_int64(a);
+    auto wb = bt::Codec::from_int64(b);
+    auto wr = bt::kleene_and(wa, wb);
+    return bt::swar_to_int64(wr);
+}
+
+int64_t bt_kleene_or(int64_t a, int64_t b) {
+    if (a >= -1 && a <= 1 && b >= -1 && b <= 1) {
+        return (a > b) ? a : b;
+    }
+    auto wa = bt::Codec::from_int64(a);
+    auto wb = bt::Codec::from_int64(b);
+    auto wr = bt::kleene_or(wa, wb);
+    return bt::swar_to_int64(wr);
+}
+
+int64_t bt_kleene_xor(int64_t a, int64_t b) {
+    if (a >= -1 && a <= 1 && b >= -1 && b <= 1) {
+        return a * b;
+    }
+    auto wa = bt::Codec::from_int64(a);
+    auto wb = bt::Codec::from_int64(b);
+    auto wr = bt::kleene_xor(wa, wb);
+    return bt::swar_to_int64(wr);
+}
+
 } // extern "C"

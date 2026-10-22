@@ -33,7 +33,8 @@ enum class XbtFunct3 : uint8_t {
     KSADD     = 0b001, // 1-cycle 64-trit 6-Stage Kogge-Stone Parallel Prefix Adder
     DOT64     = 0b010, // 1-cycle 64-trit Planar Dot Product -> Scalar Register
     UNPACK243 = 0b011, // 1-cycle Division-Free Base-243 Byte -> Dual-Rail Unpack
-    NEG       = 0b100  // 0-gate Wire-Swapped Ternary Negation
+    NEG       = 0b100, // 0-gate Wire-Swapped Ternary Negation
+    CSAMAC    = 0b101  // 1-cycle Fused Carry-Save MAC (rs1 * rs2 accumulated into rd, funct7)
 };
 
 struct DecodedXbtInsn {
@@ -45,7 +46,7 @@ struct DecodedXbtInsn {
     uint8_t funct7{0};
 
     constexpr bool is_valid_xbt() const noexcept {
-        return opcode == OPCODE_XBT_CUSTOM0 && funct3 <= 0b100;
+        return opcode == OPCODE_XBT_CUSTOM0 && funct3 <= 0b101;
     }
 };
 
@@ -102,6 +103,9 @@ inline std::string disassemble_xbt(uint32_t insn) {
             break;
         case XbtFunct3::NEG:
             oss << "xbt.neg t" << +d.rd << ", t" << +d.rs1;
+            break;
+        case XbtFunct3::CSAMAC:
+            oss << "xbt.csamac t" << +d.rd << ", t" << +d.rs1 << ", t" << +d.rs2;
             break;
         default:
             return "unknown // invalid xbt funct3";
@@ -385,6 +389,23 @@ public:
                 // 0-gate wire-swapped negation: out_p = in_n, out_n = in_p
                 treg[d.rd] = TritWord64(rs1_t.N, rs1_t.P);
                 zero_gate_negations += 1;
+                instructions_retired += 1;
+                break;
+            }
+            case XbtFunct3::CSAMAC: {
+                // Fused Carry-Save MAC
+                uint64_t prod_p = (rs1_t.P & rs2_t.P) | (rs1_t.N & rs2_t.N);
+                uint64_t prod_n = (rs1_t.P & rs2_t.N) | (rs1_t.N & rs2_t.P);
+                uint64_t sp = ((prod_p ^ rs1_t.P) & ~(prod_n | rs1_t.N)) | (prod_n & rs1_t.N);
+                uint64_t sn = ((prod_n ^ rs1_t.N) & ~(prod_p | rs1_t.P)) | (prod_p & rs1_t.P);
+                uint64_t cp = prod_p & rs1_t.P;
+                uint64_t cn = prod_n & rs1_t.N;
+                treg[d.rd] = TritWord64(sp, sn);
+                last_carry = TritWord64(cp, cn);
+                if (d.funct7 > 0 && d.funct7 < 32) {
+                    treg[d.funct7] = TritWord64(cp, cn);
+                }
+                cycles += 1;
                 instructions_retired += 1;
                 break;
             }

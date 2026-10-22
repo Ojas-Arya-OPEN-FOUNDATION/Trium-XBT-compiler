@@ -748,6 +748,81 @@ void test_coupled_symplectic_lattice() {
 }
 
 // ==============================================================================
+// 9. Phase 3 Mathematical Powerhouse: div2_exact, mul_csa, toom3_mul & divmod_householder
+// ==============================================================================
+
+void test_phase3_bigint_developments() {
+    std::cout << "[Test 9/9] Phase 3 Mathematical Developments (div2_exact, mul_csa, toom3, divmod_householder)..." << std::endl;
+
+    using BigInt4 = TritBigInt<4>;
+
+    // 1. Exact division by 2: div2_exact
+    for (int64_t v = -500; v <= 500; v += 2) {
+        BigInt4 x = BigInt4::from_int64(v);
+        BigInt4 q = BigInt4::div2_exact(x);
+        assert(q.verify_invariants());
+        assert(q.to_int64() == v / 2);
+        assert(q + q == x);
+    }
+
+    // Wide 256-trit even number div2_exact
+    BigInt4 wide_even;
+    for (size_t i = 1; i < 200; i += 2) {
+        wide_even.setTrit(i, Trit::Pos);
+    }
+    // 2 * wide_even is guaranteed even
+    BigInt4 doubled = wide_even + wide_even;
+    BigInt4 halved = BigInt4::div2_exact(doubled);
+    assert(halved.verify_invariants());
+    assert(halved == wide_even);
+
+    // 2. Carry-Save Multi-Word Multiplier: mul_csa
+    int64_t test_factors[][2] = {
+        {12345, 6789}, {-999, 888}, {1000000, -42}, {0, 1234567}, {1, 987654321LL}
+    };
+    for (const auto& pair : test_factors) {
+        BigInt4 a = BigInt4::from_int64(pair[0]);
+        BigInt4 b = BigInt4::from_int64(pair[1]);
+        BigInt4 p_school = a * b;
+        BigInt4 p_csa = BigInt4::mul_csa(a, b);
+        assert(p_csa.verify_invariants());
+        assert(p_csa == p_school);
+    }
+
+    // 3. Fast Toom-3 Multiplication with div2_exact & shift_trits_right(1)
+    BigInt4 toom_a, toom_b;
+    toom_a.setTrit(35, Trit::Pos);
+    toom_a.setTrit(20, Trit::Neg);
+    toom_a.setTrit(5, Trit::Pos);
+
+    toom_b.setTrit(30, Trit::Neg);
+    toom_b.setTrit(15, Trit::Pos);
+    toom_b.setTrit(2, Trit::Neg);
+
+    BigInt4 toom_prod = BigInt4::toom3_mul(toom_a, toom_b);
+    assert(toom_prod.verify_invariants());
+    assert(toom_prod == toom_a * toom_b);
+
+    // 4. Householder Division on Wide Quotients (100 trits / 10 trits)
+    // Previously caused infinite hang; now completes instantly via block short-reciprocal loop!
+    BigInt4 wide_dividend, small_divisor;
+    for (size_t i = 0; i < 100; ++i) {
+        wide_dividend.setTrit(i, (i % 3 == 0) ? Trit::Pos : ((i % 3 == 1) ? Trit::Neg : Trit::Zero));
+    }
+    for (size_t i = 0; i < 10; ++i) {
+        small_divisor.setTrit(i, (i % 2 == 0) ? Trit::Pos : Trit::Neg);
+    }
+    if (small_divisor.is_zero()) small_divisor = BigInt4::from_int64(19);
+
+    auto [hq, hr] = BigInt4::divmod_householder(wide_dividend, small_divisor);
+    assert(hq.verify_invariants() && hr.verify_invariants());
+    assert(hq * small_divisor + hr == wide_dividend);
+    assert((hr.abs() + hr.abs()) <= small_divisor.abs());
+
+    std::cout << "  -> PASSED (div2_exact, mul_csa, toom3, divmod_householder verified)" << std::endl;
+}
+
+// ==============================================================================
 // Main Runner
 // ==============================================================================
 
@@ -764,9 +839,10 @@ int main() {
     test_symplectic_engine_reversibility();
     test_euclidean_domain_divmod_gcd_pow();
     test_coupled_symplectic_lattice();
+    test_phase3_bigint_developments();
 
     std::cout << "======================================================================" << std::endl;
-    std::cout << "  ALL 8 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
+    std::cout << "  ALL 9 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
     std::cout << "======================================================================" << std::endl;
 
     return 0;

@@ -210,11 +210,174 @@ public:
         // Helper: 3-way branchless select
         ir_ << "define i64 @bt_select(i64 %cond, i64 %p_val, i64 %z_val, i64 %n_val) nounwind readnone {\n";
         ir_ << "entry:\n";
-        ir_ << "  %is_pos = icmp eq i64 %cond, 1\n";
-        ir_ << "  %is_neg = icmp eq i64 %cond, -1\n";
+        ir_ << "  %is_pos = icmp sgt i64 %cond, 0\n";
+        ir_ << "  %is_neg = icmp slt i64 %cond, 0\n";
         ir_ << "  %sel1 = select i1 %is_pos, i64 %p_val, i64 %z_val\n";
         ir_ << "  %res = select i1 %is_neg, i64 %n_val, i64 %sel1\n";
         ir_ << "  ret i64 %res\n";
+        ir_ << "}\n\n";
+
+        // Helper: Kleene 3-valued AND: min(a, b) for trits, digit-wise min for multi-trit integers
+        ir_ << "define i64 @bt_kleene_and(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "entry:\n";
+        ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
+        ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
+        ir_ << "  %is_trit_a = and i1 %is_trit_a_lo, %is_trit_a_hi\n";
+        ir_ << "  %is_trit_b_lo = icmp sge i64 %b, -1\n";
+        ir_ << "  %is_trit_b_hi = icmp sle i64 %b, 1\n";
+        ir_ << "  %is_trit_b = and i1 %is_trit_b_lo, %is_trit_b_hi\n";
+        ir_ << "  %both_trits = and i1 %is_trit_a, %is_trit_b\n";
+        ir_ << "  br i1 %both_trits, label %trit_and, label %loop_and_init\n";
+        ir_ << "trit_and:\n";
+        ir_ << "  %c_and = icmp slt i64 %a, %b\n";
+        ir_ << "  %r_trit_and = select i1 %c_and, i64 %a, i64 %b\n";
+        ir_ << "  ret i64 %r_trit_and\n";
+        ir_ << "loop_and_init:\n";
+        ir_ << "  br label %loop_and\n";
+        ir_ << "loop_and:\n";
+        ir_ << "  %cur_a = phi i64 [ %a, %loop_and_init ], [ %next_a, %loop_and_body ]\n";
+        ir_ << "  %cur_b = phi i64 [ %b, %loop_and_init ], [ %next_b, %loop_and_body ]\n";
+        ir_ << "  %cur_p3 = phi i64 [ 1, %loop_and_init ], [ %next_p3, %loop_and_body ]\n";
+        ir_ << "  %cur_res = phi i64 [ 0, %loop_and_init ], [ %next_res, %loop_and_body ]\n";
+        ir_ << "  %done_a = icmp eq i64 %cur_a, 0\n";
+        ir_ << "  %done_b = icmp eq i64 %cur_b, 0\n";
+        ir_ << "  %both_done = and i1 %done_a, %done_b\n";
+        ir_ << "  br i1 %both_done, label %loop_and_exit, label %loop_and_body\n";
+        ir_ << "loop_and_body:\n";
+        ir_ << "  %rem_a = srem i64 %cur_a, 3\n";
+        ir_ << "  %div_a = sdiv i64 %cur_a, 3\n";
+        ir_ << "  %is_a2 = icmp eq i64 %rem_a, 2\n";
+        ir_ << "  %is_am2 = icmp eq i64 %rem_a, -2\n";
+        ir_ << "  %adj_div_a1 = select i1 %is_a2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_a2 = select i1 %is_am2, i64 -1, i64 %adj_div_a1\n";
+        ir_ << "  %next_a = add i64 %div_a, %adj_div_a2\n";
+        ir_ << "  %adj_rem_a1 = select i1 %is_a2, i64 -1, i64 %rem_a\n";
+        ir_ << "  %trit_a_val = select i1 %is_am2, i64 1, i64 %adj_rem_a1\n";
+        ir_ << "  %rem_b = srem i64 %cur_b, 3\n";
+        ir_ << "  %div_b = sdiv i64 %cur_b, 3\n";
+        ir_ << "  %is_b2 = icmp eq i64 %rem_b, 2\n";
+        ir_ << "  %is_bm2 = icmp eq i64 %rem_b, -2\n";
+        ir_ << "  %adj_div_b1 = select i1 %is_b2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_b2 = select i1 %is_bm2, i64 -1, i64 %adj_div_b1\n";
+        ir_ << "  %next_b = add i64 %div_b, %adj_div_b2\n";
+        ir_ << "  %adj_rem_b1 = select i1 %is_b2, i64 -1, i64 %rem_b\n";
+        ir_ << "  %trit_b_val = select i1 %is_bm2, i64 1, i64 %adj_rem_b1\n";
+        ir_ << "  %cmp_ab = icmp slt i64 %trit_a_val, %trit_b_val\n";
+        ir_ << "  %min_trit = select i1 %cmp_ab, i64 %trit_a_val, i64 %trit_b_val\n";
+        ir_ << "  %term = mul i64 %min_trit, %cur_p3\n";
+        ir_ << "  %next_res = add i64 %cur_res, %term\n";
+        ir_ << "  %next_p3 = mul i64 %cur_p3, 3\n";
+        ir_ << "  br label %loop_and\n";
+        ir_ << "loop_and_exit:\n";
+        ir_ << "  ret i64 %cur_res\n";
+        ir_ << "}\n\n";
+
+        // Helper: Kleene 3-valued OR: max(a, b) for trits, digit-wise max for multi-trit integers
+        ir_ << "define i64 @bt_kleene_or(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "entry:\n";
+        ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
+        ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
+        ir_ << "  %is_trit_a = and i1 %is_trit_a_lo, %is_trit_a_hi\n";
+        ir_ << "  %is_trit_b_lo = icmp sge i64 %b, -1\n";
+        ir_ << "  %is_trit_b_hi = icmp sle i64 %b, 1\n";
+        ir_ << "  %is_trit_b = and i1 %is_trit_b_lo, %is_trit_b_hi\n";
+        ir_ << "  %both_trits = and i1 %is_trit_a, %is_trit_b\n";
+        ir_ << "  br i1 %both_trits, label %trit_or, label %loop_or_init\n";
+        ir_ << "trit_or:\n";
+        ir_ << "  %c_or = icmp sgt i64 %a, %b\n";
+        ir_ << "  %r_trit_or = select i1 %c_or, i64 %a, i64 %b\n";
+        ir_ << "  ret i64 %r_trit_or\n";
+        ir_ << "loop_or_init:\n";
+        ir_ << "  br label %loop_or\n";
+        ir_ << "loop_or:\n";
+        ir_ << "  %cur_a = phi i64 [ %a, %loop_or_init ], [ %next_a, %loop_or_body ]\n";
+        ir_ << "  %cur_b = phi i64 [ %b, %loop_or_init ], [ %next_b, %loop_or_body ]\n";
+        ir_ << "  %cur_p3 = phi i64 [ 1, %loop_or_init ], [ %next_p3, %loop_or_body ]\n";
+        ir_ << "  %cur_res = phi i64 [ 0, %loop_or_init ], [ %next_res, %loop_or_body ]\n";
+        ir_ << "  %done_a = icmp eq i64 %cur_a, 0\n";
+        ir_ << "  %done_b = icmp eq i64 %cur_b, 0\n";
+        ir_ << "  %both_done = and i1 %done_a, %done_b\n";
+        ir_ << "  br i1 %both_done, label %loop_or_exit, label %loop_or_body\n";
+        ir_ << "loop_or_body:\n";
+        ir_ << "  %rem_a = srem i64 %cur_a, 3\n";
+        ir_ << "  %div_a = sdiv i64 %cur_a, 3\n";
+        ir_ << "  %is_a2 = icmp eq i64 %rem_a, 2\n";
+        ir_ << "  %is_am2 = icmp eq i64 %rem_a, -2\n";
+        ir_ << "  %adj_div_a1 = select i1 %is_a2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_a2 = select i1 %is_am2, i64 -1, i64 %adj_div_a1\n";
+        ir_ << "  %next_a = add i64 %div_a, %adj_div_a2\n";
+        ir_ << "  %adj_rem_a1 = select i1 %is_a2, i64 -1, i64 %rem_a\n";
+        ir_ << "  %trit_a_val = select i1 %is_am2, i64 1, i64 %adj_rem_a1\n";
+        ir_ << "  %rem_b = srem i64 %cur_b, 3\n";
+        ir_ << "  %div_b = sdiv i64 %cur_b, 3\n";
+        ir_ << "  %is_b2 = icmp eq i64 %rem_b, 2\n";
+        ir_ << "  %is_bm2 = icmp eq i64 %rem_b, -2\n";
+        ir_ << "  %adj_div_b1 = select i1 %is_b2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_b2 = select i1 %is_bm2, i64 -1, i64 %adj_div_b1\n";
+        ir_ << "  %next_b = add i64 %div_b, %adj_div_b2\n";
+        ir_ << "  %adj_rem_b1 = select i1 %is_b2, i64 -1, i64 %rem_b\n";
+        ir_ << "  %trit_b_val = select i1 %is_bm2, i64 1, i64 %adj_rem_b1\n";
+        ir_ << "  %cmp_ab = icmp sgt i64 %trit_a_val, %trit_b_val\n";
+        ir_ << "  %max_trit = select i1 %cmp_ab, i64 %trit_a_val, i64 %trit_b_val\n";
+        ir_ << "  %term = mul i64 %max_trit, %cur_p3\n";
+        ir_ << "  %next_res = add i64 %cur_res, %term\n";
+        ir_ << "  %next_p3 = mul i64 %cur_p3, 3\n";
+        ir_ << "  br label %loop_or\n";
+        ir_ << "loop_or_exit:\n";
+        ir_ << "  ret i64 %cur_res\n";
+        ir_ << "}\n\n";
+
+        // Helper: Ternary XOR: a * b for trits, digit-wise GF(3) product for multi-trit integers
+        ir_ << "define i64 @bt_kleene_xor(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "entry:\n";
+        ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
+        ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
+        ir_ << "  %is_trit_a = and i1 %is_trit_a_lo, %is_trit_a_hi\n";
+        ir_ << "  %is_trit_b_lo = icmp sge i64 %b, -1\n";
+        ir_ << "  %is_trit_b_hi = icmp sle i64 %b, 1\n";
+        ir_ << "  %is_trit_b = and i1 %is_trit_b_lo, %is_trit_b_hi\n";
+        ir_ << "  %both_trits = and i1 %is_trit_a, %is_trit_b\n";
+        ir_ << "  br i1 %both_trits, label %trit_xor, label %loop_xor_init\n";
+        ir_ << "trit_xor:\n";
+        ir_ << "  %r_trit_xor = mul i64 %a, %b\n";
+        ir_ << "  ret i64 %r_trit_xor\n";
+        ir_ << "loop_xor_init:\n";
+        ir_ << "  br label %loop_xor\n";
+        ir_ << "loop_xor:\n";
+        ir_ << "  %cur_a = phi i64 [ %a, %loop_xor_init ], [ %next_a, %loop_xor_body ]\n";
+        ir_ << "  %cur_b = phi i64 [ %b, %loop_xor_init ], [ %next_b, %loop_xor_body ]\n";
+        ir_ << "  %cur_p3 = phi i64 [ 1, %loop_xor_init ], [ %next_p3, %loop_xor_body ]\n";
+        ir_ << "  %cur_res = phi i64 [ 0, %loop_xor_init ], [ %next_res, %loop_xor_body ]\n";
+        ir_ << "  %done_a = icmp eq i64 %cur_a, 0\n";
+        ir_ << "  %done_b = icmp eq i64 %cur_b, 0\n";
+        ir_ << "  %both_done = and i1 %done_a, %done_b\n";
+        ir_ << "  br i1 %both_done, label %loop_xor_exit, label %loop_xor_body\n";
+        ir_ << "loop_xor_body:\n";
+        ir_ << "  %rem_a = srem i64 %cur_a, 3\n";
+        ir_ << "  %div_a = sdiv i64 %cur_a, 3\n";
+        ir_ << "  %is_a2 = icmp eq i64 %rem_a, 2\n";
+        ir_ << "  %is_am2 = icmp eq i64 %rem_a, -2\n";
+        ir_ << "  %adj_div_a1 = select i1 %is_a2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_a2 = select i1 %is_am2, i64 -1, i64 %adj_div_a1\n";
+        ir_ << "  %next_a = add i64 %div_a, %adj_div_a2\n";
+        ir_ << "  %adj_rem_a1 = select i1 %is_a2, i64 -1, i64 %rem_a\n";
+        ir_ << "  %trit_a_val = select i1 %is_am2, i64 1, i64 %adj_rem_a1\n";
+        ir_ << "  %rem_b = srem i64 %cur_b, 3\n";
+        ir_ << "  %div_b = sdiv i64 %cur_b, 3\n";
+        ir_ << "  %is_b2 = icmp eq i64 %rem_b, 2\n";
+        ir_ << "  %is_bm2 = icmp eq i64 %rem_b, -2\n";
+        ir_ << "  %adj_div_b1 = select i1 %is_b2, i64 1, i64 0\n";
+        ir_ << "  %adj_div_b2 = select i1 %is_bm2, i64 -1, i64 %adj_div_b1\n";
+        ir_ << "  %next_b = add i64 %div_b, %adj_div_b2\n";
+        ir_ << "  %adj_rem_b1 = select i1 %is_b2, i64 -1, i64 %rem_b\n";
+        ir_ << "  %trit_b_val = select i1 %is_bm2, i64 1, i64 %adj_rem_b1\n";
+        ir_ << "  %xor_trit = mul i64 %trit_a_val, %trit_b_val\n";
+        ir_ << "  %term = mul i64 %xor_trit, %cur_p3\n";
+        ir_ << "  %next_res = add i64 %cur_res, %term\n";
+        ir_ << "  %next_p3 = mul i64 %cur_p3, 3\n";
+        ir_ << "  br label %loop_xor\n";
+        ir_ << "loop_xor_exit:\n";
+        ir_ << "  ret i64 %cur_res\n";
         ir_ << "}\n\n";
 
         // Helper: Print integer
@@ -725,13 +888,13 @@ public:
                 fn_body_ << "  " << res << " = mul i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::KleeneAnd:
-                fn_body_ << "  " << res << " = and i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = call i64 @bt_kleene_and(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::KleeneOr:
-                fn_body_ << "  " << res << " = or i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = call i64 @bt_kleene_or(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::TernaryXor:
-                fn_body_ << "  " << res << " = xor i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+                fn_body_ << "  " << res << " = call i64 @bt_kleene_xor(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
                 break;
             case frontend::BinaryOp::Spaceship:
                 fn_body_ << "  " << res << " = call i64 @bt_spaceship(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
@@ -799,43 +962,100 @@ public:
         node.condition->accept(*this);
         std::string cond_val = current_val_;
 
-        // Track branch termination: if any branch returns, emitting the
-        // remaining branch bodies (and the @bt_select call) would produce
-        // instructions after a terminator (invalid IR).
-        bool any_terminated = false;
-        std::string p_val = "0";
-        std::string z_val = "0";
-        std::string n_val = "0";
+        bool is_pure_expr = (!dynamic_cast<frontend::BlockNode*>(node.pos_branch.get()) &&
+                             !dynamic_cast<frontend::BlockNode*>(node.zero_branch.get()) &&
+                             !dynamic_cast<frontend::BlockNode*>(node.neg_branch.get()));
 
-        node.pos_branch->accept(*this);
-        p_val = current_val_;
-        any_terminated = block_terminated_;
+        if (is_pure_expr) {
+            bool any_terminated = false;
+            std::string p_val = "0";
+            std::string z_val = "0";
+            std::string n_val = "0";
 
-        if (!any_terminated) {
-            node.zero_branch->accept(*this);
-            z_val = current_val_;
+            node.pos_branch->accept(*this);
+            p_val = current_val_;
             any_terminated = block_terminated_;
-        }
 
-        if (!any_terminated) {
-            node.neg_branch->accept(*this);
-            n_val = current_val_;
-            any_terminated = block_terminated_;
-        }
+            if (!any_terminated) {
+                node.zero_branch->accept(*this);
+                z_val = current_val_;
+                any_terminated = block_terminated_;
+            }
 
-        if (any_terminated) {
-            // A branch terminated the block (e.g. early return); leave
-            // block_terminated_ set so the enclosing block stops emitting.
-            current_val_ = "0";
+            if (!any_terminated) {
+                node.neg_branch->accept(*this);
+                n_val = current_val_;
+                any_terminated = block_terminated_;
+            }
+
+            if (any_terminated) {
+                current_val_ = "0";
+                current_type_ = "i64";
+                return;
+            }
+
+            if (node.location.line > 0) current_loc_ = node.location;
+            std::string res = new_reg();
+            fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << cond_val << ", i64 "
+                     << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
+            current_val_ = res;
             current_type_ = "i64";
             return;
         }
 
-        if (node.location.line > 0) current_loc_ = node.location;
-        std::string res = new_reg();
-        fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << cond_val << ", i64 "
-                 << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
-        current_val_ = res;
+        // Block statement form: branch to pos, zero, neg basic blocks
+        std::string is_pos_reg = new_reg();
+        std::string is_neg_reg = new_reg();
+        fn_body_ << "  " << is_pos_reg << " = icmp sgt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
+        fn_body_ << "  " << is_neg_reg << " = icmp slt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
+
+        std::string pos_lbl = new_label("sel_pos");
+        std::string not_pos_lbl = new_label("sel_not_pos");
+        std::string zero_lbl = new_label("sel_zero");
+        std::string neg_lbl = new_label("sel_neg");
+        std::string merge_lbl = new_label("sel_merge");
+
+        fn_body_ << "  br i1 " << is_pos_reg << ", label %" << pos_lbl << ", label %" << not_pos_lbl << dbg_tag() << "\n";
+
+        // Pos Branch
+        fn_body_ << pos_lbl << ":\n";
+        block_terminated_ = false;
+        node.pos_branch->accept(*this);
+        bool pos_term = block_terminated_;
+        if (!pos_term) {
+            fn_body_ << "  br label %" << merge_lbl << dbg_tag() << "\n";
+        }
+
+        // Not Pos Branch -> branch to neg or zero
+        fn_body_ << not_pos_lbl << ":\n";
+        fn_body_ << "  br i1 " << is_neg_reg << ", label %" << neg_lbl << ", label %" << zero_lbl << dbg_tag() << "\n";
+
+        // Zero Branch
+        fn_body_ << zero_lbl << ":\n";
+        block_terminated_ = false;
+        node.zero_branch->accept(*this);
+        bool zero_term = block_terminated_;
+        if (!zero_term) {
+            fn_body_ << "  br label %" << merge_lbl << dbg_tag() << "\n";
+        }
+
+        // Neg Branch
+        fn_body_ << neg_lbl << ":\n";
+        block_terminated_ = false;
+        node.neg_branch->accept(*this);
+        bool neg_term = block_terminated_;
+        if (!neg_term) {
+            fn_body_ << "  br label %" << merge_lbl << dbg_tag() << "\n";
+        }
+
+        if (pos_term && zero_term && neg_term) {
+            block_terminated_ = true;
+            return;
+        }
+
+        fn_body_ << merge_lbl << ":\n";
+        block_terminated_ = false;
+        current_val_ = "0";
         current_type_ = "i64";
     }
 

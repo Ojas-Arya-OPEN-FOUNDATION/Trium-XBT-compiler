@@ -21,6 +21,7 @@ static void test_encoding_and_disassembly() {
     uint32_t i_dot64  = encode_xbt_r(0, 2, 1, static_cast<uint8_t>(XbtFunct3::DOT64), 10);
     uint32_t i_unpack = encode_xbt_r(0, 0, 11, static_cast<uint8_t>(XbtFunct3::UNPACK243), 7);
     uint32_t i_neg    = encode_xbt_r(0, 0, 6, static_cast<uint8_t>(XbtFunct3::NEG), 8);
+    uint32_t i_csamac = encode_xbt_r(0, 2, 1, static_cast<uint8_t>(XbtFunct3::CSAMAC), 9);
 
     DecodedXbtInsn d_dot = decode_xbt_r(i_dot64);
     assert(d_dot.is_valid_xbt());
@@ -36,6 +37,7 @@ static void test_encoding_and_disassembly() {
     assert(disassemble_xbt(i_dot64)  == "xbt.dot64 x10, t1, t2 // .insn r 0x0b, 2, 0, x10, x1, x2");
     assert(disassemble_xbt(i_unpack) == "xbt.unpack243 t7, x11 // .insn r 0x0b, 3, 0, x7, x11, x0");
     assert(disassemble_xbt(i_neg)    == "xbt.neg t8, t6 // .insn r 0x0b, 4, 0, x8, x6, x0");
+    assert(disassemble_xbt(i_csamac) == "xbt.csamac t9, t1, t2 // .insn r 0x0b, 5, 0, x9, x1, x2");
 
     std::cout << "  [PASS] Xbt R-Type Encoding, Decoding & Disassembly\n";
 }
@@ -90,6 +92,13 @@ static void test_coprocessor_execution() {
     // Verify x0 hardwired zero protection on XBT.DOT64
     cpu.execute(encode_xbt_r(0, 11, 10, static_cast<uint8_t>(XbtFunct3::DOT64), 0));
     assert(cpu.xreg[0] == 0);
+
+    // 3b. Test XBT.CSAMAC (Fused Carry-Save MAC)
+    cpu.treg[1] = Codec::from_int64(1);
+    cpu.treg[2] = Codec::from_int64(1);
+    cpu.execute(encode_xbt_r(4, 2, 1, static_cast<uint8_t>(XbtFunct3::CSAMAC), 3));
+    assert(cpu.treg[3].isValid());
+    assert(cpu.treg[4].isValid());
 
     // 4. Test XBT.UNPACK243 exhaustively for all 243 valid bytes [0..242] + out-of-range [243..255]
     for (int b = 0; b < 256; ++b) {
@@ -150,6 +159,7 @@ static void test_systemverilog_rtl_presence() {
     const std::vector<std::string> required_modules = {
         "module xbt_btha64",
         "module xbt_kogge_stone_adder64",
+        "module xbt_kogge_stone_adder64_v2",
         "module xbt_planar_dot64",
         "module xbt_base243_decoder",
         "module riscv_xbt_alu"
@@ -159,7 +169,7 @@ static void test_systemverilog_rtl_presence() {
         assert(content.find(mod) != std::string::npos && "Missing required SystemVerilog module!");
     }
 
-    std::cout << "  [PASS] SystemVerilog RTL Verification (All 5 Xbt Hardware Modules Verified)\n";
+    std::cout << "  [PASS] SystemVerilog RTL Verification (All 6 Xbt Hardware Modules Verified)\n";
 }
 
 int main() {
