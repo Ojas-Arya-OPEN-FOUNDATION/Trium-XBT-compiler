@@ -911,8 +911,10 @@ public:
         double log3_val = std::log(std::abs(val)) / std::log(3.0);
         int est_e = static_cast<int>(std::floor(log3_val - (MantissaTrits - 0.5)));
 
-        // Scale safely
-        double scaled = val * std::pow(3.0, -est_e);
+        // Scale safely in two stages when |est_e| > 500 so 3^(-est_e) never overflows IEEE-754 double (~3^646)
+        int e1 = -est_e / 2;
+        int e2 = -est_e - e1;
+        double scaled = (val * std::pow(3.0, e1)) * std::pow(3.0, e2);
         int64_t m = std::llround(scaled);
 
         BTFP res(m, est_e);
@@ -1230,8 +1232,10 @@ public:
         BTFP X = BTFP::from_double(seed_val);
 
         // Householder iteration: R = 1 - D * X, X = X * (1 + R + R^2)
+        // Initial seed error |R_0| <= 1/18 (~2.63 trits). Each cubic step triples accurate trits:
+        // k=1 -> ~7.9 trits, k=2 -> ~23.6 trits, k=3 -> ~70.9 trits.
         BTFP one(1);
-        int steps = (MantissaTrits <= 9) ? 1 : ((MantissaTrits <= 27) ? 2 : 3);
+        int steps = (MantissaTrits <= 6) ? 1 : ((MantissaTrits <= 20) ? 2 : 3);
         for (int k = 0; k < steps; ++k) {
             BTFP R = one.sub(D.mul(X));
             BTFP R2 = R.mul(R);
