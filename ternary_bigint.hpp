@@ -559,8 +559,9 @@ public:
         // Block Short-Reciprocal Loop (eliminates fixed-width overflow & wide-quotient hang)
         TritBigInt Q{};
         TritBigInt rem = A;
+        int max_block_iters = static_cast<int>(64 * NumWords / 8) + 4;
 
-        while (!rem.is_zero()) {
+        for (int block_iter = 0; block_iter < max_block_iters && !rem.is_zero(); ++block_iter) {
             int top_r = rem.highest_non_zero_trit();
             int cur_q_trits = top_r - top_b + 1;
             if (cur_q_trits <= 4) break; // Finish last few trits via exact recurrence
@@ -575,8 +576,10 @@ public:
             else if (total_shift < 0) dQ = dQ.shift_trits_right(static_cast<size_t>(-total_shift));
 
             if (dQ.is_zero()) break;
+            TritBigInt next_rem = sub(rem, mul(dQ, B));
+            if (next_rem.abs() >= rem.abs()) break; // Monotone remainder decrease guard
             Q = add(Q, dQ);
-            rem = sub(rem, mul(dQ, B));
+            rem = next_rem;
         }
 
         // If any residual remains, resolve via exact digit recurrence
@@ -609,6 +612,20 @@ public:
     }
 
     /**
+     * @brief Counts the number of trailing zero trits (highest k such that 3^k divides *this).
+     * Returns 64 * NumWords if *this == 0.
+     */
+    constexpr size_t countr_zero_trits() const noexcept {
+        for (size_t w = 0; w < NumWords; ++w) {
+            uint64_t nz = words[w].P | words[w].N;
+            if (nz != 0) {
+                return w * 64 + static_cast<size_t>(std::countr_zero(nz));
+            }
+        }
+        return 64 * NumWords;
+    }
+
+    /**
      * @brief Centered Balanced Ternary Euclidean GCD.
      * Uses centered remainder divmod(a, b).second, converging in ~29.5% fewer steps than standard Euclidean GCD.
      */
@@ -621,6 +638,43 @@ public:
             b = r.abs();
         }
         return a.abs();
+    }
+
+    /**
+     * @brief Division-Free Ternary Stein's GCD Algorithm.
+     * Uses only trit shifts (exact division by 3) and balanced ternary addition/subtraction.
+     * Since non-zero trits mod 3 are only +1 or -1, if a_0 == b_0 then (a - b) = 0 (mod 3),
+     * and if a_0 != b_0 then (a + b) = 0 (mod 3), guaranteeing at least 1 trit reduction per step!
+     */
+    static TritBigInt gcd_stein(TritBigInt a, TritBigInt b) noexcept {
+        a = a.abs();
+        b = b.abs();
+        if (a.is_zero()) return b;
+        if (b.is_zero()) return a;
+
+        size_t shift_a = a.countr_zero_trits();
+        size_t shift_b = b.countr_zero_trits();
+        size_t common_pow3 = std::min(shift_a, shift_b);
+
+        a = a.shift_trits_right(shift_a);
+        b = b.shift_trits_right(shift_b);
+
+        while (!b.is_zero()) {
+            b = b.shift_trits_right(b.countr_zero_trits());
+            if (a > b) {
+                std::swap(a, b);
+            }
+            // Now a <= b, both >= 0, and neither is divisible by 3 (their LSB trits are in {-1, +1}).
+            Trit a0 = a.getTrit(0);
+            Trit b0 = b.getTrit(0);
+            if (a0 == b0) {
+                b = sub(b, a);
+            } else {
+                TritBigInt sum_ab = add(b, a);
+                b = sum_ab.shift_trits_right(1);
+            }
+        }
+        return a.shift_trits_left(common_pow3);
     }
 
     /**
