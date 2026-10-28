@@ -533,6 +533,35 @@ void test_general_solver_and_convolve_radix3() {
         }
         assert(std::abs(conv_fft[n] - ref) < 1e-11);
     }
+
+    // 4. Radix3FFT::convolve_radix3_int64 exact integer convolution
+    std::vector<int64_t> ia = {1, -2, 3, 5};
+    std::vector<int64_t> ib = {4, 1, -1};
+    std::vector<int64_t> iconv = Radix3FFT::convolve_radix3_int64(ia, ib);
+    assert(iconv.size() == ia.size() + ib.size() - 1);
+    // iconv[0] = 1*4 = 4
+    // iconv[1] = 1*1 + (-2)*4 = -7
+    // iconv[2] = 1*(-1) + (-2)*1 + 3*4 = 9
+    assert(iconv[0] == 4 && iconv[1] == -7 && iconv[2] == 9);
+
+    // 5. Radix3FFT::circular_convolve_radix3 (N = 9 = 3^2)
+    using cdouble = Radix3FFT::cdouble;
+    std::vector<cdouble> ca(9, cdouble(0, 0)), cb(9, cdouble(0, 0));
+    ca[0] = cdouble(1, 0); ca[1] = cdouble(2, 0);
+    cb[0] = cdouble(3, 0); cb[1] = cdouble(4, 0);
+    std::vector<cdouble> circ_conv = Radix3FFT::circular_convolve_radix3(ca, cb);
+    assert(circ_conv.size() == 9);
+    // (1 + 2z)(3 + 4z) = 3 + 10z + 8z^2
+    assert(std::abs(circ_conv[0].real() - 3.0) < 1e-10);
+    assert(std::abs(circ_conv[1].real() - 10.0) < 1e-10);
+    assert(std::abs(circ_conv[2].real() - 8.0) < 1e-10);
+
+    // 6. BTFP <-> Rational exact / single-rounding bridge
+    BTFP32 btfp_val = BTFP32::from_double(1.5);
+    Rational rat = to_rational(btfp_val);
+    assert(std::abs(rat.to_double() - 1.5) < 1e-5);
+    BTFP32 btfp_recon = from_rational<20>(rat);
+    assert(std::abs(btfp_recon.to_double() - 1.5) < 1e-5);
 }
 
 // ==============================================================================
