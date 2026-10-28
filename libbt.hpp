@@ -27,6 +27,7 @@
 
 #include "ternary_core.hpp"
 #include "ternary_dense_algebra.hpp"
+#include "ternary_fp.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -506,7 +507,7 @@ public:
                 }
             }
 
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+            if constexpr (!std::is_same_v<T, Rational> && !std::is_integral_v<T>) {
                 if (max_val < singular_threshold) return T{0};
             } else {
                 if (A(pivot, i) == T{0}) {
@@ -577,7 +578,7 @@ public:
                 }
             }
 
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+            if constexpr (!std::is_same_v<T, Rational> && !std::is_integral_v<T>) {
                 if (max_val < singular_threshold) {
                     if (invertible) *invertible = false;
                     else throw std::runtime_error("Matrix is singular (non-invertible)");
@@ -660,7 +661,7 @@ public:
                 }
             }
 
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
+            if constexpr (!std::is_same_v<T, Rational> && !std::is_integral_v<T>) {
                 if (max_val < singular_threshold) {
                     throw std::runtime_error("Matrix::solve(): matrix is singular");
                 }
@@ -1010,6 +1011,71 @@ inline RealMatrix to_real_matrix(const DenseMatrixInt64& A) {
     return M;
 }
 
+/**
+ * @brief Exact conversion from BTFP<W, ExponentTrits> to Rational: M * 3^E.
+ * Throws std::overflow_error if 3^|E| exceeds int64_t range (|E| > 38).
+ */
+template <int W, int ExponentTrits = 0>
+inline Rational to_rational(const BTFP<W, ExponentTrits>& x) {
+    if (x.is_zero()) return Rational(0, 1);
+    int64_t m = x.mantissa();
+    int32_t e = x.exponent();
+    if (e == 0) return Rational(m, 1);
+    if (std::abs(e) > 38) {
+        throw std::overflow_error("to_rational(BTFP): exponent out of exact int64_t power-of-3 range");
+    }
+    int64_t p3 = fp_detail::POW3_64[static_cast<size_t>(std::abs(e))];
+    if (e > 0) {
+        __int128 prod = static_cast<__int128>(m) * static_cast<__int128>(p3);
+        if (prod > std::numeric_limits<int64_t>::max() || prod < std::numeric_limits<int64_t>::min()) {
+            throw std::overflow_error("to_rational(BTFP): numerator overflow in M * 3^E");
+        }
+        return Rational(static_cast<int64_t>(prod), 1);
+    } else {
+        return Rational(m, p3);
+    }
+}
+
+/**
+ * @brief Single-rounding conversion from Rational(num, den) to BTFP<W, ExponentTrits>.
+ * Avoids intermediate IEEE-754 double rounding when scaling fits in 128-bit integer arithmetic.
+ */
+template <int W, int ExponentTrits = 0>
+inline BTFP<W, ExponentTrits> from_rational(const Rational& r) {
+    if (r.is_zero()) return BTFP<W, ExponentTrits>(0, 0);
+    double approx = r.to_double();
+    int est_e = static_cast<int>(std::floor(std::log(std::abs(approx)) / std::log(3.0) - (static_cast<double>(W) - 0.5)));
+    if (std::abs(est_e) <= 38) {
+        __int128 num = static_cast<__int128>(r.num);
+        __int128 den = static_cast<__int128>(r.den);
+        if (est_e <= 0) {
+            __int128 scale = static_cast<__int128>(fp_detail::POW3_64[static_cast<size_t>(-est_e)]);
+            // Check if |num * scale| fits in __int128
+            __int128 abs_num = (num < 0) ? -num : num;
+            if (abs_num <= (std::numeric_limits<__int128>::max() / scale / 4)) {
+                __int128 scaled_num = num * scale;
+                // Symmetric nearest-integer rounding of scaled_num / den:
+                __int128 q = scaled_num / den;
+                __int128 rem = scaled_num % den;
+                if (2 * rem > den) q += 1;
+                else if (2 * rem < -den) q -= 1;
+                return BTFP<W, ExponentTrits>(static_cast<int64_t>(q), est_e);
+            }
+        } else {
+            __int128 scale = static_cast<__int128>(fp_detail::POW3_64[static_cast<size_t>(est_e)]);
+            if (den <= (std::numeric_limits<__int128>::max() / scale / 4)) {
+                __int128 scaled_den = den * scale;
+                __int128 q = num / scaled_den;
+                __int128 rem = num % scaled_den;
+                if (2 * rem > scaled_den) q += 1;
+                else if (2 * rem < -scaled_den) q -= 1;
+                return BTFP<W, ExponentTrits>(static_cast<int64_t>(q), est_e);
+            }
+        }
+    }
+    return BTFP<W, ExponentTrits>::from_double(approx);
+}
+
 // ==============================================================================
 // 3. Vector Norms (L1, L2 Squared, L2 Euclidean, Linf Chebyshev)
 // ==============================================================================
@@ -1286,6 +1352,43 @@ public:
             res[i] = cc[i].real();
         }
         return res;
+    }
+
+    /**
+     * @brief Exact integer linear convolution via Radix-3 FFT with nearest-integer rounding.
+     */
+    static std::vector<int64_t> convolve_radix3_int64(const std::vector<int64_t>& a,
+                                                      const std::vector<int64_t>& b) {
+        if (a.empty() || b.empty()) return {};
+        std::vector<double> da(a.size()), db(b.size());
+        for (size_t i = 0; i < a.size(); ++i) da[i] = static_cast<double>(a[i]);
+        for (size_t i = 0; i < b.size(); ++i) db[i] = static_cast<double>(b[i]);
+        std::vector<double> dc = convolve_real_radix3(da, db);
+        std::vector<int64_t> res(dc.size());
+        for (size_t i = 0; i < dc.size(); ++i) {
+            res[i] = static_cast<int64_t>(std::llround(dc[i]));
+        }
+        return res;
+    }
+
+    /**
+     * @brief Exact circular convolution of length N = 3^k via Radix-3 FFT.
+     */
+    static std::vector<cdouble> circular_convolve_radix3(const std::vector<cdouble>& a,
+                                                         const std::vector<cdouble>& b) {
+        if (a.size() != b.size()) {
+            throw std::invalid_argument("circular_convolve_radix3: sequences must have equal length N = 3^k");
+        }
+        if (a.empty()) return {};
+        size_t N = a.size();
+        (void)get_power_of_3_exponent(N);
+        std::vector<cdouble> FA = fft(a);
+        std::vector<cdouble> FB = fft(b);
+        std::vector<cdouble> FC(N);
+        for (size_t i = 0; i < N; ++i) {
+            FC[i] = FA[i] * FB[i];
+        }
+        return ifft(FC);
     }
 
     /**
