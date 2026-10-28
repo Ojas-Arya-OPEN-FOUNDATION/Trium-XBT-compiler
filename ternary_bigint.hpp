@@ -678,6 +678,114 @@ public:
     }
 
     /**
+     * @brief Extended Euclidean Algorithm (Bézout Identity):
+     * Returns {g, x, y} such that a * x + b * y == g = gcd(a, b) with g >= 0.
+     */
+    struct ExtendedGCDResult {
+        TritBigInt g;
+        TritBigInt x;
+        TritBigInt y;
+    };
+
+    static ExtendedGCDResult xgcd(TritBigInt a, TritBigInt b) {
+        TritBigInt old_r = a, r = b;
+        TritBigInt old_s = from_int64(1), s = from_int64(0);
+        TritBigInt old_t = from_int64(0), t = from_int64(1);
+
+        while (!r.is_zero()) {
+            auto [q, rem] = divmod(old_r, r);
+            old_r = r;
+            r = rem;
+
+            TritBigInt next_s = sub(old_s, mul(q, s));
+            old_s = s;
+            s = next_s;
+
+            TritBigInt next_t = sub(old_t, mul(q, t));
+            old_t = t;
+            t = next_t;
+        }
+
+        if (old_r.sign() < 0) {
+            old_r = -old_r;
+            old_s = -old_s;
+            old_t = -old_t;
+        }
+        return {old_r, old_s, old_t};
+    }
+
+    /**
+     * @brief Computes the modular inverse a^-1 mod m in [0, |m|) or centered.
+     * Throws std::domain_error if gcd(a, m) != 1.
+     */
+    static TritBigInt mod_inverse(const TritBigInt& a, const TritBigInt& m) {
+        if (m.is_zero()) {
+            throw std::domain_error("TritBigInt::mod_inverse: modulus cannot be zero");
+        }
+        auto [g, x, y] = xgcd(a, m);
+        (void)y;
+        if (g != from_int64(1)) {
+            throw std::domain_error("TritBigInt::mod_inverse: elements are not coprime");
+        }
+        return divmod(x, m).second;
+    }
+
+    /**
+     * @brief Converts arbitrary-precision TritBigInt to a signed base-10 string.
+     */
+    std::string to_decimal_string() const {
+        if (is_zero()) return "0";
+        bool neg = sign() < 0;
+        TritBigInt cur = abs();
+        const TritBigInt base10 = from_int64(10);
+        std::string digits;
+        while (!cur.is_zero()) {
+            auto [q, r] = divmod(cur, base10);
+            int64_t rem_val = r.to_int64(5);
+            if (rem_val < 0) {
+                rem_val += 10;
+                q = sub(q, from_int64(1));
+            }
+            digits.push_back(static_cast<char>('0' + rem_val));
+            cur = q;
+        }
+        if (neg) digits.push_back('-');
+        std::reverse(digits.begin(), digits.end());
+        return digits;
+    }
+
+    /**
+     * @brief Parses a signed base-10 string into a TritBigInt.
+     */
+    static TritBigInt from_decimal_string(std::string_view str) {
+        while (!str.empty() && (str.front() == ' ' || str.front() == '\t')) str.remove_prefix(1);
+        while (!str.empty() && (str.back() == ' ' || str.back() == '\t')) str.remove_suffix(1);
+        if (str.empty()) {
+            throw std::invalid_argument("TritBigInt::from_decimal_string: empty string");
+        }
+        bool neg = false;
+        if (str.front() == '-') {
+            neg = true;
+            str.remove_prefix(1);
+        } else if (str.front() == '+') {
+            str.remove_prefix(1);
+        }
+        if (str.empty()) {
+            throw std::invalid_argument("TritBigInt::from_decimal_string: no digits");
+        }
+        TritBigInt res{};
+        const TritBigInt ten = from_int64(10);
+        for (char c : str) {
+            if (c == '_') continue;
+            if (c < '0' || c > '9') {
+                throw std::invalid_argument("TritBigInt::from_decimal_string: invalid decimal digit");
+            }
+            res = add(mul(res, ten), from_int64(c - '0'));
+        }
+        return neg ? -res : res;
+    }
+
+    /**
      * @brief Binary Exponentiation: computes (*this)^exp in O(log exp) multiplications.
      */
     TritBigInt pow(uint64_t exp) const noexcept {
