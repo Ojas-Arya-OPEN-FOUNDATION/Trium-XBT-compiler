@@ -68,14 +68,25 @@ inline BTFP32 xbt_exp_btfp32(const BTFP32& x) noexcept {
 
 /**
  * @brief Odd-Symmetric Balanced Ternary Padé Tanh(x).
- * Uses exact odd symmetry tanh(-x) = -tanh(x) and [5/4] Padé approximant after range reduction.
- * Max absolute error < 2e-9 across all real numbers, 0 branch mispredictions.
+ * Enforces exact odd symmetry tanh(-x) = -tanh(x), uses [7/6] Lambert Padé rational
+ * approximant for |x| < 0.65 (zero catastrophic cancellation near x = 0), and
+ * base-3 range-reduced xbt_exp_fast for |x| >= 0.65.
  */
 inline double xbt_tanh_fast(double x) noexcept {
-    if (x > 9.0)  return  1.0;
-    if (x < -9.0) return -1.0;
-    double e2x = xbt_exp_fast(2.0 * x);
-    return (e2x - 1.0) / (e2x + 1.0);
+    if (x == 0.0) return 0.0;
+    double s = (x < 0.0) ? -1.0 : 1.0;
+    double ax = std::abs(x);
+    if (ax > 19.0) return s;
+    if (ax < 0.65) {
+        double x2 = ax * ax;
+        double x4 = x2 * x2;
+        double x6 = x4 * x2;
+        double num = ax * (135135.0 + 17325.0 * x2 + 378.0 * x4 + x6);
+        double den = 135135.0 + 62370.0 * x2 + 3150.0 * x4 + 28.0 * x6;
+        return s * (num / den);
+    }
+    double e2x = xbt_exp_fast(2.0 * ax);
+    return s * ((e2x - 1.0) / (e2x + 1.0));
 }
 
 /**
