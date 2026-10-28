@@ -269,6 +269,21 @@ void test_universal_harley_seal_and_bitnet() {
     int64_t csa_dot27 = CSAContractor40to4::dot_product_27words(words27);
     assert(csa_dot27 == ref_dot27 && "CSAContractor40to4::dot_product_27words must match sum of 27 words!");
 
+    // 1b. Verify CSAContractor40to4::compress40 and dot_product_40words
+    TritWord64 words40[40];
+    for (size_t i = 0; i < 40; ++i) {
+        uint64_t p = (0xFEDCBA9876543210ULL ^ (i * 0x0303030303030303ULL));
+        uint64_t n = (~p & 0xAAAAAAAAAAAAAAAAULL);
+        words40[i] = TritWord64(p & ~n, n);
+    }
+    int64_t ref_dot40 = 0;
+    for (size_t i = 0; i < 40; ++i) {
+        ref_dot40 += CSAContractor40to4::fast_rail_diff(words40[i]);
+        assert(CSAContractor40to4::fast_rail_diff(words40[i]) == CSAContractor40to4::swar_rail_diff(words40[i]));
+    }
+    int64_t csa_dot40 = CSAContractor40to4::dot_product_40words(words40);
+    assert(csa_dot40 == ref_dot40 && "CSAContractor40to4::dot_product_40words must match sum of 40 words!");
+
     // 2. Verify gemm_universal_harley_seal against standard gemm
     const size_t M = 32, K = 128, N = 32;
     TernaryMatrix A_mat(M, K);
