@@ -822,6 +822,52 @@ void test_phase3_bigint_developments() {
     std::cout << "  -> PASSED (div2_exact, mul_csa, toom3, divmod_householder verified)" << std::endl;
 }
 
+void test_phase3_advanced_algorithms() {
+    std::cout << "[Test 10/10] Advanced Algorithms (countr_zero_trits, Stein GCD, xgcd, mod_inverse, Decimal String)..." << std::endl;
+    using BigInt4 = TritBigInt<4>;
+
+    // 1. countr_zero_trits
+    BigInt4 z_zero{};
+    assert(z_zero.countr_zero_trits() == 256);
+    BigInt4 z_27 = BigInt4::from_int64(27); // 3^3
+    assert(z_27.countr_zero_trits() == 3);
+    BigInt4 z_81 = BigInt4::from_int64(81); // 3^4
+    assert(z_81.countr_zero_trits() == 4);
+
+    // 2. Division-Free Ternary Stein's GCD
+    BigInt4 g1 = BigInt4::gcd_stein(BigInt4::from_int64(54), BigInt4::from_int64(24));
+    assert(g1 == BigInt4::from_int64(6));
+    BigInt4 g2 = BigInt4::gcd_stein(BigInt4::from_int64(100), BigInt4::from_int64(25));
+    assert(g2 == BigInt4::from_int64(25));
+    BigInt4 g3 = BigInt4::gcd_stein(BigInt4::from_int64(3589), BigInt4::from_int64(1043));
+    assert(g3 == BigInt4::gcd(BigInt4::from_int64(3589), BigInt4::from_int64(1043)));
+
+    // 3. Extended Euclidean Algorithm (xgcd) & Modular Inverse
+    BigInt4 a = BigInt4::from_int64(35);
+    BigInt4 b = BigInt4::from_int64(15);
+    auto [g, x, y] = BigInt4::xgcd(a, b);
+    assert(g == BigInt4::from_int64(5));
+    assert(a * x + b * y == g);
+
+    // Modular inverse: 3^-1 mod 7
+    BigInt4 inv3_mod7 = BigInt4::mod_inverse(BigInt4::from_int64(3), BigInt4::from_int64(7));
+    BigInt4 prod_mod = BigInt4::divmod(inv3_mod7 * BigInt4::from_int64(3), BigInt4::from_int64(7)).second;
+    assert(prod_mod == BigInt4::from_int64(1));
+
+    // 4. Arbitrary-Precision Decimal String I/O
+    std::string s_pos = "1234567890123456789";
+    BigInt4 dec_pos = BigInt4::from_decimal_string(s_pos);
+    assert(dec_pos.to_decimal_string() == s_pos);
+
+    std::string s_neg = "-98765432109876";
+    BigInt4 dec_neg = BigInt4::from_decimal_string(s_neg);
+    assert(dec_neg.to_decimal_string() == s_neg);
+
+    assert(BigInt4::from_decimal_string("0").to_decimal_string() == "0");
+
+    std::cout << "  -> PASSED (countr_zero_trits, Stein GCD, xgcd, mod_inverse, Decimal String verified)" << std::endl;
+}
+
 // ==============================================================================
 // Main Runner
 // ==============================================================================
@@ -840,9 +886,10 @@ int main() {
     test_euclidean_domain_divmod_gcd_pow();
     test_coupled_symplectic_lattice();
     test_phase3_bigint_developments();
+    test_phase3_advanced_algorithms();
 
     std::cout << "======================================================================" << std::endl;
-    std::cout << "  ALL 9 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
+    std::cout << "  ALL 10 UNIT TEST SUITES PASSED WITH 0 FAILURES." << std::endl;
     std::cout << "======================================================================" << std::endl;
 
     return 0;
