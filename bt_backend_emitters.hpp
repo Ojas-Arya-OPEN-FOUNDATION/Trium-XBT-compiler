@@ -117,20 +117,17 @@ struct CSAContractor9to2 {
  */
 struct CSAContractor40to4 {
     TritWord64 Sum;      // weight 1
-    TritWord64 Carry3;   // weight 3
-    TritWord64 Carry9;   // weight 9
-    TritWord64 Carry27;  // weight 27
+    TritWord64 Carry3{};   // weight 3
+    TritWord64 Carry9{};   // weight 9
+    TritWord64 Carry27{};  // weight 27
+    TritWord64 Carry81{};  // weight 81 (overflow guard when subtree carries saturate)
 
     /**
-     * @brief Software SWAR popcount difference: popcount(P) - popcount(N)
-     * For less-capable hardware without single-cycle POPCNT, computes both rails
-     * and subtracts at the byte level before the final multiply-reduction!
+     * @brief Pure software SWAR popcount difference: popcount(P) - popcount(N).
+     * Subtracts at the byte level with +8 bias per byte (0x0808080808080808ULL)
+     * before a single 64-bit multiply-reduction, avoiding any byte-lane borrow.
      */
-    static constexpr inline int64_t fast_rail_diff(const TritWord64& w) noexcept {
-    #if defined(__ARM_NEON) || defined(__aarch64__) || defined(__POPCNT__)
-        return static_cast<int64_t>(std::popcount(w.P)) -
-               static_cast<int64_t>(std::popcount(w.N));
-    #else
+    static constexpr inline int64_t swar_rail_diff(const TritWord64& w) noexcept {
         uint64_t p = w.P, n = w.N;
         p = p - ((p >> 1) & 0x5555555555555555ULL);
         n = n - ((n >> 1) & 0x5555555555555555ULL);
@@ -141,13 +138,23 @@ struct CSAContractor40to4 {
         uint64_t diff_bytes = (p + 0x0808080808080808ULL) - n;
         int64_t total = static_cast<int64_t>((diff_bytes * 0x0101010101010101ULL) >> 56) - 64;
         return total;
+    }
+
+    /**
+     * @brief Software SWAR or hardware POPCNT difference: popcount(P) - popcount(N)
+     */
+    static constexpr inline int64_t fast_rail_diff(const TritWord64& w) noexcept {
+    #if defined(__ARM_NEON) || defined(__aarch64__) || defined(__POPCNT__)
+        return static_cast<int64_t>(std::popcount(w.P)) -
+               static_cast<int64_t>(std::popcount(w.N));
+    #else
+        return swar_rail_diff(w);
     #endif
     }
 
     /**
-     * @brief Compresses 27 product words into 4 weighted words (1, 3, 9, 27) via a
-     * symmetric 3-level ternary tree of 13 BTFAs.
-     * 27 words = 54 popcounts reduced to 8 popcounts (85.2% reduction).
+     * @brief Compresses 27 product words into weighted words (1, 3, 9, 27, 81) via a
+     * symmetric 3-level ternary tree of BTFAs.
      */
     static constexpr inline CSAContractor40to4 compress27(const TritWord64 w[27]) noexcept {
         // Level 1: 9 x BTFA -> 9 sums (wt 1), 9 carries (wt 3)
@@ -179,10 +186,36 @@ struct CSAContractor40to4 {
         AdderOutput c9_1 = BTFA(c3_3.Carry, c3_4.Carry, c3_5.Carry);
         AdderOutput c9_2 = BTHA(c9_0.Sum, c9_1.Sum); // c9_2.Sum is final Carry9!
 
-        // Weight 27 carries:
+        // Weight 27 and Weight 81 carries:
         AdderOutput c27_0 = BTFA(c9_0.Carry, c9_1.Carry, c9_2.Carry);
 
-        return { l3_s.Sum, c3_5.Sum, c9_2.Sum, c27_0.Sum };
+        return { l3_s.Sum, c3_5.Sum, c9_2.Sum, c27_0.Sum, c27_0.Carry };
+    }
+
+    /**
+     * @brief Exact 40-to-4/5 CSA tree compression: since 1 + 3 + 9 + 27 = 40,
+     * 40 balanced ternary trits per lane compress into weights (1, 3, 9, 27, 81).
+     */
+    static constexpr inline CSAContractor40to4 compress40(const TritWord64 w[40]) noexcept {
+        CSAContractor40to4 a = compress27(w);
+        CSAContractor9to2 b = CSAContractor9to2::compress(w + 27);
+        AdderOutput tail3 = BTFA(w[36], w[37], w[38]);
+        AdderOutput s_mid = BTFA(a.Sum, b.Sum, tail3.Sum);
+        AdderOutput s_fin = BTHA(s_mid.Sum, w[39]);
+
+        // Weight-3 consolidation
+        AdderOutput c3_a = BTFA(a.Carry3, b.Carry3, tail3.Carry);
+        AdderOutput c3_b = BTFA(c3_a.Sum, s_mid.Carry, s_fin.Carry);
+
+        // Weight-9 consolidation
+        AdderOutput c9_a = BTFA(a.Carry9, b.Carry9, c3_a.Carry);
+        AdderOutput c9_b = BTHA(c9_a.Sum, c3_b.Carry);
+
+        // Weight-27 and Weight-81 consolidation
+        AdderOutput c27_a = BTFA(a.Carry27, c9_a.Carry, c9_b.Carry);
+        AdderOutput c81_a = BTHA(a.Carry81, c27_a.Carry);
+
+        return { s_fin.Sum, c3_b.Sum, c9_b.Sum, c27_a.Sum, c81_a.Sum };
     }
 
     static inline int64_t dot_product_27words(const TritWord64 w[27]) noexcept {
@@ -190,7 +223,17 @@ struct CSAContractor40to4 {
         return fast_rail_diff(c.Sum) +
                3 * fast_rail_diff(c.Carry3) +
                9 * fast_rail_diff(c.Carry9) +
-               27 * fast_rail_diff(c.Carry27);
+               27 * fast_rail_diff(c.Carry27) +
+               81 * fast_rail_diff(c.Carry81);
+    }
+
+    static inline int64_t dot_product_40words(const TritWord64 w[40]) noexcept {
+        CSAContractor40to4 c = compress40(w);
+        return fast_rail_diff(c.Sum) +
+               3 * fast_rail_diff(c.Carry3) +
+               9 * fast_rail_diff(c.Carry9) +
+               27 * fast_rail_diff(c.Carry27) +
+               81 * fast_rail_diff(c.Carry81);
     }
 };
 
