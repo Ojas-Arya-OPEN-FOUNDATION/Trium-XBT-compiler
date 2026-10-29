@@ -33,6 +33,8 @@
 #include <tuple>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
+#include <type_traits>
 #include <sstream>
 #include <string>
 #include <iostream>
@@ -62,8 +64,12 @@ public:
 
     TCSRMatrix() = default;
 
+    static size_t checked_row_count(size_t rows) {
+        if (rows == SIZE_MAX) throw std::length_error("CSR row count overflow");
+        return rows + 1;
+    }
     TCSRMatrix(size_t num_rows, size_t num_cols)
-        : rows(num_rows), cols(num_cols), nnz(0), row_ptr(num_rows + 1, 0), m_current_build_row(0) {}
+        : rows(num_rows), cols(num_cols), nnz(0), row_ptr(checked_row_count(num_rows), 0), m_current_build_row(0) {}
 
     TCSRMatrix(size_t num_rows, size_t num_cols,
                std::vector<uint32_t> r_ptr,
@@ -72,9 +78,7 @@ public:
         : rows(num_rows), cols(num_cols), nnz(c_ind.size()),
           row_ptr(std::move(r_ptr)), col_indices(std::move(c_ind)), signs(std::move(s)),
           m_current_build_row(num_rows) {
-        assert(row_ptr.size() == rows + 1);
-        assert(col_indices.size() == nnz);
-        assert(signs.size() >= (nnz + 63) / 64);
+        validate_storage();
     }
 
     // --------------------------------------------------------------------------
@@ -85,7 +89,12 @@ public:
      * @brief Appends a non-zero element in row-major order.
      */
     void push_element(size_t r, size_t c, Trit val) {
+        if (val != Trit::Neg && val != Trit::Zero && val != Trit::Pos)
+            throw std::invalid_argument("invalid sparse trit");
+        if (r >= rows || c >= cols || c > UINT32_MAX)
+            throw std::out_of_range("push_element index out of range");
         if (val == Trit::Zero) return;
+        if (nnz == UINT32_MAX) throw std::length_error("CSR nonzero count exceeds uint32 offsets");
         if (r < m_current_build_row) {
             throw std::invalid_argument("push_element: row indices must be monotonically non-decreasing");
         }
@@ -100,7 +109,7 @@ public:
 
         // Enforce row-major sorted column order (get() relies on it via lower_bound).
         if (nnz > row_ptr[m_current_build_row] && !col_indices.empty() &&
-            c < col_indices.back()) {
+            c <= col_indices.back()) {
             throw std::invalid_argument("push_element: columns within a row must be strictly increasing");
         }
 
@@ -122,6 +131,7 @@ public:
     }
 
     void push_element(size_t r, size_t c, int8_t val) {
+        if (val < -1 || val > 1) throw std::invalid_argument("sparse value must be a trit");
         push_element(r, c, from_int(val));
     }
 
@@ -144,6 +154,12 @@ public:
      */
     static TCSRMatrix from_triplets(size_t rows, size_t cols,
                                    std::vector<std::tuple<size_t, size_t, Trit>> triplets) {
+        for (const auto& [r,c,value] : triplets) {
+            if (r >= rows || c >= cols || c > UINT32_MAX)
+                throw std::out_of_range("sparse triplet index out of range");
+            if (value != Trit::Neg && value != Trit::Zero && value != Trit::Pos)
+                throw std::invalid_argument("invalid sparse triplet trit");
+        }
         // Discard zeros
         triplets.erase(std::remove_if(triplets.begin(), triplets.end(),
             [](const auto& t) { return std::get<2>(t) == Trit::Zero; }), triplets.end());
@@ -166,6 +182,7 @@ public:
      * @brief Creates a TCSRMatrix from a dense row-major buffer of trits.
      */
     static TCSRMatrix from_dense(size_t rows, size_t cols, const std::vector<int8_t>& data) {
+        if (cols && rows > SIZE_MAX / cols) throw std::length_error("dense dimensions overflow");
         if (data.size() != rows * cols) {
             throw std::invalid_argument("Dense data size mismatch");
         }
@@ -173,6 +190,7 @@ public:
         for (size_t r = 0; r < rows; ++r) {
             for (size_t c = 0; c < cols; ++c) {
                 int8_t v = data[r * cols + c];
+                if (v < -1 || v > 1) throw std::invalid_argument("dense sparse input must contain trits");
                 if (v != 0) {
                     mat.push_element(r, c, from_int(v));
                 }
@@ -371,23 +389,23 @@ public:
      * @brief Raw-pointer SpMV: y = A * x.
      * ZERO hardware multiplications: strictly conditional accumulation.
      */
+    void validate_storage() const {
+        if (rows == std::numeric_limits<size_t>::max() || nnz > UINT32_MAX ||
+            row_ptr.size() != rows + 1 || col_indices.size() != nnz ||
+            signs.size() < nnz / 64 + (nnz % 64 != 0) || row_ptr[0] != 0 || row_ptr[rows] != nnz)
+            throw std::invalid_argument("invalid CSR storage");
+        for (size_t r = 0; r < rows; ++r)
+            if (row_ptr[r] > row_ptr[r + 1] || row_ptr[r + 1] > nnz)
+                throw std::invalid_argument("invalid CSR offsets");
+        for (auto c : col_indices) if (c >= cols) throw std::invalid_argument("invalid CSR column");
+        for (size_t r = 0; r < rows; ++r)
+            for (size_t i = row_ptr[r]; i < row_ptr[r + 1]; ++i)
+                if (i > row_ptr[r] && col_indices[i] <= col_indices[i - 1])
+                    throw std::invalid_argument("CSR columns must be sorted and unique");
+    }
     template <typename T>
-    void spmv(const T* x, T* y) const noexcept {
-        for (size_t r = 0; r < rows; ++r) {
-            T sum = T(0);
-            size_t start = row_ptr[r];
-            size_t end = row_ptr[r + 1];
-            for (size_t idx = start; idx < end; ++idx) {
-                uint32_t c = col_indices[idx];
-                bool is_pos = (signs[idx / 64] >> (idx % 64)) & 1ULL;
-                if (is_pos) {
-                    sum += x[c];
-                } else {
-                    sum -= x[c];
-                }
-            }
-            y[r] = sum;
-        }
+    void spmv(const T* x, T* y) const {
+        spmm(x, 1, y);
     }
 
     /**
@@ -413,30 +431,31 @@ public:
      * Accumulates rows of B directly into C without any scalar multipliers!
      */
     template <typename T>
-    void spmm(const T* B, size_t B_cols, T* C) const noexcept {
-        std::fill(C, C + rows * B_cols, T(0));
-
+    void spmm(const T* B, size_t B_cols, T* C) const {
+        validate_storage();
+        const size_t limit = std::numeric_limits<size_t>::max();
+        if (B_cols && (cols > limit / B_cols || rows > limit / B_cols))
+            throw std::length_error("SpMM dimensions overflow");
+        if ((cols && B_cols && !B) || (rows && B_cols && !C))
+            throw std::invalid_argument("null SpMM buffer");
+        std::vector<T> result(rows * B_cols, T(0));
         for (size_t r = 0; r < rows; ++r) {
-            size_t start = row_ptr[r];
-            size_t end = row_ptr[r + 1];
-            T* c_row = C + r * B_cols;
-
-            for (size_t idx = start; idx < end; ++idx) {
-                uint32_t k = col_indices[idx];
-                const T* b_row = B + k * B_cols;
-                bool is_pos = (signs[idx / 64] >> (idx % 64)) & 1ULL;
-
-                if (is_pos) {
-                    for (size_t j = 0; j < B_cols; ++j) {
-                        c_row[j] += b_row[j];
-                    }
-                } else {
-                    for (size_t j = 0; j < B_cols; ++j) {
-                        c_row[j] -= b_row[j];
-                    }
+            for (size_t j = 0; j < B_cols; ++j) {
+                using Accumulator = std::conditional_t<std::is_integral_v<T>, __int128_t, T>;
+                Accumulator sum = 0;
+                for (size_t idx = row_ptr[r]; idx < row_ptr[r + 1]; ++idx) {
+                    Accumulator value = B[static_cast<size_t>(col_indices[idx]) * B_cols + j];
+                    sum += ((signs[idx / 64] >> (idx % 64)) & 1ULL) ? value : -value;
                 }
+                if constexpr (std::is_integral_v<T>) {
+                    static_assert(sizeof(T) <= 8, "checked sparse accumulation supports integers up to 64 bits");
+                    if (sum < std::numeric_limits<T>::min() || sum > std::numeric_limits<T>::max())
+                        throw std::overflow_error("sparse result outside destination integer range");
+                }
+                result[r * B_cols + j] = static_cast<T>(sum);
             }
         }
+        if (!result.empty()) std::copy(result.begin(), result.end(), C);
     }
 
     /**
@@ -444,6 +463,8 @@ public:
      */
     template <typename T>
     std::vector<T> spmm(const std::vector<T>& B, size_t B_cols) const {
+        if (B_cols && (cols > SIZE_MAX / B_cols || rows > SIZE_MAX / B_cols))
+            throw std::length_error("SpMM dimensions overflow");
         if (B.size() != cols * B_cols) {
             throw std::invalid_argument("SpMM dimension mismatch: B.size() != cols * B_cols");
         }

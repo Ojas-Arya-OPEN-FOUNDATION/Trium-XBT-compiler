@@ -222,8 +222,11 @@ void test_tcsr_density_and_memory() {
     triplets.reserve(target_nnz);
 
     for (size_t i = 0; i < target_nnz; ++i) {
-        size_t r = (i * 37) % M;
-        size_t c = (i * 73) % N;
+        // A permutation of flattened positions: no repeated coordinates.
+        // The old two modulo-1000 sequences repeated after only 1000 entries.
+        const size_t position = (i * 37) % (M * N);
+        size_t r = position / N;
+        size_t c = position % N;
         Trit v = (i % 2 == 0) ? Trit::Pos : Trit::Neg;
         triplets.emplace_back(r, c, v);
     }
@@ -366,17 +369,19 @@ void test_fp_and_sparse_guards() {
     }
     assert(caught_neginf && "from_double on -Inf must throw std::domain_error");
 
-    // 2. Subnormal double flush to canonical zero
+    // 2. Finite subnormal inputs remain representable in the ternary exponent domain
     BTFP16 subnormal = BTFP16::from_double(1e-310);
-    assert(subnormal.is_zero() && "Subnormal double must flush to canonical zero");
-    assert(subnormal.mantissa() == 0 && subnormal.exponent() == 0);
+    assert(subnormal.is_positive() && "Finite subnormal input must not silently flush to zero");
+    assert(std::abs(subnormal.to_double() / 1e-310 - 1.0) < 1e-4);
 
-    // 3. ExponentTrits clamping in normalize()
-    // For ExponentTrits = 3, max_exp = (3^3 - 1)/2 = 13
-    BTFP<10, 3> fp_clamped(1, 100);
-    assert(fp_clamped.exponent() <= 13 && "Exponent must be clamped to ExponentTrits max_exp");
-    BTFP<10, 3> fp_clamped_neg(1, -100);
-    assert(fp_clamped_neg.exponent() >= -13 && "Negative exponent must be clamped to -max_exp");
+    // 3. Configured exponent domains reject overflow AND underflow. Never
+    // silently turn a very large positive value into a small value or zero.
+    for (int32_t exponent : {100, -100}) {
+        bool rejected = false;
+        try { BTFP<10,3> outside(1, exponent); }
+        catch (const std::overflow_error&) { rejected = true; }
+        assert(rejected);
+    }
 
     // 4. Strict weak ordering for operator<
     BTFP16 v_neg10(-10);
@@ -461,8 +466,8 @@ void test_fp_and_sparse_guards() {
     assert(caught_spmm_oob && "spmm with column index exceeding B.rows must throw std::out_of_range");
 }
 
-void test_btfp_fast_o1_mul_and_norm() {
-    std::cout << "  [BT-FP] Testing Fast O(1) Constant-Divisor Mul & CLZ Jump Normalization...\n";
+void test_btfp_integer_rounding_and_mul() {
+    std::cout << "  [BT-FP] Testing Integer Rounded Normalization & Multiplication...\n";
 
     // 1. Verify round_div_pow3_fast64 matches k sequential calls to round_div3
     auto seq_round_div_pow3 = [](int64_t val, int k) -> int64_t {
@@ -487,21 +492,28 @@ void test_btfp_fast_o1_mul_and_norm() {
         assert(fp_detail::round_div_pow3_fast128(val, k) == seq_round_div_pow3(val, k));
     }
 
-    // 2. Verify CLZ jump normalization against sequential while-loop normalization
-    auto seq_normalize_btfp32 = [](int64_t m, int32_t e) -> std::pair<int64_t, int32_t> {
-        if (m == 0) return {0, 0};
-        const int64_t max_m = BTFP32::max_mantissa();
-        const int64_t min_m = BTFP32::min_norm_mantissa();
-        while (m > max_m || m < -max_m) {
-            m = fp_detail::round_div3(m);
-            e += 1;
+    // 2. Independent exact-distance search across all relevant binades for an
+    // int64 input and the 20-trit BTFP32 mantissa. A common 3^24 denominator
+    // permits exact comparisons; even the largest candidate fits signed i128.
+    auto candidate_normalize_btfp32 = [](int64_t m, int32_t e) -> std::pair<int64_t, int32_t> {
+        if (!m) return {0,0};
+        __int128 magnitude=m; if(magnitude<0) magnitude=-magnitude;
+        __int128 target=magnitude*fp_detail::pow3_128(24);
+        __int128 best_error=static_cast<__int128>(1)<<126,best_value=0;
+        int64_t best_m=0; int32_t best_e=0;
+        for(int k=-24;k<=24;++k) {
+            __int128 scale=fp_detail::pow3_128(k+24);
+            __int128 candidate=(target+scale/2)/scale;
+            candidate=std::clamp(candidate,static_cast<__int128>(BTFP32::min_norm_mantissa()),
+                                static_cast<__int128>(BTFP32::max_mantissa()));
+            __int128 value=candidate*scale,error=value-target;
+            if(error<0) error=-error;
+            if(error<best_error || (error==best_error && value>best_value)) {
+                best_error=error;best_value=value;
+                best_m=static_cast<int64_t>(candidate);best_e=e+k;
+            }
         }
-        while (m != 0 && (m < min_m && m > -min_m)) {
-            m *= 3;
-            e -= 1;
-        }
-        if (m == 0) e = 0;
-        return {m, e};
+        return {m<0?-best_m:best_m,best_e};
     };
 
     for (int iter = 0; iter < 5000; ++iter) {
@@ -512,11 +524,11 @@ void test_btfp_fast_o1_mul_and_norm() {
         int32_t raw_e = static_cast<int32_t>(splitmix64() % 200) - 100;
 
         BTFP32 fast_fp(raw_m, raw_e);
-        auto [ref_m, ref_e] = seq_normalize_btfp32(raw_m, raw_e);
+        auto [ref_m, ref_e] = candidate_normalize_btfp32(raw_m, raw_e);
         assert(fast_fp.mantissa() == ref_m && fast_fp.exponent() == ref_e);
     }
 
-    // 3. Verify 3-way constant-divisor BTFP32::mul across boundary cases (min_m, max_m) and 10,000 random pairs
+    // 3. Verify BTFP32::mul across boundary cases (min_m, max_m) and 10,000 random pairs
     const int64_t min_m32 = BTFP32::min_norm_mantissa();
     const int64_t max_m32 = BTFP32::max_mantissa();
     std::vector<int64_t> boundary_m = {
@@ -529,7 +541,7 @@ void test_btfp_fast_o1_mul_and_norm() {
             BTFP32 fa(ma, 3);
             BTFP32 fb(mb, -2);
             BTFP32 prod = fa * fb;
-            auto [ref_m, ref_e] = seq_normalize_btfp32(ma * mb, 1);
+            auto [ref_m, ref_e] = candidate_normalize_btfp32(ma * mb, 1);
             assert(prod.mantissa() == ref_m && prod.exponent() == ref_e);
         }
     }
@@ -545,11 +557,11 @@ void test_btfp_fast_o1_mul_and_norm() {
         BTFP32 fa(ma, ea);
         BTFP32 fb(mb, eb);
         BTFP32 prod = fa * fb;
-        auto [ref_m, ref_e] = seq_normalize_btfp32(ma * mb, ea + eb);
+        auto [ref_m, ref_e] = candidate_normalize_btfp32(ma * mb, ea + eb);
         assert(prod.mantissa() == ref_m && prod.exponent() == ref_e);
     }
 
-    std::cout << "    -> Fast O(1) BTFP32 mul & CLZ normalization verified bit-exact across 20,000 cases.\n";
+    std::cout << "    -> Exact-distance BTFP32 normalization/mul regressions passed (20,100 samples).\n";
 }
 
 void test_btfp_fma_sqrt_pow_and_clamping() {
@@ -626,22 +638,20 @@ void test_btfp_fma_sqrt_pow_and_clamping() {
     assert(BTFP32(-2).pow_int(5) == BTFP32(-32));
     assert(BTFP32(-2).pow_int(6) == BTFP32(64));
 
-    // 5. Fix for BTFP::mul() exponent clamping when ExponentTrits > 0
-    // For BTFP<10, 3>, max_e = (3^3 - 1)/2 = 13.
-    // Multiply two values whose product has exponent < -13 and verify it matches
-    // direct normalization BTFP<10, 3>(m_prod, e_prod).
-    using ClampedFP3 = BTFP<10, 3>;
-    ClampedFP3 d1(ClampedFP3::min_norm_mantissa(), -12);
-    ClampedFP3 d2(ClampedFP3::min_norm_mantissa(), -12);
-    assert(d1.exponent() == -12 && d2.exponent() == -12);
-    ClampedFP3 d_prod = d1 * d2;
-    int64_t raw_p = d1.mantissa() * d2.mantissa();
-    int64_t q_norm = fp_detail::round_div_pow3_fast64(raw_p, 8);
-    ClampedFP3 d_expected(q_norm, -16);
-    assert(d_prod == d_expected);
-    assert(d_prod.exponent() == -13);
-    assert(std::abs(d_prod.to_double() - (d1.to_double() * d2.to_double())) /
-           std::abs(d1.to_double() * d2.to_double()) < 1e-2);
+    // 5. Arithmetic uses the SAME configured exponent policy as constructors.
+    using Bounded = BTFP<10,3>;
+    Bounded d1(Bounded::min_norm_mantissa(), -12);
+    Bounded d2(Bounded::min_norm_mantissa(), -12);
+    bool rejected = false;
+    try { auto product = d1 * d2; (void)product; }
+    catch (const std::overflow_error&) { rejected = true; }
+    assert(rejected && "out-of-domain product must not silently clamp");
+    Bounded high(Bounded::max_mantissa(), 13);
+    rejected = false;
+    try { auto product = high * high; (void)product; }
+    catch (const std::overflow_error&) { rejected = true; }
+    assert(rejected);
+
 }
 
 // ==============================================================================
@@ -658,7 +668,7 @@ int main() {
     test_btfp_round_trip();
     test_btfp_arithmetic();
     test_btfp_zero_bias_rounding();
-    test_btfp_fast_o1_mul_and_norm();
+    test_btfp_integer_rounding_and_mul();
     test_btfp_fma_sqrt_pow_and_clamping();
 
     // Phase 3.2: T-CSR Sparse Linear Algebra Tests
