@@ -1,0 +1,103 @@
+{
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "machine": "x86_64",
+  "processor": "",
+  "iterations": 100000,
+  "repeats": 5,
+  "native_llvm_opt_level": 0,
+  "kernels": {
+    "checked_sum": {
+      "compilation": {
+        "emit_ms": 3.0335880001075566,
+        "lower_ms": 8.140074000039021,
+        "link_ms": 31.664037000155076
+      },
+      "ast_cli": {
+        "median_ms": 73.669609,
+        "min_ms": 72.215919,
+        "max_ms": 74.507928,
+        "samples_ms": [
+          74.507928,
+          73.669609,
+          74.104094,
+          73.59262,
+          72.215919
+        ]
+      },
+      "core_cli": {
+        "median_ms": 7.614806,
+        "min_ms": 7.493469,
+        "max_ms": 7.882541,
+        "samples_ms": [
+          7.581104,
+          7.614806,
+          7.882541,
+          7.630936,
+          7.493469
+        ]
+      },
+      "native_warm_kernel": {
+        "median_ms": 0.642783,
+        "min_ms": 0.606392,
+        "max_ms": 0.661324,
+        "samples_ms": [
+          0.661324,
+          0.642841,
+          0.64191,
+          0.642783,
+          0.606392
+        ]
+      },
+      "ast_to_core_cli_ratio": 9.674522108639405
+    },
+    "calls_recurrence": {
+      "compilation": {
+        "emit_ms": 2.052410000032978,
+        "lower_ms": 8.767497000008007,
+        "link_ms": 21.944552000604745
+      },
+      "ast_cli": {
+        "median_ms": 692.682818,
+        "min_ms": 686.416977,
+        "max_ms": 736.922241,
+        "samples_ms": [
+          693.334118,
+          686.416977,
+          692.682818,
+          736.922241,
+          691.625327
+        ]
+      },
+      "core_cli": {
+        "median_ms": 263.038638,
+        "min_ms": 259.566287,
+        "max_ms": 274.571578,
+        "samples_ms": [
+          259.566287,
+          264.288098,
+          259.885377,
+          274.571578,
+          263.038638
+        ]
+      },
+      "native_warm_kernel": {
+        "median_ms": 3.167809,
+        "min_ms": 2.845791,
+        "max_ms": 3.276038,
+        "samples_ms": [
+          2.845791,
+          3.027006,
+          3.167809,
+          3.221572,
+          3.276038
+        ]
+      },
+      "ast_to_core_cli_ratio": 2.63338809563027
+    }
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+  "compiler_build": "GNU C++ 12.2 Release, current session source",
+  "compiler_sha256": "6a4bdfe1700387527b3511ea0b77943cc9992c2900245c8c73cdfd5030ba3e86",
+  "execution_adapter": "llvmlite 0.50.0, host target machine opt=0, no IR optimization pipeline",
+  "measurement_note": "CLI includes process/parse/check/execute; warm native excludes compile/link/load. Compilation entries are single samples."
+}
