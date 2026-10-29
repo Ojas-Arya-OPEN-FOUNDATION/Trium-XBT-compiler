@@ -16,6 +16,8 @@ project(TriumXBTCompiler
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+find_package(Threads REQUIRED)
+link_libraries(Threads::Threads ${CMAKE_DL_LIBS})
 
 # macOS ARM64 Apple Silicon Optimization & SDK Configuration
 if(APPLE)
@@ -78,9 +80,9 @@ endif()
 # Include Paths
 # ==============================================================================
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/iree
+    "${CMAKE_CURRENT_SOURCE_DIR}/."
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/iree"
 )
 
 # ==============================================================================
@@ -177,6 +179,12 @@ target_link_libraries(bt-opt PRIVATE
 if(BT_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    # Test predicates must survive Release/NDEBUG builds as well as Debug.
+    if(MSVC)
+        add_compile_options(/UNDEBUG)
+    else()
+        add_compile_options(-UNDEBUG)
+    endif()
 
     # Unit Test Binaries
     add_executable(unit_core test/Unit/test_unit_core.cpp)
@@ -239,7 +247,9 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer1_Unit_FP_Sparse COMMAND unit_fp_sparse)
     add_test(NAME Layer1_Unit_LibBT COMMAND unit_libbt)
     add_test(NAME Layer1_Unit_BT_Opt COMMAND unit_bt_opt)
-    add_test(NAME Layer1_Unit_Frontend_FP_Sparse COMMAND unit_frontend_fp_sparse)
+    add_test(NAME Layer1_Unit_Frontend_FP_Sparse
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/require_tool.py clang $<TARGET_FILE:unit_frontend_fp_sparse>)
+    set_tests_properties(Layer1_Unit_Frontend_FP_Sparse PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME Layer1_Unit_C_ABI_FFI COMMAND unit_c_abi_ffi)
     add_test(NAME Layer1_Unit_BigInt_Symplectic COMMAND unit_bigint_symplectic)
     add_test(NAME Layer1_Unit_XBT_HW COMMAND unit_xbt_hw)
@@ -251,9 +261,11 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer3_WholeProgram
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/WholeProgram
     )
-    add_test(NAME Layer4_Sanitizers
-        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/Sanitizers/run_sanitizers.sh
-    )
+    # Sanitizers are an explicit separate build. They must not silently rebuild
+    # source-tree artifacts with a different hardcoded compiler during ctest.
+    if(BT_ENABLE_ASAN)
+        message(STATUS "ASan/UBSan instrumentation enabled for all test targets")
+    endif()
     add_test(NAME Layer5_CodeGen
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/CodeGen
     )
@@ -264,19 +276,81 @@ if(BT_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Sema
     )
 
-    # Custom Target: check-all (Emulates LLVM 'ninja check-all')
+    add_executable(unit_math_core test/Unit/test_unit_math_core.cpp)
+    add_test(NAME Core_Math_IR COMMAND unit_math_core)
+    add_test(NAME Core_Math_Reference COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/math_reference.py $<TARGET_FILE:unit_math_core>)
+    add_executable(unit_core_lowering test/Unit/test_unit_core_lowering.cpp)
+    add_test(NAME Core_Lowering_Optimizer COMMAND unit_core_lowering)
+    add_test(NAME Core_Profile_Contract COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/profile_contract.py)
+    add_test(NAME Core_Backend_Regression COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/core_backend_regression.py $<TARGET_FILE:bt-compiler>)
+    add_test(NAME Core_Optimized_Differential COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/phase1_differential.py $<TARGET_FILE:bt-compiler>)
+    add_test(NAME Core_Optimized_Programs COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/core_program_differential.py $<TARGET_FILE:bt-compiler>)
+    set_tests_properties(Core_Optimized_Differential Core_Optimized_Programs PROPERTIES ENVIRONMENT "BT_TEST_CORE_OPT=1" SKIP_RETURN_CODE 77)
+    add_test(NAME CUDA_Driver_Unit COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_driver_unit.py)
+    add_test(NAME CUDA_Offline_Validation COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_map_test.py $<TARGET_FILE:bt-compiler>)
+    add_test(NAME CUDA_Device_Qualification COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_map_test.py $<TARGET_FILE:bt-compiler> --device)
+    set_tests_properties(Core_Backend_Regression CUDA_Offline_Validation CUDA_Device_Qualification PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    add_executable(unit_ir_program test/Unit/test_unit_ir_program.cpp)
+    add_test(NAME Core_Program_IR COMMAND unit_ir_program)
+    add_executable(unit_numeric_oracle test/Unit/test_unit_numeric_oracle.cpp)
+    add_test(NAME Core_Numeric_Reference COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/numeric_reference.py $<TARGET_FILE:unit_numeric_oracle>)
+    add_test(NAME Core_Rocq COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rocq.py)
+    set_tests_properties(Core_Rocq PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1320)
+    add_executable(unit_phase1 test/Unit/test_unit_phase1.cpp)
+    target_link_libraries(unit_phase1 PRIVATE ternary_clibi)
+    add_test(NAME Phase1_Safety COMMAND unit_phase1)
+    add_executable(unit_phase3 test/Unit/test_unit_phase3.cpp)
+    add_executable(unit_universal test/Unit/test_unit_universal.cpp)
+    add_test(NAME Layer1_Unit_Phase3 COMMAND unit_phase3)
+    add_test(NAME Layer1_Unit_Universal COMMAND unit_universal)
+    add_test(NAME Phase1_LLVM_Differential
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/phase1_differential.py $<TARGET_FILE:bt-compiler>)
+    add_test(NAME Core_Program_Differential COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/core_program_differential.py $<TARGET_FILE:bt-compiler>)
+    set_tests_properties(Core_Program_Differential PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME Phase1_Z3
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_phase1.py)
+    set_tests_properties(Phase1_LLVM_Differential Phase1_Z3 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    add_test(NAME Runtime_ABI_Client COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/runtime_abi_regression.py $<TARGET_FILE:ternary_clibi>)
+    add_test(NAME Phase1_Python_FFI
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/ffi/python/bt_ffi.py)
+    set_tests_properties(Phase1_Python_FFI PROPERTIES
+        ENVIRONMENT "BT_RUNTIME_LIBRARY=$<TARGET_FILE:ternary_clibi>")
+    # ctypes loads an instrumented DSO into an otherwise unsanitized Python host.
+    # GNU ASan must be preloaded before Python, not discovered during dlopen.
+    if(BT_ENABLE_ASAN AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND UNIX AND NOT APPLE)
+        execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libasan.so
+            OUTPUT_VARIABLE BT_ASAN_RUNTIME OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT EXISTS "${BT_ASAN_RUNTIME}")
+            message(FATAL_ERROR "Cannot locate GNU ASan runtime for Python FFI test")
+        endif()
+        # Python does not link libstdc++ at startup. Preload it after ASan so
+        # ASan can resolve __cxa_throw before a dlopened runtime throws.
+        execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.so
+            OUTPUT_VARIABLE BT_CXX_ABI_RUNTIME OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT EXISTS "${BT_CXX_ABI_RUNTIME}")
+            message(FATAL_ERROR "Cannot locate C++ exception runtime for sanitized Python FFI tests")
+        endif()
+        set_property(TEST Phase1_Python_FFI Runtime_ABI_Client APPEND PROPERTY ENVIRONMENT
+            "LD_PRELOAD=${BT_ASAN_RUNTIME}:${BT_CXX_ABI_RUNTIME}" "ASAN_OPTIONS=detect_leaks=0")
+    endif()
+    set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer7_Sema
+        PROPERTIES ENVIRONMENT "BT_COMPILER=$<TARGET_FILE:bt-compiler>;BT_OPT=$<TARGET_FILE:bt-opt>" SKIP_RETURN_CODE 77)
+
+    # A clean 'check-all' builds every executable used by registered tests.
     add_custom_target(check-all
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS
-            bt-compiler
-            bt-opt
-            unit_core
-            unit_dense
-            unit_memory
-            unit_ast
-            unit_mlir
-            unit_fp_sparse
-            unit_libbt
-            unit_bt_opt
+        DEPENDS bt-compiler bt-opt unit_core unit_dense unit_memory unit_ast
+            unit_mlir unit_fp_sparse unit_libbt unit_bt_opt unit_frontend_fp_sparse
+            unit_c_abi_ffi unit_bigint_symplectic unit_xbt_hw unit_phase1
+            unit_phase3 unit_universal unit_math_core unit_numeric_oracle unit_ir_program unit_core_lowering
     )
 endif()

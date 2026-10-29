@@ -1,0 +1,6 @@
+# Optional, pinned tools for model checks and independent LLVM verification.
+z3-solver==5.3.2.0
+llvmlite==0.50.0
+
+# Optional proof compatibility check (Node tooling, not pip):
+# npm install --prefix build/proof-tools jscoq@0.17.1
