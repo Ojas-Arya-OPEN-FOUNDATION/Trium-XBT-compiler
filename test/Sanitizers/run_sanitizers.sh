@@ -8,7 +8,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ -z "${SDKROOT}" ]]; then
+        if [[ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk" ]]; then
+            export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+        else
+            export SDKROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
+        fi
+    fi
+fi
 
 echo "======================================================================"
 echo "  LLVM Official Layer 4: AddressSanitizer & UndefinedBehaviorSanitizer"

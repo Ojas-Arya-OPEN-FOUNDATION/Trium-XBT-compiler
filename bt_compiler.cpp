@@ -34,6 +34,22 @@
 
 using namespace bt;
 
+namespace {
+inline std::string get_sdk_prefix() {
+    std::string env_prefix;
+#if defined(__APPLE__)
+    if (std::getenv("SDKROOT") == nullptr) {
+        if (access("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", F_OK) == 0) {
+            env_prefix = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && ";
+        } else {
+            env_prefix = "export SDKROOT=$(xcrun --show-sdk-path 2>/dev/null) && ";
+        }
+    }
+#endif
+    return env_prefix;
+}
+} // namespace
+
 enum class TargetArch {
     ARM64_NEON,
     X86_AVX512,
@@ -806,7 +822,7 @@ int main(int argc, char** argv) {
         }
         close(fd_ir);
 
-        std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+        std::string cmd = get_sdk_prefix() +
                           "clang -O3 -c -emit-llvm -Wno-override-module --target=" + triple + " ";
         if (opts.emitDebug) cmd += "-g ";
         if (opts.enableLTO) cmd += "-flto=thin ";
@@ -996,7 +1012,7 @@ int main(int argc, char** argv) {
         if (opts.outputMode == OutputMode::ASM) {
             bool use_stdout = opts.outputFile.empty();
             std::string asm_path = use_stdout ? std::string(tmp_ir_path) + ".s" : opts.outputFile;
-            std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+            std::string cmd = get_sdk_prefix() +
                               "clang -O3 -Wno-override-module --target=" + triple + " ";
             if (opts.emitDebug) cmd += "-g ";
             if (opts.enableLTO) cmd += "-flto=thin ";
@@ -1033,7 +1049,7 @@ int main(int argc, char** argv) {
                     out_obj = "bt_output.o";
                 }
             }
-            std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+            std::string cmd = get_sdk_prefix() +
                               "clang -O3 -Wno-override-module --target=" + triple + " ";
             if (opts.emitDebug) cmd += "-g ";
             if (opts.enableLTO) cmd += "-flto=thin ";

@@ -743,7 +743,17 @@ void test_dwarf_debug_metadata_and_vectorization() {
     close(fd);
 
     std::string obj_path = std::string(tmp_ir_path) + ".o";
-    std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+    std::string env_prefix;
+#if defined(__APPLE__)
+    if (std::getenv("SDKROOT") == nullptr) {
+        if (access("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", F_OK) == 0) {
+            env_prefix = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && ";
+        } else {
+            env_prefix = "export SDKROOT=$(xcrun --show-sdk-path 2>/dev/null) && ";
+        }
+    }
+#endif
+    std::string cmd = env_prefix +
                       "clang -Wall -Werror -Wno-override-module -c -x ir \"" + std::string(tmp_ir_path) + "\" -o \"" + obj_path + "\" 2>&1";
 
     FILE* pipe = popen(cmd.c_str(), "r");

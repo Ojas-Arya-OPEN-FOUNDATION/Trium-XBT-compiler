@@ -1551,7 +1551,11 @@ public:
         pid_t pid = getpid();
         std::string base_path = "/tmp/bt_jit_" + std::to_string(pid) + "_" + std::to_string(count);
         std::string tmp_ll_path = base_path + ".ll";
+#if defined(__APPLE__)
         std::string tmp_dylib_path = base_path + ".dylib";
+#else
+        std::string tmp_dylib_path = base_path + ".so";
+#endif
 
         std::ofstream ll_file(tmp_ll_path);
         if (!ll_file.is_open()) {
@@ -1561,8 +1565,20 @@ public:
         ll_file << llvm_ir;
         ll_file.close();
 
+        // Determine toolchain environment prefix (macOS SDK resolution vs. Linux standard paths)
+        std::string env_prefix;
+#if defined(__APPLE__)
+        if (std::getenv("SDKROOT") == nullptr) {
+            if (access("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", F_OK) == 0) {
+                env_prefix = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && ";
+            } else {
+                env_prefix = "export SDKROOT=$(xcrun --show-sdk-path 2>/dev/null) && ";
+            }
+        }
+#endif
+
         // Build native shared library via Clang
-        std::string cmd = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && "
+        std::string cmd = env_prefix +
                           "clang -O3 -shared -fPIC -Wno-override-module ";
         if (enable_debug) cmd += "-g ";
         if (enable_lto) cmd += "-flto=thin ";
