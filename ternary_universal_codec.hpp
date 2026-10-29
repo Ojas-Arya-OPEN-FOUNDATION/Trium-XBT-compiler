@@ -3,13 +3,15 @@
  * @brief Universal Tri-Radix Number System (Q_{2,3,5}) & Unmodified-Float-to-Ternary-Plane Codec
  *
  * Allows ANY modern data type (IEEE-754 FP32/FP16/BF16, INT8/INT16, and exact Decimal 10^-d)
- * to be represented 100% losslessly in Balanced Ternary bitplanes without modifying weights!
+ * to be represented exactly as scalars or approximately as block-scaled bitplanes.
+ * BlockTernaryTensor is a quantizer, not a lossless float encoding.
  */
 
 #ifndef TERNARY_UNIVERSAL_CODEC_HPP
 #define TERNARY_UNIVERSAL_CODEC_HPP
 
 #include "ternary_core.hpp"
+#include "ternary_numeric_contract.hpp"
 #include "ternary_dense_algebra.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -17,6 +19,8 @@
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 namespace bt::universal {
 
@@ -41,8 +45,9 @@ struct TriRadixScalar {
     }
 
     // Exact lossless construction from any IEEE-754 float (0 precision loss!)
-    static inline TriRadixScalar from_float_lossless(float val) noexcept {
-        if (val == 0.0f || !std::isfinite(val)) {
+    static inline TriRadixScalar from_float_lossless(float val) {
+        if (!std::isfinite(val)) throw std::domain_error("tri-radix requires finite input");
+        if (val == 0.0f) {
             return TriRadixScalar(TritWord64(0, 0), 0, 0, 0);
         }
         int e2 = 0;
@@ -62,8 +67,8 @@ struct TriRadixScalar {
 
     // Exact lossless construction from a decimal number: coeff * 10^(exp10)
     // e.g., $0.10 = 1 * 10^(-1) -> mantissa = 1, exp2 = -1, exp5 = -1 (No repeating fraction!)
-    static inline TriRadixScalar from_decimal_exact(int64_t coeff, int16_t exp10) noexcept {
-        return TriRadixScalar(Codec::from_int64(coeff, 39), exp10, 0, exp10);
+    static inline TriRadixScalar from_decimal_exact(int64_t coeff, int16_t exp10) {
+        return TriRadixScalar(Codec::from_int64(contract::checked_integer(coeff), 39), exp10, 0, exp10);
     }
 
     inline double to_double() const noexcept {
@@ -103,9 +108,36 @@ struct BlockTernaryTensor {
     // Bitmask of non-zero planes in each block: bit p is 1 iff planes[p] != 0
     std::vector<uint16_t> active_plane_mask;
 
+    static size_t checked_blocks(size_t r, size_t c) {
+        const auto limit = std::numeric_limits<size_t>::max();
+        if (c > limit - 63 || (c && r > limit / c) ||
+            (r && (c + 63) / 64 > limit / r / NumPlanes))
+            throw std::length_error("block tensor dimensions overflow");
+        return (c + 63) / 64;
+    }
+    void validate_storage() const {
+        const size_t expected_bpr = checked_blocks(rows, cols);
+        const size_t blocks = rows * expected_bpr;
+        if (blocks_per_row != expected_bpr || block_scales.size() != blocks ||
+            active_plane_mask.size() != blocks || planes.size() != blocks * NumPlanes)
+            throw std::invalid_argument("invalid encoded tensor storage dimensions");
+        for (size_t b = 0; b < blocks; ++b) {
+            if (!std::isfinite(block_scales[b]) || block_scales[b] < 0)
+                throw std::invalid_argument("invalid encoded tensor scale");
+            uint16_t mask = 0;
+            const size_t tail = (cols % 64 && b % expected_bpr == expected_bpr - 1) ? cols % 64 : 64;
+            for (size_t p = 0; p < NumPlanes; ++p) {
+                auto word = planes[b * NumPlanes + p];
+                if ((word.P & word.N) || (tail < 64 && ((word.P | word.N) >> tail)))
+                    throw std::invalid_argument("invalid tensor rails or padding");
+                if (word.P | word.N) mask |= static_cast<uint16_t>(1u << p);
+            }
+            if (mask != active_plane_mask[b]) throw std::invalid_argument("invalid tensor active-plane mask");
+        }
+    }
     BlockTernaryTensor() = default;
     BlockTernaryTensor(size_t r, size_t c)
-        : rows(r), cols(c), blocks_per_row((c + 63) / 64),
+        : rows(r), cols(c), blocks_per_row(checked_blocks(r, c)),
           block_scales(r * blocks_per_row, 0.0f),
           planes(r * blocks_per_row * NumPlanes, TritWord64(0, 0)),
           active_plane_mask(r * blocks_per_row, 0) {}
@@ -115,11 +147,16 @@ struct BlockTernaryTensor {
      * into Balanced Ternary bitplanes with 0 bias and automatic zero-plane masking.
      */
     static BlockTernaryTensor from_float_matrix(const float* src, size_t r, size_t c) {
+        if ((c && r > std::numeric_limits<size_t>::max() / c) ||
+            c > std::numeric_limits<size_t>::max() - 63 ||
+            (r && (c + 63) / 64 > std::numeric_limits<size_t>::max() / r / NumPlanes))
+            throw std::length_error("block tensor dimensions overflow");
+        if (r && c && !src) throw std::invalid_argument("null float tensor input");
         BlockTernaryTensor out(r, c);
         const size_t bpr = out.blocks_per_row;
 
         for (size_t i = 0; i < r; ++i) {
-            const float* row_ptr = src + i * c;
+            const float* row_ptr = c ? src + i * c : src;
             for (size_t b = 0; b < bpr; ++b) {
                 const size_t base_col = b * 64;
                 const size_t lim = std::min<size_t>(64, c - base_col);
@@ -128,6 +165,8 @@ struct BlockTernaryTensor {
                 // 1. Find block maximum absolute value
                 float max_abs = 0.0f;
                 for (size_t k = 0; k < lim; ++k) {
+                    if (!std::isfinite(row_ptr[base_col + k]))
+                        throw std::domain_error("block tensor requires finite float values");
                     float a = std::fabs(row_ptr[base_col + k]);
                     if (a > max_abs) max_abs = a;
                 }
@@ -138,14 +177,15 @@ struct BlockTernaryTensor {
                 }
 
                 // 2. Compute block scale so max_abs maps to MAX_TRIT_INT = (3^P - 1)/2
-                const float scale = max_abs / static_cast<float>(MAX_TRIT_INT);
-                const float inv_scale = static_cast<float>(MAX_TRIT_INT) / max_abs;
+                const float scale = std::max(std::numeric_limits<float>::denorm_min(),
+                    max_abs / static_cast<float>(MAX_TRIT_INT));
+                const double inv_scale = 1.0 / static_cast<double>(scale);
                 out.block_scales[blk_idx] = scale;
 
                 // 3. Decompose all 64 integers into NumPlanes Dual-Rail TritWord64s
                 TritWord64* blk_planes = &out.planes[blk_idx * NumPlanes];
                 for (size_t k = 0; k < lim; ++k) {
-                    int64_t q = std::llround(row_ptr[base_col + k] * inv_scale);
+                    int64_t q = std::llround(static_cast<double>(row_ptr[base_col + k]) * inv_scale);
                     q = std::clamp<int64_t>(q, -MAX_TRIT_INT, MAX_TRIT_INT);
                     uint64_t bit = 1ULL << k;
                     for (size_t p = 0; p < NumPlanes && q != 0; ++p) {
@@ -175,7 +215,9 @@ struct BlockTernaryTensor {
     /**
      * @brief Reconstructs the float matrix from the Balanced Ternary planes.
      */
-    void to_float_matrix(float* dst) const noexcept {
+    void to_float_matrix(float* dst) const {
+        validate_storage();
+        if (rows && cols && !dst) throw std::invalid_argument("null decoded tensor output");
         for (size_t i = 0; i < rows; ++i) {
             for (size_t b = 0; b < blocks_per_row; ++b) {
                 const size_t base_col = b * 64;
@@ -196,7 +238,9 @@ struct BlockTernaryTensor {
                         acc += t * p3;
                         p3 *= 3;
                     }
-                    dst[i * cols + base_col + k] = static_cast<float>(acc) * scale;
+                    dst[i * cols + base_col + k] = static_cast<float>(std::clamp(static_cast<double>(acc) * scale,
+                        -static_cast<double>(std::numeric_limits<float>::max()),
+                         static_cast<double>(std::numeric_limits<float>::max())));
                 }
             }
         }

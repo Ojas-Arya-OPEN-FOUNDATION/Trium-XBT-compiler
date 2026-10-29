@@ -37,6 +37,7 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
 
 namespace bt {
 
@@ -322,7 +323,10 @@ public:
 
     TernaryMatrix() = default;
 
-    TernaryMatrix(size_t r, size_t c) : rows(r), cols(c), words_per_row((c + 63) / 64) {
+    TernaryMatrix(size_t r, size_t c) : rows(r), cols(c) {
+        if (c > SIZE_MAX - 63 || (c && r > SIZE_MAX / c))
+            throw std::length_error("ternary matrix dimensions overflow");
+        words_per_row = (c + 63) / 64;
         data.resize(rows * words_per_row, TritWord64(0, 0));
     }
 
@@ -371,7 +375,10 @@ public:
     size_t cols{0};
     std::vector<int64_t> data;
 
-    DenseMatrixInt64(size_t r, size_t c) : rows(r), cols(c), data(r * c, 0) {}
+    DenseMatrixInt64(size_t r, size_t c) : rows(r), cols(c) {
+        if (c && r > SIZE_MAX / c) throw std::length_error("integer matrix dimensions overflow");
+        data.resize(r * c, 0);
+    }
 
     inline int64_t& operator()(size_t r, size_t c) noexcept {
         assert(r < rows && c < cols);

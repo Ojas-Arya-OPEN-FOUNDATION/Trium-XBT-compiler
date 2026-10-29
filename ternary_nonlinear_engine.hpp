@@ -32,8 +32,8 @@ inline constexpr double SQRT_2_PI = 0.797884560802865355879892119868763736951717
  * Evaluates e^r via a degree-7 Horner polynomial (< 3.7e-11 relative error in 7 FMAs!).
  */
 inline double xbt_exp_fast(double x) noexcept {
-    if (x > 709.0) return std::numeric_limits<double>::infinity();
-    if (x < -709.0) return 0.0;
+    // Avoid NaN-to-integer conversion UB and preserve binary64 boundary behavior.
+    if (!std::isfinite(x) || x > 700.0 || x < -700.0) return std::exp(x);
 
     // 1. Sub-trit range reduction: 3*x / ln(3) = 3*k + r0 + residual
     double u = std::round(x * (3.0 * INV_LN3));
@@ -119,19 +119,22 @@ inline double xbt_gelu_fast(double x) noexcept {
  *   y_next = y * (1 + 0.5 * delta + 0.375 * delta^2)
  */
 inline double xbt_rsqrt_householder(double x) noexcept {
-    if (x <= 0.0) return std::numeric_limits<double>::infinity();
-    // Initial seed from fast float bit-hack or single-precision rsqrt
-    float xf = static_cast<float>(x);
-    uint32_t i = std::bit_cast<uint32_t>(xf);
-    i = 0x5f375a86U - (i >> 1);
-    double y = static_cast<double>(std::bit_cast<float>(i));
-
-    // Two 3rd-order Householder cubic steps -> triples accuracy twice (3^2 = 9x precision gain -> full double)
-    for (int step = 0; step < 2; ++step) {
-        double delta = 1.0 - x * y * y;
-        y = y * (1.0 + delta * (0.5 + 0.375 * delta));
+    if (std::isnan(x)) return x;
+    if (x < 0.0) return std::numeric_limits<double>::quiet_NaN();
+    if (x == 0.0) return std::copysign(std::numeric_limits<double>::infinity(), x);
+    if (std::isinf(x)) return 0.0;
+    // Scale into [1,4), including double subnormals, before using the float seed.
+    int exponent;
+    double scaled = std::frexp(x, &exponent);
+    if (exponent % 2 != 0) { scaled *= 2.0; --exponent; }
+    uint32_t bits = std::bit_cast<uint32_t>(static_cast<float>(scaled));
+    bits = 0x5f375a86U - (bits >> 1);
+    double y = static_cast<double>(std::bit_cast<float>(bits));
+    for (int step = 0; step < 3; ++step) {
+        double delta = std::fma(-scaled * y, y, 1.0);
+        y *= 1.0 + delta * (0.5 + 0.375 * delta);
     }
-    return y;
+    return std::ldexp(y, -exponent / 2);
 }
 
 /**

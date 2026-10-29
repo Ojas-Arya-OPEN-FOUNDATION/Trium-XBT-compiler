@@ -37,13 +37,19 @@ inline constexpr std::array<float, 33> POW3_FLOAT = []() constexpr {
  *
  * @param min_plane_sum_cutoff  Zero-bias plane truncation threshold (0 = exact full precision,
  *                              higher values skip tiny low-order (p + q < cutoff) cross-planes
- *                              with ZERO statistical bias for 2x-3x extra speedup!).
+ *                              with an input-dependent additional approximation error).
  */
 template <size_t PlanesA = 6, size_t PlanesB = 6>
 inline void xbt_gemm_encoded(const universal::BlockTernaryTensor<PlanesA>& A,
                              const universal::BlockTernaryTensor<PlanesB>& B_T,
                              float* C,
-                             int min_plane_sum_cutoff = 0) noexcept {
+                             int min_plane_sum_cutoff = 0) {
+    A.validate_storage(); B_T.validate_storage();
+    if (B_T.rows && A.rows > std::numeric_limits<size_t>::max() / B_T.rows)
+        throw std::length_error("GEMM output dimensions overflow");
+    if (A.cols != B_T.cols || A.blocks_per_row != B_T.blocks_per_row)
+        throw std::invalid_argument("encoded GEMM inner dimensions differ");
+    if (A.rows && B_T.rows && !C) throw std::invalid_argument("null GEMM output");
     const size_t M = A.rows;
     const size_t N = B_T.rows;
     const size_t bpr = A.blocks_per_row;
@@ -104,6 +110,15 @@ template <size_t Planes = 8>
 inline void xbt_sgemm_unmodified(const float* A, const float* B, float* C,
                                  size_t M, size_t K, size_t N,
                                  int min_plane_sum_cutoff = 0) {
+    auto product = [](size_t a, size_t b) {
+        if (b && a > std::numeric_limits<size_t>::max() / b) throw std::length_error("GEMM size overflow");
+        return a * b;
+    };
+    product(M, K); product(K, N); product(M, N);
+    if ((M && K && !A) || (K && N && !B) || (M && N && !C))
+        throw std::invalid_argument("null GEMM buffer");
+    if (min_plane_sum_cutoff < 0 || min_plane_sum_cutoff > static_cast<int>(2 * Planes))
+        throw std::invalid_argument("invalid plane cutoff");
     // 1. Transpose B [K x N] -> B_T [N x K] for contiguous 64-trit SIMD/POPCNT streaming
     std::vector<float> B_T(N * K);
     for (size_t k = 0; k < K; ++k) {
