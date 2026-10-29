@@ -1,6 +1,8 @@
 (** * BalancedTernaryFoundations.v
     Formal Verification of Balanced Ternary Hardware Foundations & Symplectic Mechanics
-    Prover: The Rocq Prover, version 9.2 (Zero Axioms, Standard Library ZArith + Bool + Lia)
+    Target: Rocq / standard library ZArith + Bool + Lia.
+    See test/check_rocq.py for actual engine-specific validation; source presence
+    alone is not a claim of native Rocq 9 execution.
 *)
 
 From Stdlib Require Import Bool.Bool.
