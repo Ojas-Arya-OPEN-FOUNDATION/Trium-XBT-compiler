@@ -1,9 +1,9 @@
-# Binaries and executables
-bt-compiler
-bt-opt
-bench_*_runner
-test_*_runner
-simd_bench
+# Binaries and executables in repository root
+/bt-compiler
+/bt-opt
+/bench_*_runner
+/test_*_runner
+/simd_bench
 a.out
 *.o
 *.obj
@@ -24,6 +24,9 @@ lib/*.dylib
 *.log
 /tmp/
 .DS_Store
+
+# Internal research notes
+.prime-research/
 
 # Python cache
 __pycache__/
