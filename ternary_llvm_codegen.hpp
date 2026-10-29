@@ -8,6 +8,7 @@
 #define TERNARY_LLVM_CODEGEN_HPP
 
 #include "ternary_frontend_ast.hpp"
+#include "bt_process.hpp"
 #include <map>
 #include <sstream>
 #include <string>
@@ -46,6 +47,8 @@ private:
     size_t current_dim_{0};
     bool block_terminated_{false};
     bool is_in_bt_main_{false};
+    std::string function_result_type_{"i32"};
+    std::unordered_map<std::string, std::vector<std::string>> user_func_params_;
 
     struct SparseMatrixInfo {
         std::string name;
@@ -75,6 +78,51 @@ private:
     };
     std::map<std::pair<size_t, size_t>, uint64_t> loc_map_;
     std::vector<LocEntry> loc_entries_;
+
+    static std::string llvm_string(const std::string& text) {
+        static constexpr char hex[] = "0123456789ABCDEF";
+        std::string out;
+        for (unsigned char c : text) {
+            if (c == '"' || c == '\\' || c < 32 || c >= 127) {
+                out += '\\'; out += hex[c >> 4]; out += hex[c & 15];
+            } else out += static_cast<char>(c);
+        }
+        return out;
+    }
+    static std::string hoist_allocas(const std::string& function) {
+        std::istringstream input(function);
+        std::string line, body, allocas;
+        while (std::getline(input, line)) {
+            if (line.find(" = alloca ") != std::string::npos) allocas += line + "\n";
+            else body += line + "\n";
+        }
+        auto entry = body.find("entry:\n");
+        if (entry != std::string::npos) body.insert(entry + 7, allocas);
+        return body;
+    }
+
+    // All scalar arithmetic is widened before checking. Failure unwinds generated
+    // functions through an explicit status channel, never C++ exceptions or UB.
+    void check_integer(const std::string& wide, const std::string& result) {
+        std::string lo = new_reg(), hi = new_reg(), bad = new_reg();
+        std::string ok = new_label("integer_ok");
+        fn_body_ << "  " << lo << " = icmp slt i128 " << wide << ", " << contract::integer_min << "\n";
+        fn_body_ << "  " << hi << " = icmp sgt i128 " << wide << ", " << contract::integer_max << "\n";
+        fn_body_ << "  " << bad << " = or i1 " << lo << ", " << hi << "\n";
+        fn_body_ << "  br i1 " << bad << ", label %bt_runtime_error, label %" << ok << "\n";
+        fn_body_ << ok << ":\n  " << result << " = trunc i128 " << wide << " to i64\n";
+    }
+    void error_block(const std::string& type) {
+        fn_body_ << "bt_runtime_error:\n  store i32 1, i32* @bt_error_state\n";
+        if (type == "void") fn_body_ << "  ret void\n";
+        else fn_body_ << "  ret " << type << (type == "double" ? " 0.0\n" : (type == "i32" ? " 1\n" : " 0\n"));
+    }
+    void propagate_error() {
+        std::string state = new_reg(), bad = new_reg(), ok = new_label("call_ok");
+        fn_body_ << "  " << state << " = load i32, i32* @bt_error_state\n";
+        fn_body_ << "  " << bad << " = icmp ne i32 " << state << ", 0\n";
+        fn_body_ << "  br i1 " << bad << ", label %bt_runtime_error, label %" << ok << "\n" << ok << ":\n";
+    }
 
     uint64_t get_or_create_loc(size_t line, size_t col, uint64_t scope = 4) {
         if (line == 0) line = 1;
@@ -147,10 +195,13 @@ public:
     std::string generate(frontend::ProgramNode& program,
                           const std::string& target_triple = "arm64-apple-macosx",
                           const std::string& datalayout = "e-m:o-i64:64-i128:128-n32:64-S128") {
+        frontend::TypeChecker checker(true);
+        checker.typecheck(program);
         ir_.str(""); ir_.clear();
         fn_body_.str(""); fn_body_.clear();
         user_fns_.str(""); user_fns_.clear();
         user_func_ret_types_.clear();
+        user_func_params_.clear();
         scope_stack_.clear();
         enter_scope();
         sparse_matrices_.clear();
@@ -181,10 +232,11 @@ public:
 
         // 1. Module Header
         ir_ << "; ModuleID = 'bt_native_module'\n";
-        ir_ << "source_filename = \"" << source_filename_ << "\"\n";
+        ir_ << "source_filename = \"" << llvm_string(source_filename_) << "\"\n";
         ir_ << "target datalayout = \"" << datalayout << "\"\n";
         ir_ << "target triple = \"" << target_triple << "\"\n\n";
 
+        ir_ << "@bt_error_state = internal thread_local global i32 0\n";
         // 2. Standard Intrinsics & Builtins
         ir_ << "declare i64 @llvm.ctpop.i64(i64) nounwind readnone speculatable willreturn\n";
         ir_ << "declare double @llvm.fma.f64(double, double, double) nounwind readnone speculatable willreturn\n";
@@ -198,7 +250,7 @@ public:
         ir_ << "@.str_float = private unnamed_addr constant [6 x i8] c\"%.6f\\0A\\00\", align 1\n\n";
 
         // Helper: Spaceship operator (<=>)
-        ir_ << "define i64 @bt_spaceship(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "define internal i64 @bt_spaceship(i64 %a, i64 %b) nounwind readnone {\n";
         ir_ << "entry:\n";
         ir_ << "  %cmp_gt = icmp sgt i64 %a, %b\n";
         ir_ << "  %cmp_lt = icmp slt i64 %a, %b\n";
@@ -208,7 +260,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: 3-way branchless select
-        ir_ << "define i64 @bt_select(i64 %cond, i64 %p_val, i64 %z_val, i64 %n_val) nounwind readnone {\n";
+        ir_ << "define internal i64 @bt_select(i64 %cond, i64 %p_val, i64 %z_val, i64 %n_val) nounwind readnone {\n";
         ir_ << "entry:\n";
         ir_ << "  %is_pos = icmp sgt i64 %cond, 0\n";
         ir_ << "  %is_neg = icmp slt i64 %cond, 0\n";
@@ -218,7 +270,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Kleene 3-valued AND: min(a, b) for trits, digit-wise min for multi-trit integers
-        ir_ << "define i64 @bt_kleene_and(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "define internal i64 @bt_kleene_and(i64 %a, i64 %b) nounwind readnone {\n";
         ir_ << "entry:\n";
         ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
         ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
@@ -273,7 +325,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Kleene 3-valued OR: max(a, b) for trits, digit-wise max for multi-trit integers
-        ir_ << "define i64 @bt_kleene_or(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "define internal i64 @bt_kleene_or(i64 %a, i64 %b) nounwind readnone {\n";
         ir_ << "entry:\n";
         ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
         ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
@@ -328,7 +380,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Ternary XOR: a * b for trits, digit-wise GF(3) product for multi-trit integers
-        ir_ << "define i64 @bt_kleene_xor(i64 %a, i64 %b) nounwind readnone {\n";
+        ir_ << "define internal i64 @bt_kleene_xor(i64 %a, i64 %b) nounwind readnone {\n";
         ir_ << "entry:\n";
         ir_ << "  %is_trit_a_lo = icmp sge i64 %a, -1\n";
         ir_ << "  %is_trit_a_hi = icmp sle i64 %a, 1\n";
@@ -381,7 +433,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Print integer
-        ir_ << "define void @bt_print(i64 %val) nounwind {\n";
+        ir_ << "define internal void @bt_print(i64 %val) nounwind {\n";
         ir_ << "entry:\n";
         ir_ << "  %fmt = getelementptr inbounds [6 x i8], [6 x i8]* @.str_fmt, i64 0, i64 0\n";
         ir_ << "  %call = call i32 (i8*, ...) @printf(i8* %fmt, i64 %val)\n";
@@ -389,7 +441,7 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Print float
-        ir_ << "define void @bt_print_float(double %val) nounwind {\n";
+        ir_ << "define internal void @bt_print_float(double %val) nounwind {\n";
         ir_ << "entry:\n";
         ir_ << "  %fmt = getelementptr inbounds [6 x i8], [6 x i8]* @.str_float, i64 0, i64 0\n";
         ir_ << "  %call = call i32 (i8*, ...) @printf(i8* %fmt, double %val)\n";
@@ -397,11 +449,11 @@ public:
         ir_ << "}\n\n";
 
         // Helper: Multiplier-free T-CSR Sparse Matrix-Vector Multiply (SpMV)
-        ir_ << "define void @bt_spmv(i64 %rows, i32* %row_ptr, i32* %col_indices, i64* %signs, i64* %vec_in, i64* %vec_out) nounwind {\n";
+        ir_ << "define internal void @bt_spmv(i64 %rows, i32* %row_ptr, i32* %col_indices, i64* %signs, i64* %vec_in, i64* %vec_out) nounwind {\n";
         ir_ << "entry:\n";
         ir_ << "  br label %row_loop_cond\n\n";
         ir_ << "row_loop_cond:\n";
-        ir_ << "  %r = phi i64 [ 0, %entry ], [ %next_r, %spmv_inner_exit ]\n";
+        ir_ << "  %r = phi i64 [ 0, %entry ], [ %next_r, %spmv_store ]\n";
         ir_ << "  %cmp_row = icmp ult i64 %r, %rows\n";
         ir_ << "  br i1 %cmp_row, label %row_loop_body, label %spmv_done\n\n";
         ir_ << "row_loop_body:\n";
@@ -415,7 +467,7 @@ public:
         ir_ << "  br label %nz_loop_cond\n\n";
         ir_ << "nz_loop_cond:\n";
         ir_ << "  %k = phi i64 [ %start, %row_loop_body ], [ %next_k, %nz_loop_inc ]\n";
-        ir_ << "  %acc = phi i64 [ 0, %row_loop_body ], [ %new_acc, %nz_loop_inc ]\n";
+        ir_ << "  %acc = phi i128 [ 0, %row_loop_body ], [ %new_acc, %nz_loop_inc ]\n";
         ir_ << "  %cmp_k = icmp ult i64 %k, %end\n";
         ir_ << "  br i1 %cmp_k, label %spmv_inner_body, label %spmv_inner_exit, !llvm.loop !" << loop_meta_id_ << "\n\n";
         ir_ << "spmv_inner_body:\n";
@@ -431,22 +483,38 @@ public:
         ir_ << "  %is_pos = icmp eq i64 %sign_bit, 1\n";
         ir_ << "  %p_in = getelementptr inbounds i64, i64* %vec_in, i64 %col\n";
         ir_ << "  %x_val = load i64, i64* %p_in, align 8\n";
-        ir_ << "  %acc_add = add i64 %acc, %x_val\n";
-        ir_ << "  %acc_sub = sub i64 %acc, %x_val\n";
-        ir_ << "  %new_acc = select i1 %is_pos, i64 %acc_add, i64 %acc_sub\n";
+        ir_ << "  %x_wide = sext i64 %x_val to i128\n  %acc_add = add i128 %acc, %x_wide\n";
+        ir_ << "  %acc_sub = sub i128 %acc, %x_wide\n";
+        ir_ << "  %new_acc = select i1 %is_pos, i128 %acc_add, i128 %acc_sub\n";
         ir_ << "  br label %nz_loop_inc\n\n";
         ir_ << "nz_loop_inc:\n";
         ir_ << "  %next_k = add i64 %k, 1\n";
         ir_ << "  br label %nz_loop_cond\n\n";
         ir_ << "spmv_inner_exit:\n";
-        ir_ << "  %final_acc = phi i64 [ %acc, %nz_loop_cond ]\n";
+        ir_ << "  %final_acc = phi i128 [ %acc, %nz_loop_cond ]\n";
+        ir_ << "  %too_low = icmp slt i128 %final_acc, -9223372036854775808\n";
+        ir_ << "  %too_high = icmp sgt i128 %final_acc, 9223372036854775807\n";
+        ir_ << "  %overflow = or i1 %too_low, %too_high\n";
+        ir_ << "  br i1 %overflow, label %spmv_error, label %spmv_store\nspmv_error:\n";
+        ir_ << "  store i32 1, i32* @bt_error_state\n  ret void\nspmv_store:\n";
+        ir_ << "  %result = trunc i128 %final_acc to i64\n";
         ir_ << "  %p_out = getelementptr inbounds i64, i64* %vec_out, i64 %r\n";
-        ir_ << "  store i64 %final_acc, i64* %p_out, align 8\n";
+        ir_ << "  store i64 %result, i64* %p_out, align 8\n";
         ir_ << "  %next_r = add i64 %r, 1\n";
         ir_ << "  br label %row_loop_cond\n\n";
         ir_ << "spmv_done:\n";
         ir_ << "  ret void\n";
         ir_ << "}\n\n";
+
+        for (auto& decl : program.declarations) {
+            if (auto f = std::dynamic_pointer_cast<frontend::FunctionDefNode>(decl))
+            {
+                user_func_ret_types_[f->name] = f->return_type == "float" ? "double" : (f->return_type == "void" ? "void" : "i64");
+                for (auto& p : f->params) user_func_params_[f->name].push_back(p.type == "float" ? "double" : "i64");
+            }
+        }
+        for (auto& decl : program.declarations)
+            if (auto f = std::dynamic_pointer_cast<frontend::FunctionDefNode>(decl)) f->accept(*this);
 
         // 3. Generate main entry function containing top-level statements
         is_in_bt_main_ = true;
@@ -457,13 +525,13 @@ public:
         } else {
             fn_body_ << "define i32 @bt_main() nounwind {\n";
         }
-        fn_body_ << "entry:\n";
+        fn_body_ << "entry:\n  store i32 0, i32* @bt_error_state\n";
         block_terminated_ = false;
 
         // Visit top-level AST declarations
         for (auto& decl : program.declarations) {
             if (block_terminated_) break;
-            if (decl) {
+            if (decl && !std::dynamic_pointer_cast<frontend::FunctionDefNode>(decl)) {
                 if (decl->location.line > 0) current_loc_ = decl->location;
                 decl->accept(*this);
             }
@@ -472,12 +540,13 @@ public:
         if (!block_terminated_) {
             fn_body_ << "  ret i32 0" << dbg_tag() << "\n";
         }
+        error_block("i32");
         fn_body_ << "}\n";
         is_in_bt_main_ = false;
 
         // Combine module header + user functions + generated main function
         ir_ << user_fns_.str();
-        ir_ << fn_body_.str();
+        ir_ << hoist_allocas(fn_body_.str());
 
         if (emit_debug_) {
             ir_ << "\n!llvm.dbg.cu = !{!0}\n";
@@ -485,7 +554,7 @@ public:
             ir_ << "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !3, producer: \"bt-compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly)\n";
             ir_ << "!1 = !{i32 7, !\"Dwarf Version\", i32 5}\n";
             ir_ << "!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n";
-            ir_ << "!3 = !DIFile(filename: \"" << source_filename_ << "\", directory: \".\")\n";
+            ir_ << "!3 = !DIFile(filename: \"" << llvm_string(source_filename_) << "\", directory: \".\")\n";
             ir_ << "!4 = distinct !DISubprogram(name: \"bt_main\", scope: !3, file: !3, line: 1, type: !5, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0)\n";
             ir_ << "!5 = !DISubroutineType(types: !{})\n";
             for (const auto& entry : loc_entries_) {
@@ -528,6 +597,8 @@ public:
         std::string saved_body = fn_body_.str();
         fn_body_.str("");
         fn_body_.clear();
+        bool saved_debug = emit_debug_;
+        emit_debug_ = false; // user-function debug scopes are not implemented yet
         bool saved_in_main = is_in_bt_main_;
         bool saved_terminated = block_terminated_;
         is_in_bt_main_ = false;
@@ -537,8 +608,10 @@ public:
         if (node.return_type == "float") ret_llvm_type = "double";
         else if (node.return_type == "void") ret_llvm_type = "void";
         user_func_ret_types_[node.name] = ret_llvm_type;
+        auto saved_result = function_result_type_;
+        function_result_type_ = ret_llvm_type;
 
-        fn_body_ << "define " << ret_llvm_type << " @" << node.name << "(";
+        fn_body_ << "define internal " << ret_llvm_type << " @bt.user." << node.name << "(";
         for (size_t i = 0; i < node.params.size(); ++i) {
             std::string p_type = (node.params[i].type == "float") ? "double" : "i64";
             fn_body_ << p_type << " %arg_" << node.params[i].name;
@@ -567,14 +640,17 @@ public:
             else if (ret_llvm_type == "double") fn_body_ << "  ret double 0.0\n";
             else fn_body_ << "  ret i64 0\n";
         }
+        error_block(ret_llvm_type);
         fn_body_ << "}\n\n";
         exit_scope();
 
-        user_fns_ << fn_body_.str();
+        user_fns_ << hoist_allocas(fn_body_.str());
         fn_body_.str(saved_body);
         fn_body_.seekp(0, std::ios_base::end);
         is_in_bt_main_ = saved_in_main;
         block_terminated_ = saved_terminated;
+        function_result_type_ = saved_result;
+        emit_debug_ = saved_debug;
     }
 
     void visit(frontend::VarDeclNode& node) override {
@@ -607,7 +683,7 @@ public:
             // global T-CSR constants referenced through sparse_matrices_); the
             // variable resolves by name, so point the descriptor at the name
             // instead of an undefined SSA register.
-            info.ptr_reg = node.name;
+            info.ptr_reg = current_val_;
         } else {
             info.ptr_reg = ptr_reg;
         }
@@ -694,22 +770,7 @@ public:
                     fn_body_ << "  store i64 " << current_val_ << ", i64* " << var->ptr_reg << ", align 8" << dbg_tag() << "\n";
                 }
             } else {
-                std::string ptr_reg = "%var_" + node.target + "_" + std::to_string(++alloca_counter_);
-                VarInfo info;
-                info.ptr_reg = ptr_reg;
-                info.type = (current_type_ == "double") ? "double" : (current_type_ == "i64*" ? "i64*" : "i64");
-                info.dim = current_dim_;
-                if (info.type == "double") {
-                    fn_body_ << "  " << ptr_reg << " = alloca double, align 8" << dbg_tag() << "\n";
-                    fn_body_ << "  store double " << current_val_ << ", double* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
-                } else if (info.type == "i64*") {
-                    info.ptr_reg = current_val_;
-                } else {
-                    fn_body_ << "  " << ptr_reg << " = alloca i64, align 8" << dbg_tag() << "\n";
-                    fn_body_ << "  store i64 " << current_val_ << ", i64* " << ptr_reg << ", align 8" << dbg_tag() << "\n";
-                }
-                if (scope_stack_.empty()) enter_scope();
-                scope_stack_.back()[node.target] = info;
+                throw std::runtime_error("assignment to unresolved native variable '" + node.target + "'");
             }
         }
     }
@@ -730,6 +791,8 @@ public:
             auto it = sparse_matrices_.find(left_val);
             if (it != sparse_matrices_.end()) {
                 const auto& info = it->second;
+                if (right_type != "i64*" || current_dim_ != info.cols)
+                    throw std::runtime_error("native SpMV vector length does not match matrix columns");
                 std::string out_vec = new_reg();
                 fn_body_ << "  " << out_vec << " = alloca [" << info.rows << " x i64], align 8" << dbg_tag() << "\n";
                 std::string p_out = new_reg();
@@ -754,6 +817,7 @@ public:
                          << ", i32* " << p_c << ", i64* " << p_s << ", i64* " << right_val
                          << ", i64* " << p_out << ")" << dbg_tag() << "\n";
 
+                propagate_error();
                 current_val_ = p_out;
                 current_type_ = "i64*";
                 current_dim_ = info.rows;
@@ -809,7 +873,7 @@ public:
                 }
                 case frontend::BinaryOp::NotEqual: {
                     std::string cmp = new_reg();
-                    fn_body_ << "  " << cmp << " = fcmp one double " << left_val << ", " << right_val << dbg_tag() << "\n";
+                    fn_body_ << "  " << cmp << " = fcmp une double " << left_val << ", " << right_val << dbg_tag() << "\n";
                     std::string res = new_reg();
                     fn_body_ << "  " << res << " = select i1 " << cmp << ", i64 1, i64 -1" << dbg_tag() << "\n";
                     current_val_ = res;
@@ -878,15 +942,30 @@ public:
         // 3. Integer & Trit arithmetic
         std::string res = new_reg();
         switch (node.op) {
-            case frontend::BinaryOp::Add:
-                fn_body_ << "  " << res << " = add i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+            case frontend::BinaryOp::Add: {
+                std::string a = new_reg(), b = new_reg(), wide = new_reg();
+                fn_body_ << "  " << a << " = sext i64 " << left_val << " to i128\n";
+                fn_body_ << "  " << b << " = sext i64 " << right_val << " to i128\n";
+                fn_body_ << "  " << wide << " = add i128 " << a << ", " << b << "\n";
+                check_integer(wide, res);
                 break;
-            case frontend::BinaryOp::Sub:
-                fn_body_ << "  " << res << " = sub i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+            }
+            case frontend::BinaryOp::Sub: {
+                std::string a = new_reg(), b = new_reg(), wide = new_reg();
+                fn_body_ << "  " << a << " = sext i64 " << left_val << " to i128\n";
+                fn_body_ << "  " << b << " = sext i64 " << right_val << " to i128\n";
+                fn_body_ << "  " << wide << " = sub i128 " << a << ", " << b << "\n";
+                check_integer(wide, res);
                 break;
-            case frontend::BinaryOp::Mul:
-                fn_body_ << "  " << res << " = mul i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
+            }
+            case frontend::BinaryOp::Mul: {
+                std::string a = new_reg(), b = new_reg(), wide = new_reg();
+                fn_body_ << "  " << a << " = sext i64 " << left_val << " to i128\n";
+                fn_body_ << "  " << b << " = sext i64 " << right_val << " to i128\n";
+                fn_body_ << "  " << wide << " = mul i128 " << a << ", " << b << "\n";
+                check_integer(wide, res);
                 break;
+            }
             case frontend::BinaryOp::KleeneAnd:
                 fn_body_ << "  " << res << " = call i64 @bt_kleene_and(i64 " << left_val << ", i64 " << right_val << ")" << dbg_tag() << "\n";
                 break;
@@ -961,53 +1040,59 @@ public:
         if (node.location.line > 0) current_loc_ = node.location;
         node.condition->accept(*this);
         std::string cond_val = current_val_;
+        std::string cond_type = current_type_;
 
         bool is_pure_expr = (!dynamic_cast<frontend::BlockNode*>(node.pos_branch.get()) &&
                              !dynamic_cast<frontend::BlockNode*>(node.zero_branch.get()) &&
                              !dynamic_cast<frontend::BlockNode*>(node.neg_branch.get()));
 
         if (is_pure_expr) {
-            bool any_terminated = false;
-            std::string p_val = "0";
-            std::string z_val = "0";
-            std::string n_val = "0";
-
-            node.pos_branch->accept(*this);
-            p_val = current_val_;
-            any_terminated = block_terminated_;
-
-            if (!any_terminated) {
-                node.zero_branch->accept(*this);
-                z_val = current_val_;
-                any_terminated = block_terminated_;
+            // Control flow (not eager argument evaluation) preserves branch side
+            // effects. Dedicated done blocks make nested select/loops safe phi predecessors.
+            std::string positive = new_reg(), negative = new_reg();
+            fn_body_ << "  " << positive << " = " << (cond_type == "double" ? "fcmp ogt double " : "icmp sgt i64 ")
+                     << cond_val << (cond_type == "double" ? ", 0.0" : ", 0") << dbg_tag() << "\n";
+            fn_body_ << "  " << negative << " = " << (cond_type == "double" ? "fcmp olt double " : "icmp slt i64 ")
+                     << cond_val << (cond_type == "double" ? ", 0.0" : ", 0") << dbg_tag() << "\n";
+            std::string labels[3] = {new_label("select_pos"), new_label("select_zero"), new_label("select_neg")};
+            std::string done[3] = {new_label("select_pos_done"), new_label("select_zero_done"), new_label("select_neg_done")};
+            std::string other = new_label("select_other"), merge = new_label("select_merge");
+            fn_body_ << "  br i1 " << positive << ", label %" << labels[0] << ", label %" << other << "\n";
+            fn_body_ << other << ":\n  br i1 " << negative << ", label %" << labels[2] << ", label %" << labels[1] << "\n";
+            std::string prefix = fn_body_.str();
+            std::string bodies[3], values[3], types[3];
+            frontend::ASTNodePtr branches[3] = {node.pos_branch, node.zero_branch, node.neg_branch};
+            for (int i = 0; i < 3; ++i) {
+                fn_body_.str(""); fn_body_.clear();
+                branches[i]->accept(*this);
+                if (block_terminated_) throw std::runtime_error("terminating expression in select");
+                bodies[i] = fn_body_.str(); values[i] = current_val_; types[i] = current_type_;
             }
-
-            if (!any_terminated) {
-                node.neg_branch->accept(*this);
-                n_val = current_val_;
-                any_terminated = block_terminated_;
+            std::string type = (types[0] == "double" || types[1] == "double" || types[2] == "double") ? "double" : "i64";
+            fn_body_.str(""); fn_body_.clear(); fn_body_ << prefix;
+            for (int i = 0; i < 3; ++i) {
+                fn_body_ << labels[i] << ":\n" << bodies[i];
+                if (type == "double" && types[i] == "i64") {
+                    std::string promoted = new_reg();
+                    fn_body_ << "  " << promoted << " = sitofp i64 " << values[i] << " to double\n";
+                    values[i] = promoted;
+                }
+                fn_body_ << "  br label %" << done[i] << "\n" << done[i] << ":\n  br label %" << merge << "\n";
             }
-
-            if (any_terminated) {
-                current_val_ = "0";
-                current_type_ = "i64";
-                return;
-            }
-
-            if (node.location.line > 0) current_loc_ = node.location;
-            std::string res = new_reg();
-            fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << cond_val << ", i64 "
-                     << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
-            current_val_ = res;
-            current_type_ = "i64";
+            fn_body_ << merge << ":\n";
+            std::string result = new_reg();
+            fn_body_ << "  " << result << " = phi " << type;
+            for (int i = 0; i < 3; ++i) fn_body_ << (i ? ", " : " ") << "[ " << values[i] << ", %" << done[i] << " ]";
+            fn_body_ << dbg_tag() << "\n";
+            current_val_ = result; current_type_ = type;
             return;
         }
 
         // Block statement form: branch to pos, zero, neg basic blocks
         std::string is_pos_reg = new_reg();
         std::string is_neg_reg = new_reg();
-        fn_body_ << "  " << is_pos_reg << " = icmp sgt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
-        fn_body_ << "  " << is_neg_reg << " = icmp slt i64 " << cond_val << ", 0" << dbg_tag() << "\n";
+        fn_body_ << "  " << is_pos_reg << " = " << (cond_type == "double" ? "fcmp ogt double " : "icmp sgt i64 ") << cond_val << (cond_type == "double" ? ", 0.0" : ", 0") << dbg_tag() << "\n";
+        fn_body_ << "  " << is_neg_reg << " = " << (cond_type == "double" ? "fcmp olt double " : "icmp slt i64 ") << cond_val << (cond_type == "double" ? ", 0.0" : ", 0") << dbg_tag() << "\n";
 
         std::string pos_lbl = new_label("sel_pos");
         std::string not_pos_lbl = new_label("sel_not_pos");
@@ -1119,7 +1204,14 @@ public:
             if (node.expr) {
                 node.expr->accept(*this);
                 if (node.location.line > 0) current_loc_ = node.location;
-                if (current_type_ == "double") {
+                if (function_result_type_ == "double" && current_type_ == "i64") {
+                    std::string promoted = new_reg();
+                    fn_body_ << "  " << promoted << " = sitofp i64 " << current_val_ << " to double" << dbg_tag() << "\n";
+                    current_val_ = promoted; current_type_ = "double";
+                }
+                if (function_result_type_ == "void") {
+                    fn_body_ << "  ret void" << dbg_tag() << "\n";
+                } else if (current_type_ == "double") {
                     fn_body_ << "  ret double " << current_val_ << dbg_tag() << "\n";
                 } else {
                     fn_body_ << "  ret i64 " << current_val_ << dbg_tag() << "\n";
@@ -1132,7 +1224,7 @@ public:
     }
 
     void visit(frontend::LiteralNode& node) override {
-        current_val_ = std::to_string(node.int_val);
+        current_val_ = std::to_string(node.kind == frontend::LiteralKind::Trit ? to_int(node.trit_val) : node.int_val);
         current_type_ = "i64";
     }
 
@@ -1147,7 +1239,7 @@ public:
     }
 
     void visit(frontend::SparseMatrixDeclAST& node) override {
-        std::string s_id = node.name.empty() ? ("smat_" + std::to_string(++sparse_counter_)) : node.name;
+        std::string s_id = "smat_" + std::to_string(++sparse_counter_);
         std::string g_row_ptr = "@" + s_id + "_row_ptr";
         std::string g_col_ind = "@" + s_id + "_col_ind";
         std::string g_signs   = "@" + s_id + "_signs";
@@ -1185,7 +1277,7 @@ public:
         if (!node.name.empty()) {
             sparse_matrices_[node.name] = info;
             VarInfo vinfo;
-            vinfo.ptr_reg = node.name;
+            vinfo.ptr_reg = s_id;
             vinfo.type = "sparse_matrix";
             if (scope_stack_.empty()) enter_scope();
             scope_stack_.back()[node.name] = vinfo;
@@ -1199,7 +1291,7 @@ public:
         const VarInfo* var = lookup_var(node.name);
         if (var) {
             if (var->type == "sparse_matrix") {
-                current_val_ = node.name;
+                current_val_ = var->ptr_reg;
                 current_type_ = "sparse_matrix";
                 return;
             }
@@ -1228,8 +1320,7 @@ public:
             return;
         }
 
-        current_val_ = "0";
-        current_type_ = "i64";
+        throw std::runtime_error("unresolved native variable '" + node.name + "'");
     }
 
     void visit(frontend::CallNode& node) override {
@@ -1283,21 +1374,8 @@ public:
             current_type_ = "i64*";
             current_dim_ = count;
         } else if (node.callee == "select" && node.arguments.size() == 4) {
-            node.arguments[0]->accept(*this);
-            std::string c_val = current_val_;
-            node.arguments[1]->accept(*this);
-            std::string p_val = current_val_;
-            node.arguments[2]->accept(*this);
-            std::string z_val = current_val_;
-            node.arguments[3]->accept(*this);
-            std::string n_val = current_val_;
-            if (node.location.line > 0) current_loc_ = node.location;
-
-            std::string res = new_reg();
-            fn_body_ << "  " << res << " = call i64 @bt_select(i64 " << c_val << ", i64 "
-                     << p_val << ", i64 " << z_val << ", i64 " << n_val << ")" << dbg_tag() << "\n";
-            current_val_ = res;
-            current_type_ = "i64";
+            frontend::SelectNode selection(node.arguments[0], node.arguments[1], node.arguments[2], node.arguments[3], node.location);
+            visit(selection);
         } else if ((node.callee == "planar_dot64" || node.callee == "btha_sum_p" ||
                     node.callee == "btha_carry_p" || node.callee == "btha_sum_n" ||
                     node.callee == "btha_carry_n") && node.arguments.size() == 4) {
@@ -1379,6 +1457,10 @@ public:
                 current_val_ = nc;
                 current_type_ = "i64";
             }
+            std::string wide = new_reg(), checked = new_reg();
+            fn_body_ << "  " << wide << " = sext i64 " << current_val_ << " to i128\n";
+            check_integer(wide, checked);
+            current_val_ = checked;
         } else if (node.callee == "fma" && node.arguments.size() == 3) {
             node.arguments[0]->accept(*this);
             std::string a_val = current_val_;
@@ -1443,11 +1525,17 @@ public:
             std::vector<std::pair<std::string, std::string>> arg_vals;
             for (auto& arg : node.arguments) {
                 arg->accept(*this);
-                arg_vals.emplace_back(current_type_ == "double" ? "double" : "i64", current_val_);
+                const auto& expected = user_func_params_.at(node.callee).at(arg_vals.size());
+                if (expected == "double" && current_type_ == "i64") {
+                    std::string promoted = new_reg();
+                    fn_body_ << "  " << promoted << " = sitofp i64 " << current_val_ << " to double" << dbg_tag() << "\n";
+                    current_val_ = promoted;
+                }
+                arg_vals.emplace_back(expected, current_val_);
             }
             if (node.location.line > 0) current_loc_ = node.location;
             if (ret_type == "void") {
-                fn_body_ << "  call void @" << node.callee << "(";
+                fn_body_ << "  call void @bt.user." << node.callee << "(";
                 for (size_t i = 0; i < arg_vals.size(); ++i) {
                     fn_body_ << arg_vals[i].first << " " << arg_vals[i].second;
                     if (i + 1 < arg_vals.size()) fn_body_ << ", ";
@@ -1457,7 +1545,7 @@ public:
                 current_type_ = "i64";
             } else {
                 std::string res = new_reg();
-                fn_body_ << "  " << res << " = call " << ret_type << " @" << node.callee << "(";
+                fn_body_ << "  " << res << " = call " << ret_type << " @bt.user." << node.callee << "(";
                 for (size_t i = 0; i < arg_vals.size(); ++i) {
                     fn_body_ << arg_vals[i].first << " " << arg_vals[i].second;
                     if (i + 1 < arg_vals.size()) fn_body_ << ", ";
@@ -1466,9 +1554,9 @@ public:
                 current_val_ = res;
                 current_type_ = ret_type;
             }
+            propagate_error();
         } else {
-            current_val_ = "0";
-            current_type_ = "i64";
+            throw std::runtime_error("unsupported native call '" + node.callee + "'");
         }
     }
 
@@ -1544,54 +1632,27 @@ public:
                                bool enable_debug = false, bool enable_lto = false,
                                const std::string& filename = "program.bt") {
         LLVMCodeGenVisitor codegen(enable_debug, filename);
-        std::string llvm_ir = codegen.generate(program);
-
-        static std::atomic<uint64_t> jit_counter{0};
-        uint64_t count = ++jit_counter;
-        pid_t pid = getpid();
-        std::string base_path = "/tmp/bt_jit_" + std::to_string(pid) + "_" + std::to_string(count);
-        std::string tmp_ll_path = base_path + ".ll";
+        return execute_ir(codegen.generate(program),verbose,enable_debug,enable_lto);
+    }
+    static int execute_ir(const std::string& llvm_ir,bool verbose=false,bool enable_debug=false,bool enable_lto=false) {
+        bt::host::TemporaryDirectory temporary;
+        std::string tmp_ll_path = temporary.file("module.ll");
 #if defined(__APPLE__)
-        std::string tmp_dylib_path = base_path + ".dylib";
+        std::string tmp_dylib_path = temporary.file("module.dylib");
 #else
-        std::string tmp_dylib_path = base_path + ".so";
+        std::string tmp_dylib_path = temporary.file("module.so");
 #endif
-
         std::ofstream ll_file(tmp_ll_path);
-        if (!ll_file.is_open()) {
-            std::cerr << "[-] JIT Error: Failed to create temporary .ll file: " << tmp_ll_path << "\n";
-            return 1;
-        }
         ll_file << llvm_ir;
         ll_file.close();
-
-        // Determine toolchain environment prefix (macOS SDK resolution vs. Linux standard paths)
-        std::string env_prefix;
-#if defined(__APPLE__)
-        if (std::getenv("SDKROOT") == nullptr) {
-            if (access("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", F_OK) == 0) {
-                env_prefix = "export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && ";
-            } else {
-                env_prefix = "export SDKROOT=$(xcrun --show-sdk-path 2>/dev/null) && ";
-            }
-        }
-#endif
-
-        // Build native shared library via Clang
-        std::string cmd = env_prefix +
-                          "clang -O3 -shared -fPIC -Wno-override-module ";
-        if (enable_debug) cmd += "-g ";
-        if (enable_lto) cmd += "-flto=thin ";
-        cmd += "\"" + tmp_ll_path + "\" -o \"" + tmp_dylib_path + "\"";
-        if (!verbose) {
-            cmd += " 2>/dev/null";
-        }
-
-        if (verbose) {
-            std::cout << "[Native JIT] Compiling LLVM IR to native shared library: " << tmp_dylib_path << "\n";
-        }
-
-        int ret = std::system(cmd.c_str());
+        if (!ll_file) throw std::runtime_error("JIT: failed writing LLVM module");
+        auto command = bt::host::clang_command();
+        command.insert(command.end(), {"-shared", "-fPIC"});
+        if (enable_debug) command.push_back("-g");
+        if (enable_lto) command.push_back("-flto=thin");
+        command.insert(command.end(), {tmp_ll_path, "-lm", "-o", tmp_dylib_path});
+        if (verbose) std::cout << "[Native JIT] Compiling " << tmp_ll_path << "\n";
+        int ret = bt::host::run_process(command);
         if (ret != 0) {
             std::cerr << "[-] JIT Error: Clang native compilation failed!\n";
             unlink(tmp_ll_path.c_str());

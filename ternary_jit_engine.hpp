@@ -133,7 +133,8 @@ public:
         JITValue v;
         v.kind = Kind::Float;
         v.float_val = f;
-        v.btfp_val = bt::BTFP32::from_double(f);
+        // float64 language values do not implicitly quantize to the BTFP library format.
+        // btfp_val is retained only for source compatibility with explicit BTFP helpers.
         return v;
     }
 
@@ -160,6 +161,8 @@ public:
         if (kind == Kind::Scalar) {
             return Codec::to_int64(scalar);
         } else if (kind == Kind::Float) {
+            if (!std::isfinite(float_val) || float_val < -0x1p63 || float_val >= 0x1p63)
+                throw std::overflow_error("float-to-int conversion out of range");
             return static_cast<int64_t>(float_val);
         }
         throw std::runtime_error("Attempted to read non-scalar value as an integer!");
@@ -185,7 +188,7 @@ public:
             }
             ss << i128_to_string(full_val) << " [trits: " << trits << "]";
         } else if (kind == Kind::Float) {
-            ss << float_val << " [BTFP32: M=" << btfp_val.mantissa() << ", E=" << btfp_val.exponent() << "]";
+            ss << std::setprecision(17) << float_val << " [float64]";
         } else if (kind == Kind::SparseMat) {
             ss << "TCSRMatrix [" << sparse_matrix.rows << "x" << sparse_matrix.cols
                << ", nnz=" << sparse_matrix.nnz << "]:\n";
@@ -252,7 +255,7 @@ public:
             parent->assign(name, std::move(val));
             return;
         }
-        bindings[name] = std::move(val);
+        throw std::runtime_error("assignment to undefined variable '" + name + "'");
     }
 
     JITValue get(const std::string& name) const {
@@ -310,7 +313,16 @@ class TernaryJITEngine : public bt::frontend::ASTVisitor {
 private:
     JITConfig config;
     std::shared_ptr<Environment> env;
+    std::shared_ptr<Environment> global_env_;
+    frontend::TypeChecker semantic_checker_;
     JITValue last_eval_result;
+    int64_t exit_status_{0};
+
+    static size_t dimension(int64_t value) {
+        if (value < 0 || static_cast<uint64_t>(value) > SIZE_MAX)
+            throw std::invalid_argument("matrix dimension must be nonnegative and fit size_t");
+        return static_cast<size_t>(value);
+    }
 
     // RAII call-frame scope: pushes a new lexical environment and always restores the
     // previous one when the scope ends. Function bodies that throw exceptions other than
@@ -363,6 +375,7 @@ private:
 public:
     explicit TernaryJITEngine(JITConfig cfg = {})
         : config(cfg), env(std::make_shared<Environment>()) {
+        global_env_ = env;
         if (config.enable_kokkos) {
             ::Kokkos::initialize(config.num_threads);
         }
@@ -377,18 +390,21 @@ public:
     }
 
     std::shared_ptr<Environment> get_env() const { return env; }
+    int64_t exit_status() const noexcept { return exit_status_; }
 
     // --------------------------------------------------------------------------
     // Expression / Statement Visitor Implementations
     // --------------------------------------------------------------------------
 
     void visit(bt::frontend::ProgramNode& node) override {
-        for (const auto& decl : node.declarations) {
-            if (decl) decl->accept(*this);
-        }
+        for (const auto& decl : node.declarations)
+            if (auto f = std::dynamic_pointer_cast<frontend::FunctionDefNode>(decl)) f->accept(*this);
+        for (const auto& decl : node.declarations)
+            if (decl && !std::dynamic_pointer_cast<frontend::FunctionDefNode>(decl)) decl->accept(*this);
     }
 
     void visit(bt::frontend::BlockNode& node) override {
+        EnvironmentFrameGuard scope(*this, std::make_shared<Environment>(env));
         for (const auto& stmt : node.statements) {
             if (stmt) stmt->accept(*this);
         }
@@ -405,6 +421,8 @@ public:
             node.init_expr->accept(*this);
             val = last_eval_result;
         }
+        if (node.binding_type == frontend::BTType::Float && val.kind != JITValue::Kind::Float)
+            val = JITValue::make_float(static_cast<double>(val.as_int64()));
         env->define(node.name, std::move(val));
         last_eval_result = JITValue::make_void();
     }
@@ -412,6 +430,8 @@ public:
     void visit(bt::frontend::AssignNode& node) override {
         if (node.value) {
             node.value->accept(*this);
+            if (node.binding_type == frontend::BTType::Float && last_eval_result.kind != JITValue::Kind::Float)
+                last_eval_result = JITValue::make_float(static_cast<double>(last_eval_result.as_int64()));
             env->assign(node.target, last_eval_result);
         }
         last_eval_result = JITValue::make_void();
@@ -539,10 +559,10 @@ public:
         if (left.kind == JITValue::Kind::Scalar && right.kind == JITValue::Kind::Scalar) {
             switch (node.op) {
                 case bt::frontend::BinaryOp::Add:
-                    last_eval_result = JITValue::make_scalar(add_words(left.scalar, right.scalar));
+                    last_eval_result = JITValue::make_scalar_int(contract::add(left.as_int64(), right.as_int64()));
                     return;
                 case bt::frontend::BinaryOp::Sub:
-                    last_eval_result = JITValue::make_scalar(sub_words(left.scalar, right.scalar));
+                    last_eval_result = JITValue::make_scalar_int(contract::sub(left.as_int64(), right.as_int64()));
                     return;
                 case bt::frontend::BinaryOp::Mul:
                     last_eval_result = JITValue::make_scalar(mul_words(left.scalar, right.scalar));
@@ -637,16 +657,15 @@ public:
             if (left.matrix.rows != right.matrix.rows || left.matrix.cols != right.matrix.cols) {
                 throw std::runtime_error("Matrix dimensions mismatch in binary operation!");
             }
-            TernaryMatrix res(left.matrix.rows, left.matrix.cols);
+            DenseMatrixInt64 res(left.matrix.rows, left.matrix.cols);
             for (size_t r = 0; r < left.matrix.rows; ++r) {
                 for (size_t c = 0; c < left.matrix.cols; ++c) {
-                    int8_t l = to_int(left.matrix.get(r, c));
-                    int8_t r_val = to_int(right.matrix.get(r, c));
-                    int8_t s = (node.op == bt::frontend::BinaryOp::Add) ? (l + r_val) : (l - r_val);
-                    res.set(r, c, from_int(s));
+                    int64_t l = to_int(left.matrix.get(r, c));
+                    int64_t rv = to_int(right.matrix.get(r, c));
+                    res(r, c) = node.op == bt::frontend::BinaryOp::Add ? l + rv : l - rv;
                 }
             }
-            last_eval_result = JITValue::make_matrix(std::move(res));
+            last_eval_result = JITValue::make_int_matrix(std::move(res));
             return;
         }
 
@@ -703,8 +722,8 @@ public:
 
         // Functional expression select: select(c, pos_val, zero_val, neg_val)
         // If all branches are pure scalar expressions:
-        if (cond_v.kind == JITValue::Kind::Scalar) {
-            int64_t c_int = cond_v.as_int64();
+        if (cond_v.kind == JITValue::Kind::Scalar || cond_v.kind == JITValue::Kind::Float) {
+            double c_int = cond_v.kind == JITValue::Kind::Float ? cond_v.float_val : static_cast<double>(cond_v.as_int64());
             if (c_int > 0) {
                 if (node.pos_branch) node.pos_branch->accept(*this);
                 else last_eval_result = JITValue::make_void();
@@ -715,6 +734,8 @@ public:
                 if (node.zero_branch) node.zero_branch->accept(*this);
                 else last_eval_result = JITValue::make_void();
             }
+            if (node.checked_type == frontend::BTType::Float && last_eval_result.kind != JITValue::Kind::Float)
+                last_eval_result = JITValue::make_float(static_cast<double>(last_eval_result.as_int64()));
             return;
         }
 
@@ -724,7 +745,7 @@ public:
     void visit(bt::frontend::WhileNode& node) override {
         while (true) {
             node.condition->accept(*this);
-            int64_t c = last_eval_result.as_int64();
+            double c = last_eval_result.kind == JITValue::Kind::Float ? last_eval_result.float_val : static_cast<double>(last_eval_result.as_int64());
             if (c <= 0) break;
             if (node.body) node.body->accept(*this);
         }
@@ -733,7 +754,7 @@ public:
 
     void visit(bt::frontend::IfNode& node) override {
         node.condition->accept(*this);
-        int64_t c = last_eval_result.as_int64();
+        double c = last_eval_result.kind == JITValue::Kind::Float ? last_eval_result.float_val : static_cast<double>(last_eval_result.as_int64());
         if (c > 0) {
             if (node.then_block) node.then_block->accept(*this);
         } else {
@@ -879,9 +900,9 @@ public:
         if (fn == "zeros") {
             if (node.arguments.size() != 2) throw std::runtime_error("zeros requires (rows, cols)!");
             node.arguments[0]->accept(*this);
-            size_t r = static_cast<size_t>(last_eval_result.as_int64());
+            size_t r = dimension(last_eval_result.as_int64());
             node.arguments[1]->accept(*this);
-            size_t c = static_cast<size_t>(last_eval_result.as_int64());
+            size_t c = dimension(last_eval_result.as_int64());
             last_eval_result = JITValue::make_matrix(TernaryMatrix(r, c));
             return;
         }
@@ -890,9 +911,9 @@ public:
         if (fn == "ones") {
             if (node.arguments.size() != 2) throw std::runtime_error("ones requires (rows, cols)!");
             node.arguments[0]->accept(*this);
-            size_t r = static_cast<size_t>(last_eval_result.as_int64());
+            size_t r = dimension(last_eval_result.as_int64());
             node.arguments[1]->accept(*this);
-            size_t c = static_cast<size_t>(last_eval_result.as_int64());
+            size_t c = dimension(last_eval_result.as_int64());
             TernaryMatrix mat(r, c);
             for (size_t i = 0; i < r; ++i) {
                 for (size_t j = 0; j < c; ++j) {
@@ -907,9 +928,9 @@ public:
         if (fn == "rand_matrix") {
             if (node.arguments.size() != 2) throw std::runtime_error("rand_matrix requires (rows, cols)!");
             node.arguments[0]->accept(*this);
-            size_t r = static_cast<size_t>(last_eval_result.as_int64());
+            size_t r = dimension(last_eval_result.as_int64());
             node.arguments[1]->accept(*this);
-            size_t c = static_cast<size_t>(last_eval_result.as_int64());
+            size_t c = dimension(last_eval_result.as_int64());
             TernaryMatrix mat(r, c);
             std::mt19937_64 rng(1337);
             std::uniform_int_distribution<int> dist(-1, 1);
@@ -926,17 +947,20 @@ public:
         if (fn == "matrix_init") {
             if (node.arguments.size() < 2) throw std::runtime_error("matrix_init requires at least (rows, cols)!");
             node.arguments[0]->accept(*this);
-            size_t r = static_cast<size_t>(last_eval_result.as_int64());
+            size_t r = dimension(last_eval_result.as_int64());
             node.arguments[1]->accept(*this);
-            size_t c = static_cast<size_t>(last_eval_result.as_int64());
+            size_t c = dimension(last_eval_result.as_int64());
             TernaryMatrix mat(r, c);
+            if (node.arguments.size() - 2 > r * c)
+                throw std::invalid_argument("too many matrix initializer values");
             size_t arg_idx = 2;
             for (size_t i = 0; i < r; ++i) {
                 for (size_t j = 0; j < c; ++j) {
                     if (arg_idx < node.arguments.size()) {
                         node.arguments[arg_idx++]->accept(*this);
-                        int8_t t = static_cast<int8_t>(last_eval_result.as_int64());
-                        mat.set(i, j, from_int(t));
+                        int64_t t = last_eval_result.as_int64();
+                        if (t < -1 || t > 1) throw std::invalid_argument("matrix initializer must be a trit");
+                        mat.set(i, j, from_int(static_cast<int8_t>(t)));
                     }
                 }
             }
@@ -964,6 +988,30 @@ public:
             return;
         }
 
+        if (fn == "planar_dot64" || fn == "btha_sum_p" || fn == "btha_sum_n" ||
+            fn == "btha_carry_p" || fn == "btha_carry_n") {
+            uint64_t rails[4];
+            for (size_t i = 0; i < 4; ++i) {
+                node.arguments[i]->accept(*this);
+                rails[i] = static_cast<uint64_t>(last_eval_result.as_int64());
+            }
+            auto [ap, an, bp, bn] = std::array<uint64_t,4>{rails[0], rails[1], rails[2], rails[3]};
+            if (fn == "planar_dot64") {
+                const auto positive = std::popcount((ap & bp) | (an & bn));
+                const auto negative = std::popcount((ap & bn) | (an & bp));
+                last_eval_result = JITValue::make_scalar_int(positive - negative);
+            } else {
+                uint64_t bits = fn == "btha_sum_p" ? (((ap ^ bp) & ~(an | bn)) | (an & bn)) :
+                                fn == "btha_sum_n" ? (((an ^ bn) & ~(ap | bp)) | (ap & bp)) :
+                                fn == "btha_carry_p" ? (ap & bp) : (an & bn);
+                // Match LLVM's signed i64 interpretation without implementation-defined casts.
+                __int128 signed_bits = bits;
+                if (bits >> 63) signed_bits -= (static_cast<__int128>(1) << 64);
+                last_eval_result = JITValue::make_scalar_int(contract::checked_integer(signed_bits));
+            }
+            return;
+        }
+
         // 9b. Builtin: fma(a, b, c)
         if (fn == "fma") {
             if (node.arguments.size() != 3) throw std::runtime_error("fma requires 3 arguments!");
@@ -973,11 +1021,8 @@ public:
             JITValue b = last_eval_result;
             node.arguments[2]->accept(*this);
             JITValue c = last_eval_result;
-            bt::BTFP32 af = (a.kind == JITValue::Kind::Float) ? a.btfp_val : bt::BTFP32::from_double(static_cast<double>(a.as_int64()));
-            bt::BTFP32 bf = (b.kind == JITValue::Kind::Float) ? b.btfp_val : bt::BTFP32::from_double(static_cast<double>(b.as_int64()));
-            bt::BTFP32 cf = (c.kind == JITValue::Kind::Float) ? c.btfp_val : bt::BTFP32::from_double(static_cast<double>(c.as_int64()));
-            bt::BTFP32 res = bt::BTFP32::fma(af, bf, cf);
-            last_eval_result = JITValue::make_btfp(res);
+            auto value = [](const JITValue& v) { return v.kind == JITValue::Kind::Float ? v.float_val : static_cast<double>(v.as_int64()); };
+            last_eval_result = JITValue::make_float(std::fma(value(a), value(b), value(c)));
             return;
         }
 
@@ -986,9 +1031,8 @@ public:
             if (node.arguments.size() != 1) throw std::runtime_error("sqrt requires 1 argument!");
             node.arguments[0]->accept(*this);
             JITValue x = last_eval_result;
-            bt::BTFP32 xf = (x.kind == JITValue::Kind::Float) ? x.btfp_val : bt::BTFP32::from_double(static_cast<double>(x.as_int64()));
-            bt::BTFP32 res = xf.sqrt();
-            last_eval_result = JITValue::make_btfp(res);
+            double val = x.kind == JITValue::Kind::Float ? x.float_val : static_cast<double>(x.as_int64());
+            last_eval_result = JITValue::make_float(std::sqrt(val));
             return;
         }
 
@@ -998,8 +1042,7 @@ public:
             node.arguments[0]->accept(*this);
             JITValue x = last_eval_result;
             if (x.kind == JITValue::Kind::Float) {
-                bt::BTFP32 res = x.btfp_val.abs();
-                last_eval_result = JITValue::make_btfp(res);
+                last_eval_result = JITValue::make_float(std::abs(x.float_val));
             } else {
                 int64_t val = x.as_int64();
                 last_eval_result = JITValue::make_scalar_int(val < 0 ? -val : val);
@@ -1022,8 +1065,10 @@ public:
                 evaluated_args.push_back(last_eval_result);
             }
 
-            auto fn_env = std::make_shared<Environment>(env);
+            auto fn_env = std::make_shared<Environment>(global_env_);
             for (size_t i = 0; i < func_def->params.size(); ++i) {
+                if (func_def->params[i].type == "float" && evaluated_args[i].kind != JITValue::Kind::Float)
+                    evaluated_args[i] = JITValue::make_float(static_cast<double>(evaluated_args[i].as_int64()));
                 fn_env->define(func_def->params[i].name, std::move(evaluated_args[i]));
             }
 
@@ -1037,6 +1082,8 @@ public:
             } catch (const ReturnException& ret) {
                 return_val = ret.value;
             }
+            if (func_def->return_type == "float" && return_val.kind != JITValue::Kind::Float)
+                return_val = JITValue::make_float(static_cast<double>(return_val.as_int64()));
             last_eval_result = return_val;
             return;
         }
@@ -1049,11 +1096,21 @@ public:
     // --------------------------------------------------------------------------
 
     void execute(bt::frontend::ProgramNode& program) {
+        exit_status_ = 0;
+        auto checked = semantic_checker_;
+        checked.typecheck(program, false);
+        // Keep validation and execution state transactional on runtime failure.
+        auto previous_bindings = *global_env_;
         try {
             visit(program);
         } catch (const ReturnException& ret) {
             last_eval_result = ret.value;
+            if (ret.value.kind != JITValue::Kind::Void) exit_status_ = ret.value.as_int64();
+        } catch (...) {
+            *global_env_ = std::move(previous_bindings);
+            throw;
         }
+        semantic_checker_ = std::move(checked);
     }
 
     void execute_source(const std::string& source) {
@@ -1067,9 +1124,9 @@ public:
         if (!file.is_open()) {
             throw std::runtime_error("Failed to open source file: " + filepath);
         }
-        std::ostringstream ss;
-        ss << file.rdbuf();
-        execute_source(ss.str());
+        frontend::Parser parser(frontend::read_source(file), std::filesystem::path(filepath).parent_path().string());
+        auto program = parser.parse_program();
+        execute(*program);
     }
 };
 
