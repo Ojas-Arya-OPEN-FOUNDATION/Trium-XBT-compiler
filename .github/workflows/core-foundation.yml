@@ -50,25 +50,11 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: cmake -S . -B build/client -DBT_ENABLE_MLIR=OFF -DBT_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/client --target ternary_clibi -j2
-      - name: Run Rust tests
+      - name: Install shared runtime to system path
         run: |
-          set +e
-          export PATH="$HOME/.cargo/bin:$PATH"
-          echo "### Diagnostics" >> "$GITHUB_STEP_SUMMARY"
-          echo "- PATH: \`$PATH\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Cargo which: \`$(which cargo 2>&1)\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Cargo version: \`$(cargo --version 2>&1)\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Build client contents: \`$(ls -la ${{ github.workspace }}/build/client 2>&1)\`" >> "$GITHUB_STEP_SUMMARY"
-          
-          TEST_OUT=$(cargo test --manifest-path ffi/rust/Cargo.toml --verbose 2>&1)
-          TEST_STATUS=$?
-          echo "### Cargo Test Output (exit $TEST_STATUS)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "$TEST_OUT" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          
-          echo "$TEST_OUT"
-          exit $TEST_STATUS
+          sudo cp build/client/libbt_runtime.so /usr/local/lib/
+          sudo ldconfig
+      - name: Run Rust tests
+        run: cargo test --manifest-path ffi/rust/Cargo.toml --verbose
         env:
-          RUSTFLAGS: -C link-arg=-Wl,-rpath,${{ github.workspace }}/build/client -L native=${{ github.workspace }}/build/client -l dylib=bt_runtime
-          LD_LIBRARY_PATH: ${{ github.workspace }}/build/client
+          RUSTFLAGS: -L native=/usr/local/lib -l dylib=bt_runtime

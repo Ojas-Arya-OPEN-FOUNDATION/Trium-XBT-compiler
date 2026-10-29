@@ -7,6 +7,6 @@ description = "Multi-Language Rust FFI Bindings for the Balanced Ternary Engine"
 license = "MIT"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
