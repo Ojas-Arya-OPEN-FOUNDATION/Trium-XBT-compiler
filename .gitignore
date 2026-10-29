@@ -47,3 +47,10 @@ bin_sanitizer/
 *.glob
 *.aux
 .lia.cache
+
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock
+
+

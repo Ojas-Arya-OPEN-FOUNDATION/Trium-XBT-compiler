@@ -409,8 +409,9 @@ mod tests {
         let b = BtWord64::new(0b0101, 0b1010);
         assert!(a.is_valid());
         assert!(b.is_valid());
-        let bad = BtWord64::new(1, 1);
+        let bad = BtWord64 { p: 1, n: 1 };
         assert!(!bad.is_valid());
+        assert!(BtWord64::try_new(1, 1).is_err());
         assert_eq!(a.dot(&b), 0);
     }
 }
