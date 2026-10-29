@@ -53,6 +53,9 @@ pub struct BtBthaResult {
 // ============================================================================
 
 extern "C" {
+    pub fn bt_runtime_abi_version() -> u32;
+    pub fn bt_last_error_code() -> i32;
+    pub fn bt_last_error_message() -> *const std::os::raw::c_char;
     pub fn bt_swar_word64_to_int64(w: BtWord64, num_trits: usize) -> i64;
     pub fn bt_dot_product_array(a: *const BtWord64, b: *const BtWord64, num_words: usize) -> i64;
     pub fn bt_fp32_from_double(val: f64) -> BtFp32;
@@ -102,10 +105,18 @@ extern "C" {
 // ============================================================================
 
 impl BtWord64 {
+    pub fn try_new(p:u64,n:u64) -> Result<Self,BtError> {
+        if p & n != 0 { return Err(BtError{code:1,message:"overlapping word rails".into()}); }
+        Ok(Self{p,n})
+    }
+    pub fn try_to_i64(self,n:usize) -> Result<i64,BtError> {checked(|| unsafe {bt_swar_word64_to_int64(self,n)})}
+    pub fn try_dot(self,b:Self) -> Result<i64,BtError> {checked(|| unsafe {bt_dot_product_64_val(self,b)})}
+    pub fn try_btha_step(self,b:Self) -> Result<BtBthaResult,BtError> {checked(|| unsafe {bt_btha_step_val(self,b)})}
+    pub fn try_hamming_distance(self,b:Self) -> Result<u32,BtError> {checked(|| unsafe {bt_hamming_distance_64_val(self,b)})}
     /// Creates a new dual-rail word.
     #[inline]
     pub fn new(p: u64, n: u64) -> Self {
-        Self { p, n }
+        Self::try_new(p,n).expect("invalid ternary word")
     }
 
     /// Verifies dual-rail disjointness invariant: (p & n) == 0.
@@ -117,39 +128,71 @@ impl BtWord64 {
     /// Converts up to 39 packed trits to an i64 using Douglas W. Jones' SWAR parallel tree reduction.
     #[inline]
     pub fn to_i64(&self, num_trits: usize) -> i64 {
-        unsafe { bt_swar_word64_to_int64(*self, num_trits) }
+        self.try_to_i64(num_trits).expect("ternary positional conversion failed")
     }
 
     /// Computes 64-trit bit-sliced dot product using dual-rail popcount contraction.
     #[inline]
     pub fn dot(&self, other: &Self) -> i64 {
-        unsafe { bt_dot_product_64_val(*self, *other) }
+        self.try_dot(*other).expect("ternary dot product failed")
     }
 
     /// Branchless Balanced Ternary Half-Adder (BTHA) step.
     #[inline]
     pub fn btha_step(&self, other: &Self) -> BtBthaResult {
-        unsafe { bt_btha_step_val(*self, *other) }
+        self.try_btha_step(*other).expect("ternary half adder failed")
     }
 
     /// Computes branchless dual-rail Hamming distance.
     #[inline]
     pub fn hamming_distance(&self, other: &Self) -> u32 {
-        unsafe { bt_hamming_distance_64_val(*self, *other) }
+        self.try_hamming_distance(*other).expect("ternary Hamming distance failed")
+    }
+}
+
+/// Owned copy of the runtime's thread-local failure; never a silent zero result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtError { pub code: i32, pub message: String }
+impl fmt::Display for BtError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{} (code {})", self.message, self.code) }
+}
+impl std::error::Error for BtError {}
+fn checked<T>(call: impl FnOnce() -> T) -> Result<T, BtError> {
+    unsafe {
+        if bt_runtime_abi_version() != 1 {
+            return Err(BtError { code: 1, message: "unsupported runtime ABI major".into() });
+        }
+        let value=call();let code=bt_last_error_code();
+        if code==0 { return Ok(value); }
+        let ptr=bt_last_error_message();
+        let message=if ptr.is_null() { "runtime failure".into() }
+                    else { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() };
+        Err(BtError { code, message })
     }
 }
 
 impl BtFp32 {
+    pub fn try_from_f64(value:f64) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_from_double(value)}) }
+    pub fn try_to_f64(self) -> Result<f64,BtError> { checked(|| unsafe {bt_fp32_to_double(self)}) }
+    pub fn try_add(self, rhs:Self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_add(self,rhs)}) }
+    pub fn try_sub(self, rhs:Self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_sub(self,rhs)}) }
+    pub fn try_mul(self, rhs:Self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_mul(self,rhs)}) }
+    pub fn try_div(self, rhs:Self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_div(self,rhs)}) }
+    pub fn try_sqrt(self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_sqrt(self)}) }
+    pub fn try_abs(self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_abs(self)}) }
+    pub fn try_neg(self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_neg(self)}) }
+    pub fn try_fma(self,b:Self,c:Self) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_fma(self,b,c)}) }
+    pub fn try_pow_int(self,n:i64) -> Result<Self,BtError> { checked(|| unsafe {bt_fp32_pow_int(self,n)}) }
     /// Constructs a BT-FP32 from an IEEE-754 f64 double.
     #[inline]
     pub fn from_f64(val: f64) -> Self {
-        unsafe { bt_fp32_from_double(val) }
+        Self::try_from_f64(val).expect("ternary float conversion failed")
     }
 
     /// Converts this BT-FP32 to standard IEEE-754 f64 double.
     #[inline]
     pub fn to_f64(&self) -> f64 {
-        unsafe { bt_fp32_to_double(*self) }
+        self.try_to_f64().expect("ternary float conversion failed")
     }
 
     /// Returns true if this value is the canonical zero (mantissa == 0).
@@ -158,43 +201,44 @@ impl BtFp32 {
         self.mantissa == 0
     }
 
-    /// Fused multiply-add with single unbiased rounding: (self * b) + c.
+    /// Fused multiply-add with nearest rounding within the documented exact accumulator capacity: (self * b) + c.
     #[inline]
     pub fn fma(self, b: Self, c: Self) -> Self {
-        unsafe { bt_fp32_fma(self, b, c) }
+        self.try_fma(b,c).expect("ternary float FMA failed")
     }
 
     /// Balanced ternary square root with exact midpoint rounding: sqrt(self).
     #[inline]
     pub fn sqrt(self) -> Self {
-        unsafe { bt_fp32_sqrt(self) }
+        self.try_sqrt().expect("ternary float sqrt failed")
     }
 
     /// Absolute value of a balanced ternary float.
     #[inline]
     pub fn abs(self) -> Self {
-        unsafe { bt_fp32_abs(self) }
+        self.try_abs().expect("ternary float abs failed")
     }
 
-    /// Zero-cost negation of a balanced ternary float.
+    /// Checked negation of a balanced ternary float.
     #[inline]
     pub fn neg(self) -> Self {
-        unsafe { bt_fp32_neg(self) }
+        self.try_neg().expect("ternary float neg failed")
     }
 
     /// Integer power of a balanced ternary float: self^exp.
     #[inline]
     pub fn pow_int(self, exp: i64) -> Self {
-        unsafe { bt_fp32_pow_int(self, exp) }
+        self.try_pow_int(exp).expect("ternary float exponentiation failed")
     }
 }
 
 impl fmt::Display for BtFp32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value=self.try_to_f64().map_err(|_| fmt::Error)?;
         write!(
             f,
             "{} [M={}, E={}]",
-            self.to_f64(),
+            value,
             self.mantissa,
             self.exponent
         )
@@ -205,7 +249,7 @@ impl Add for BtFp32 {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        unsafe { bt_fp32_add(self, rhs) }
+        self.try_add(rhs).expect("ternary float add failed")
     }
 }
 
@@ -213,7 +257,7 @@ impl Sub for BtFp32 {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        unsafe { bt_fp32_sub(self, rhs) }
+        self.try_sub(rhs).expect("ternary float sub failed")
     }
 }
 
@@ -221,7 +265,7 @@ impl Mul for BtFp32 {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        unsafe { bt_fp32_mul(self, rhs) }
+        self.try_mul(rhs).expect("ternary float mul failed")
     }
 }
 
@@ -229,21 +273,28 @@ impl Div for BtFp32 {
     type Output = Self;
     #[inline]
     fn div(self, rhs: Self) -> Self {
-        unsafe { bt_fp32_div(self, rhs) }
+        self.try_div(rhs).expect("ternary float div failed")
     }
 }
 
 /// Computes bit-sliced dot product across slices of dual-rail words.
 pub fn dot_product_slices(a: &[BtWord64], b: &[BtWord64]) -> i64 {
-    let len = a.len().min(b.len());
-    if len == 0 {
-        return 0;
-    }
-    unsafe { bt_dot_product_array(a.as_ptr(), b.as_ptr(), len) }
+    try_dot_product_slices(a,b).expect("ternary slice dot product failed")
+}
+
+/// Checked slice API; unequal lengths are an error, never silently truncated.
+pub fn try_dot_product_slices(a:&[BtWord64],b:&[BtWord64]) -> Result<i64,BtError> {
+    if a.len()!=b.len() {return Err(BtError{code:1,message:"dot-product lengths differ".into()});}
+    checked(|| unsafe {bt_dot_product_array(a.as_ptr(),b.as_ptr(),a.len())})
 }
 
 /// Executes multiplier-free SpMV: y = mat * x.
-pub fn csr_spmv(mat: &BtCsr, x: &[i64]) -> Vec<i64> {
+///
+/// # Safety
+/// All CSR pointers must reference initialized, live, correctly sized buffers
+/// for this call. Row offsets must be monotone, bounded by nnz, and column
+/// indices must be in range. No input buffer may be mutated concurrently.
+pub unsafe fn csr_spmv(mat: &BtCsr, x: &[i64]) -> Vec<i64> {
     assert!(
         x.len() >= mat.cols as usize,
         "x slice length must be at least mat.cols"
@@ -361,5 +412,30 @@ mod tests {
         let bad = BtWord64::new(1, 1);
         assert!(!bad.is_valid());
         assert_eq!(a.dot(&b), 0);
+    }
+}
+
+#[cfg(test)]
+mod checked_tests {
+    use super::*;
+    #[test]
+    fn checked_math_and_errors() {
+        let a=BtFp32::try_from_f64(3.0).unwrap();
+        let b=BtFp32::try_from_f64(2.0).unwrap();
+        assert_eq!(a.try_add(b).unwrap().try_to_f64().unwrap(),5.0);
+        assert!(a.try_div(BtFp32::default()).is_err());
+        assert!(BtFp32::try_from_f64(f64::NAN).is_err());
+        assert!(BtFp32::try_from_f64(-1.0).unwrap().try_sqrt().is_err());
+        assert_eq!(BtFp32::try_from_f64(0.0).unwrap(),BtFp32::default());
+        assert!(BtWord64::try_new(1,1).is_err());
+        let bad=BtWord64{p:1,n:1};
+        assert!(bad.try_dot(BtWord64::default()).is_err());
+        assert!(try_dot_product_slices(&[BtWord64::default()],&[]).is_err());
+    }
+    #[test]
+    fn error_state_is_thread_local() {
+        BtFp32::try_from_f64(1.0).unwrap();
+        std::thread::spawn(|| { assert!(BtFp32::try_from_f64(f64::INFINITY).is_err()); }).join().unwrap();
+        assert_eq!(unsafe {bt_last_error_code()},0);
     }
 }

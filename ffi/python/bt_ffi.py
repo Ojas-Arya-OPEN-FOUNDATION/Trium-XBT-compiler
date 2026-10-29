@@ -15,6 +15,9 @@ from typing import List, Tuple, Optional
 # ============================================================================
 
 def _find_and_load_library() -> ctypes.CDLL:
+    explicit = os.environ.get("BT_RUNTIME_LIBRARY")
+    if explicit:
+        return ctypes.CDLL(os.path.abspath(explicit))
     lib_names = ["libbt_runtime.dylib", "libbt_runtime.so", "bt_runtime.dll"]
     search_paths = [
         os.getcwd(),
@@ -46,6 +49,13 @@ def _find_and_load_library() -> ctypes.CDLL:
     )
 
 _LIB = _find_and_load_library()
+try:
+    _LIB.bt_runtime_abi_version.argtypes = []
+    _LIB.bt_runtime_abi_version.restype = ctypes.c_uint32
+    if _LIB.bt_runtime_abi_version() != 1:
+        raise RuntimeError("Unsupported Trium runtime ABI major (expected 1)")
+except AttributeError as error:
+    raise RuntimeError("Trium runtime has no ABI-version symbol; rebuild the matching runtime") from error
 
 # ============================================================================
 # 2. ctypes Structure Definitions (Standard C ABI Layout)
@@ -243,12 +253,34 @@ _LIB.xbt_gelu.restype = ctypes.c_double
 _LIB.xbt_rsqrt.argtypes = [ctypes.c_double]
 _LIB.xbt_rsqrt.restype = ctypes.c_double
 
+_LIB.bt_last_error_code.argtypes = []
+_LIB.bt_last_error_code.restype = ctypes.c_int
+_LIB.bt_last_error_message.argtypes = []
+_LIB.bt_last_error_message.restype = ctypes.c_char_p
+
+def _checked_abi_result(result, function, arguments):
+    code = _LIB.bt_last_error_code()
+    if code:
+        message = (_LIB.bt_last_error_message() or b"runtime failure").decode("utf-8", "replace")
+        error = ValueError if code == 1 else OverflowError if code == 2 else RuntimeError
+        raise error(f"{function.__name__}: {message}")
+    return result
+
+# Every configured value/status operation observes the same error channel.
+for _name in list(vars(_LIB)):
+    if (_name.startswith("bt_") or _name.startswith("xbt_")) and _name not in {
+        "bt_runtime_abi_version", "bt_last_error_code", "bt_last_error_message", "bt_clear_error"
+    }:
+        getattr(_LIB, _name).errcheck = _checked_abi_result
+
 # ============================================================================
 # 4. Safe Pythonic Wrapper Functions
 # ============================================================================
 
 def make_word64(p: int, n: int) -> BtWord64:
     """Creates a 64-trit dual-rail word."""
+    if type(p) is not int or type(n) is not int or not 0 <= p < 2**64 or not 0 <= n < 2**64 or p & n:
+        raise ValueError("word rails must be disjoint uint64 values")
     return BtWord64(p=p, n=n)
 
 def verify_disjointness(w: BtWord64) -> bool:
@@ -257,6 +289,8 @@ def verify_disjointness(w: BtWord64) -> bool:
 
 def swar_to_int64(w: BtWord64, num_trits: int = 39) -> int:
     """Converts up to 39 packed trits to a 64-bit signed integer via Douglas W. Jones' SWAR reduction."""
+    if type(num_trits) is not int or not 0 <= num_trits <= 39:
+        raise ValueError("positional conversion requires 0..39 trits")
     return int(_LIB.bt_swar_word64_to_int64(w, num_trits))
 
 def dot_product(a: BtWord64, b: BtWord64) -> int:
@@ -265,7 +299,8 @@ def dot_product(a: BtWord64, b: BtWord64) -> int:
 
 def dot_product_array(a_list: List[BtWord64], b_list: List[BtWord64]) -> int:
     """Computes dot product across arrays of 64-trit dual-rail words."""
-    length = min(len(a_list), len(b_list))
+    if len(a_list) != len(b_list): raise ValueError("dot-product array lengths differ")
+    length = len(a_list)
     if length == 0:
         return 0
     arr_a = (BtWord64 * length)(*a_list[:length])
@@ -290,7 +325,7 @@ def fp32_to_float(a: BtFp32) -> float:
     return float(_LIB.bt_fp32_to_double(a))
 
 def fp32_add(a: BtFp32, b: BtFp32) -> BtFp32:
-    """Balanced ternary float addition with 0-bias truncation rounding."""
+    """Balanced ternary float addition with nearest normalized rounding."""
     return _LIB.bt_fp32_add(a, b)
 
 def fp32_sub(a: BtFp32, b: BtFp32) -> BtFp32:
@@ -342,6 +377,7 @@ def radix3_convolve(a: List[float], b: List[float]) -> List[float]:
 def kogge_stone_add64(a: BtWord64, b: BtWord64, cin: int = 0) -> Tuple[BtWord64, int]:
     """6-stage parallel-prefix Kogge-Stone addition with minimal monotone lattice."""
     cout = ctypes.c_int8(0)
+    if type(cin) is not int or not -1 <= cin <= 1: raise ValueError("carry-in must be a trit")
     wsum = _LIB.bt_kogge_stone_add64_val(a, b, ctypes.c_int8(cin), ctypes.byref(cout))
     return wsum, int(cout.value)
 
@@ -417,13 +453,15 @@ def radix3_ifft(
 
 def base243_pack(trits: List[int]) -> int:
     """Packs 5 balanced trits into 1 byte [0..242]."""
-    assert len(trits) == 5
+    if len(trits) != 5 or any(type(t) is not int or not -1 <= t <= 1 for t in trits):
+        raise ValueError("base243 packing requires exactly five trits")
     c_trits = (ctypes.c_int8 * 5)(*trits)
     return int(_LIB.bt_base243_pack_val(c_trits))
 
 def base243_unpack(byte_val: int) -> List[int]:
     """Unpacks 1 byte [0..242] into 5 balanced trits."""
     c_trits = (ctypes.c_int8 * 5)()
+    if type(byte_val) is not int or not 0 <= byte_val < 243: raise ValueError("base243 byte must lie in 0..242")
     _LIB.bt_base243_unpack_val(ctypes.c_uint8(byte_val), c_trits)
     return [c_trits[i] for i in range(5)]
 
@@ -490,7 +528,7 @@ def run_self_test():
     # 1. Dual-Rail Word and Disjointness
     w1 = make_word64(0x5555555555555555, 0xAAAAAAAAAAAAAAAA)
     assert verify_disjointness(w1), "w1 disjointness failed"
-    w_bad = make_word64(0x3, 0x1)
+    w_bad = BtWord64(p=0x3, n=0x1)  # deliberately malformed raw ABI value
     assert not verify_disjointness(w_bad), "w_bad disjointness check failed"
     print("  [FFI 1/7] Dual-Rail Word & Disjointness Invariant ... PASSED")
 

@@ -16,6 +16,23 @@
 extern "C" {
 #endif
 
+/* Thread-local error state. Message remains valid until the next ABI call on
+ * this thread. Legacy value APIs return a neutral/NaN result on failure; callers
+ * must query this state. New checked APIs return bt_status_t directly. */
+typedef enum {
+    BT_STATUS_OK = 0,
+    BT_STATUS_INVALID_ARGUMENT = 1,
+    BT_STATUS_OVERFLOW = 2,
+    BT_STATUS_INTERNAL_ERROR = 3
+} bt_status_t;
+/* ABI major 1: structure layouts follow the host C ABI; incompatible changes
+ * require a new major. Capability additions do not imply new hardware support. */
+uint32_t bt_runtime_abi_version(void);
+int bt_last_error_code(void);
+const char* bt_last_error_message(void);
+void bt_clear_error(void);
+
+
 /* ============================================================================
  * 1. Data Structures (repr(C) / Standard Layout)
  * ============================================================================ */
@@ -52,6 +69,10 @@ typedef struct {
     const uint32_t* col_indices; /* size: nnz */
     const uint64_t* signs;       /* bit-packed: 1 bit per nnz (0 = -1, 1 = +1) */
 } bt_csr_t;
+
+bt_status_t bt_csr_spmv_checked(const bt_csr_t* mat, const int64_t* x,
+    size_t x_len, int64_t* y, size_t y_len,
+    size_t row_ptr_len, size_t col_indices_len, size_t signs_len);
 
 /**
  * @brief Output of a Balanced Ternary Half-Adder (BTHA) step.
