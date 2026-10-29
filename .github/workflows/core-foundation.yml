@@ -46,10 +46,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.1
+      - uses: dtolnay/rust-toolchain@stable
+      - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: cmake -S . -B build/client -DBT_ENABLE_MLIR=OFF -DBT_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/client --target ternary_clibi -j2
-      - run: cargo test --manifest-path ffi/rust/Cargo.toml
+      - run: |
+          [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env" || export PATH="$HOME/.cargo/bin:$PATH"
+          cargo test --manifest-path ffi/rust/Cargo.toml --verbose
         env:
           RUSTFLAGS: -C link-arg=-Wl,-rpath,${{ github.workspace }}/build/client -L native=${{ github.workspace }}/build/client -l dylib=bt_runtime
           LD_LIBRARY_PATH: ${{ github.workspace }}/build/client
