@@ -91,8 +91,9 @@ constexpr std::array<__int128_t, 60> HALF_POW3_128 = []() constexpr {
 /**
  * @brief Computes 3^n as 128-bit signed integer (O(1) table lookup for n < 60).
  */
-constexpr inline __int128_t pow3_128(int n) noexcept {
-    if (n <= 0) return 1;
+constexpr inline __int128_t pow3_128(int n) {
+    if (n < 0 || n > 80) throw std::overflow_error("power of three outside signed i128 domain");
+    if (n == 0) return 1;
     if (n < 60) return POW3_128[n];
     __int128_t res = POW3_128[59];
     for (int i = 59; i < n; ++i) {
@@ -137,6 +138,7 @@ constexpr inline __int128_t round_div3_128(__int128_t val) noexcept {
  */
 constexpr inline int64_t round_div_pow3_fast64(int64_t val, int k) noexcept {
     if (k <= 0 || val == 0) return val;
+    if (k >= 41) return 0;
     // Primary stage: exact one-shot symmetric division by 3^min(k, 39).
     // Unsigned arithmetic is required: (INT64_MAX) + (3^39-1)/2 = 1.125e19 < 2^64,
     // so no wrap occurs. The old signed add overflowed with UB and flipped the sign
@@ -170,6 +172,7 @@ constexpr inline int64_t round_div_pow3_fast64(int64_t val, int k) noexcept {
  */
 constexpr inline __int128_t round_div_pow3_fast128(__int128_t val, int k) noexcept {
     if (k <= 0 || val == 0) return val;
+    if (k >= 81) return 0;
     // Primary stage: exact one-shot symmetric division by 3^min(k, 59).
     // Unsigned __int128 arithmetic: (2^127-1) + (3^59-1)/2 = 1.7016e38 < 2^128, no wrap.
     const int k1 = (k < 60) ? k : 59;
@@ -194,7 +197,7 @@ constexpr inline __int128_t round_div_pow3_fast128(__int128_t val, int k) noexce
 }
 
 /**
- * @brief Multi-trit balanced truncation: divides by 3^k in O(1) with zero statistical bias.
+ * @brief Multi-trit balanced truncation: divides by 3^k in O(1) with symmetric nearest-integer rounding.
  */
 constexpr inline int64_t round_div_pow3(int64_t val, int k) noexcept {
     return round_div_pow3_fast64(val, k);
@@ -586,14 +589,14 @@ inline double cordic_hyp_ln(double M) noexcept {
  * @brief Balanced Ternary Floating-Point Number: Value = M * 3^E
  * 
  * @tparam MantissaTrits Number of trits allocated to the normalized mantissa.
- * @tparam ExponentTrits Number of trits allocated to exponent (0 = unlimited 32-bit signed exponent).
+ * @tparam ExponentTrits Number of trits allocated to exponent (0 = full int32 signed exponent domain).
  */
 template <int MantissaTrits = 10, int ExponentTrits = 0>
 class BTFP {
     // int64_t mantissa storage: |M| <= (3^40-1)/2 = 6.08e18 < 2^63; W = 41 would overflow.
-    // Also guards normalize_128 and add()/div() 128-bit scaling (M_trits + 4 <= 59).
-    static_assert(MantissaTrits >= 0 && MantissaTrits <= 40,
-                  "BTFP: MantissaTrits must be in [0, 40] to fit int64_t mantissa storage");
+    // Individual arithmetic methods also check exact accumulator/alignment capacity.
+    static_assert(MantissaTrits >= 1 && MantissaTrits <= 40,
+                  "BTFP: MantissaTrits must be in [1, 40] to fit int64_t mantissa storage");
     static_assert(ExponentTrits >= 0 && ExponentTrits <= 62,
                   "BTFP: ExponentTrits must be in [0, 62]");
 public:
@@ -614,6 +617,10 @@ private:
     int64_t m_mantissa{0}; // Normalized mantissa: |M| in [min_norm_mantissa, max_mantissa], or 0
     int32_t m_exponent{0}; // Signed exponent E (powers of 3)
 
+    static constexpr int32_t checked_exponent(int64_t e) {
+        if (e < INT32_MIN || e > INT32_MAX) throw std::overflow_error("BTFP exponent overflow");
+        return static_cast<int32_t>(e);
+    }
 public:
     // --------------------------------------------------------------------------
     // Constructors
@@ -627,14 +634,14 @@ public:
     /**
      * @brief Integer value constructor with automatic normalization (BTFP(0) produces canonical zero).
      */
-    constexpr BTFP(int64_t val) noexcept : m_mantissa(val), m_exponent(0) {
+    constexpr BTFP(int64_t val) : m_mantissa(val), m_exponent(0) {
         normalize();
     }
 
     /**
      * @brief Direct integer mantissa and exponent constructor with automatic normalization.
      */
-    constexpr BTFP(int64_t mantissa, int32_t exponent) noexcept : m_mantissa(mantissa), m_exponent(exponent) {
+    constexpr BTFP(int64_t mantissa, int32_t exponent) : m_mantissa(mantissa), m_exponent(exponent) {
         normalize();
     }
 
@@ -725,155 +732,54 @@ public:
     // Normalization & Zero-Bias Truncation Rounding
     // --------------------------------------------------------------------------
 
-    /**
-     * @brief Normalizes mantissa so that |M| is in [min_norm_mantissa, max_mantissa].
-     * Uses CLZ bit-length difference to jump-divide/multiply in O(1) via round_div_pow3_fast64.
+    /** Round an exact integer-scaled value to the nearest normalized value.
+     * Binade boundaries have a two-unit gap; clamping a rounded candidate to
+     * the current binade is essential. Repeated divide-by-three rounding could
+     * incorrectly jump that gap (for example BTFP<1>(5) became 9 instead of 3).
+     * Exact halfway boundary ties select the value farther from zero.
      */
-    constexpr void normalize() noexcept {
-        if (m_mantissa == 0) {
-            m_exponent = 0;
-            return;
-        }
-
-        const int64_t max_m = max_mantissa();
-        const int64_t min_m = min_norm_mantissa();
-
-        // Right shift with O(1) CLZ jump-division + at most 1-2 round_div3 steps
-        if (m_mantissa > max_m || m_mantissa < -max_m) {
-            uint64_t abs_m = (m_mantissa >= 0) ? static_cast<uint64_t>(m_mantissa)
-                                               : (0ULL - static_cast<uint64_t>(m_mantissa));
-            int delta_bits = __builtin_clzll(static_cast<uint64_t>(max_m)) - __builtin_clzll(abs_m);
-            int k_est = (delta_bits * 100) / 159 - 1;
-            if (k_est > 0) {
-                m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, k_est);
-                m_exponent += k_est;
-            }
-            while (m_mantissa > max_m || m_mantissa < -max_m) {
-                m_mantissa = fp_detail::round_div3(m_mantissa);
-                m_exponent += 1;
-            }
-        }
-
-        // Left shift with O(1) CLZ jump-multiplication while magnitude < min_m and non-zero
-        if (m_mantissa != 0 && (m_mantissa < min_m && m_mantissa > -min_m)) {
-            uint64_t abs_m = (m_mantissa >= 0) ? static_cast<uint64_t>(m_mantissa)
-                                               : (0ULL - static_cast<uint64_t>(m_mantissa));
-            int delta_bits = __builtin_clzll(abs_m) - __builtin_clzll(static_cast<uint64_t>(min_m));
-            int k_est = (delta_bits * 100) / 159 - 1;
-            if (k_est > 0 && k_est < 40) {
-                m_mantissa *= fp_detail::POW3_64[k_est];
-                m_exponent -= k_est;
-            }
-            while (m_mantissa != 0 && (m_mantissa < min_m && m_mantissa > -min_m)) {
-                m_mantissa *= 3;
-                m_exponent -= 1;
-            }
-        }
-
-        if (m_mantissa == 0) {
-            m_exponent = 0;
-        }
-
-        if constexpr (ExponentTrits > 0) {
-            constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
-            if (m_exponent > max_e) {
-                // Renormalize instead of losing value silently: push the exponent
-                // delta into the mantissa as far as it fits, then symmetric-round
-                // the remainder so |M| stays within [min_m, max_m] at the clamped E.
-                int64_t delta = m_exponent - max_e;
-                m_exponent = static_cast<int32_t>(max_e);
-                while (delta > 0) {
-                    if (m_mantissa != 0 &&
-                        m_mantissa <= max_m / 3 && m_mantissa >= -max_m / 3) {
-                        m_mantissa *= 3;
-                        --delta;
-                    } else if (m_mantissa == 0) {
-                        m_exponent = 0;
-                        break;
-                    } else {
-                        // Cannot push delta into the mantissa anymore: symmetric-round
-                        // the excess (zero-bias representation approximation).
-                        m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, static_cast<int>(delta));
-                        delta = 0;
-                    }
-                }
-            } else if (m_exponent < -max_e) {
-                // Exponent too negative: clamp it UP, so the mantissa must shrink by
-                // 3^delta (value compression with zero-bias symmetric rounding).
-                int64_t delta = -max_e - m_exponent;
-                m_exponent = static_cast<int32_t>(-max_e);
-                if (m_mantissa != 0) {
-                    m_mantissa = fp_detail::round_div_pow3_fast64(m_mantissa, static_cast<int>(delta));
-                } else {
-                    m_exponent = 0;
-                }
-            }
-        }
-
-        // Canonical zero: rounding-to-zero during clamping must reset E.
-        if (m_mantissa == 0) {
-            m_exponent = 0;
-        }
+    constexpr void normalize() {
+        auto result = normalize_128(m_mantissa, m_exponent);
+        m_mantissa = result.m_mantissa; m_exponent = result.m_exponent;
     }
-
-    /**
-     * @brief Normalizes a 128-bit intermediate mantissa down to MantissaTrits in O(1).
-     */
-    static constexpr BTFP normalize_128(__int128_t m, int32_t exp) noexcept {
-        if (m == 0) return BTFP(0, 0);
-
-        const __int128_t max_m = max_mantissa();
-        const __int128_t min_m = min_norm_mantissa();
-
-        if (m > max_m || m < -max_m) {
-            unsigned __int128 abs_m = (m >= 0) ? static_cast<unsigned __int128>(m)
-                                               : (static_cast<unsigned __int128>(0) - static_cast<unsigned __int128>(m));
-            uint64_t hi = static_cast<uint64_t>(abs_m >> 64);
-            int bitlen_m = (hi != 0) ? (128 - __builtin_clzll(hi))
-                                     : (64 - __builtin_clzll(static_cast<uint64_t>(abs_m)));
-            int bitlen_max = 64 - __builtin_clzll(static_cast<uint64_t>(max_m));
-            int delta_bits = bitlen_m - bitlen_max;
-            int k_est = (delta_bits * 100) / 159 - 1;
-            if (k_est > 0) {
-                m = fp_detail::round_div_pow3_fast128(m, k_est);
-                exp += k_est;
-            }
-            while (m > max_m || m < -max_m) {
-                m = fp_detail::round_div3_128(m);
-                exp += 1;
-            }
+    static constexpr BTFP normalize_128(__int128_t m, int64_t exp) {
+        if (!m) return BTFP();
+        if (exp < static_cast<int64_t>(INT32_MIN) - 128 ||
+            exp > static_cast<int64_t>(INT32_MAX) + 128)
+            throw std::overflow_error("BTFP exponent outside normalization capacity");
+        using U = unsigned __int128;
+        const U magnitude = m < 0 ? U(0) - static_cast<U>(m) : static_cast<U>(m);
+        U scale = 1;
+        while (magnitude / scale > static_cast<U>(max_mantissa())) {
+            scale *= 3; ++exp;
         }
-
-        if (m != 0 && (m < min_m && m > -min_m)) {
-            uint64_t abs_m = static_cast<uint64_t>((m >= 0) ? m : -m);
-            int bitlen_m = 64 - __builtin_clzll(abs_m);
-            int bitlen_min = 64 - __builtin_clzll(static_cast<uint64_t>(min_m));
-            int delta_bits = bitlen_min - bitlen_m;
-            int k_est = (delta_bits * 100) / 159 - 1;
-            if (k_est > 0 && k_est < 60) {
-                m *= fp_detail::POW3_128[k_est];
-                exp -= k_est;
-            }
-            while (m != 0 && (m < min_m && m > -min_m)) {
-                m *= 3;
-                exp -= 1;
-            }
+        U q = magnitude / scale, r = magnitude % scale;
+        if (r > scale / 2) ++q;
+        if (q > static_cast<U>(max_mantissa())) q = max_mantissa();
+        if (scale != 1 && q < static_cast<U>(min_norm_mantissa())) q = min_norm_mantissa();
+        while (q < static_cast<U>(min_norm_mantissa())) { q *= 3; --exp; }
+        if constexpr (ExponentTrits > 0 && ExponentTrits <= 20) {
+            constexpr auto limit = (fp_detail::pow3_128(ExponentTrits)-1)/2;
+            if (exp < -limit || exp > limit)
+                throw std::overflow_error("BTFP exponent outside configured domain");
         }
-
-        if (m == 0) return BTFP(0, 0);
-        return BTFP(static_cast<int64_t>(m), exp);
+        BTFP result;
+        result.m_mantissa = m < 0 ? -static_cast<int64_t>(q) : static_cast<int64_t>(q);
+        result.m_exponent = checked_exponent(exp);
+        return result;
     }
 
     /**
      * @brief Zero-Bias Trit-Boundary Rounding: symmetric-rounds at the k-th fractional
-     * trit boundary in O(1), achieving exact mean-0 error (E[error] = 0).
+     * trit boundary in O(1), with an odd rounding rule (mean-zero error requires symmetric inputs).
      * Note: this is nearest-value rounding at the boundary, not literal truncation;
-     * both operations share the zero-mean property.
+     * no distribution-independent zero-mean claim is made.
      */
-    constexpr BTFP truncate_fractional(int trits_to_discard) const noexcept {
+    constexpr BTFP truncate_fractional(int trits_to_discard) const {
         if (trits_to_discard <= 0 || is_zero()) return *this;
         int64_t m = fp_detail::round_div_pow3_fast64(m_mantissa, trits_to_discard);
-        int32_t exp = m_exponent + trits_to_discard;
+        if (m == 0) return BTFP();
+        int32_t exp = checked_exponent(static_cast<int64_t>(m_exponent) + trits_to_discard);
         return BTFP(m, exp);
     }
 
@@ -886,7 +792,10 @@ public:
      */
     double to_double() const noexcept {
         if (m_mantissa == 0) return 0.0;
-        return static_cast<double>(m_mantissa) * std::pow(3.0, m_exponent);
+        // Two stages retain finite subnormals that pow(3,E) alone would flush.
+        const int32_t first = m_exponent / 2;
+        return (static_cast<double>(m_mantissa) * std::pow(3.0, first)) *
+               std::pow(3.0, m_exponent - first);
     }
 
     /**
@@ -903,13 +812,14 @@ public:
         if (!std::isfinite(val)) {
             throw std::domain_error("BTFP::from_double: NaN or Inf cannot be represented in BTFP");
         }
-        if (val == 0.0 || std::abs(val) < 1e-300) {
+        if (val == 0.0) {
             return BTFP(0, 0);
         }
 
-        // Target log3(|mantissa|) is approximately MantissaTrits - 0.5
+        // Keep the conversion significand below int64 capacity even for W=40;
+        // normalize() fills remaining mantissa digits afterwards.
         double log3_val = std::log(std::abs(val)) / std::log(3.0);
-        int est_e = static_cast<int>(std::floor(log3_val - (MantissaTrits - 0.5)));
+        int est_e = static_cast<int>(std::floor(log3_val - (MantissaTrits == 40 ? 38.0 : MantissaTrits - 0.5)));
 
         // Scale safely in two stages when |est_e| > 500 so 3^(-est_e) never overflows IEEE-754 double (~3^646)
         int e1 = -est_e / 2;
@@ -956,13 +866,14 @@ public:
     /**
      * @brief Balanced ternary addition: aligns exponents and accumulates with 0-bias rounding.
      */
-    BTFP add(const BTFP& other) const noexcept {
+    BTFP add(const BTFP& other) const {
         if (is_zero()) return other;
         if (other.is_zero()) return *this;
 
         if (m_exponent >= other.m_exponent) {
-            int diff = m_exponent - other.m_exponent;
+            int64_t diff = static_cast<int64_t>(m_exponent) - other.m_exponent;
             if (diff > MantissaTrits + 4) return *this;
+            if (diff > 78 - MantissaTrits) throw std::overflow_error("BTFP alignment exceeds exact i128 capacity");
             if constexpr (MantissaTrits <= 20) {
                 if (diff <= 18) {
                     int64_t m_sum = m_mantissa * fp_detail::POW3_64[diff] + other.m_mantissa;
@@ -973,8 +884,9 @@ public:
             __int128_t m_sum = m_a + other.m_mantissa;
             return normalize_128(m_sum, other.m_exponent);
         } else {
-            int diff = other.m_exponent - m_exponent;
+            int64_t diff = static_cast<int64_t>(other.m_exponent) - m_exponent;
             if (diff > MantissaTrits + 4) return other;
+            if (diff > 78 - MantissaTrits) throw std::overflow_error("BTFP alignment exceeds exact i128 capacity");
             if constexpr (MantissaTrits <= 20) {
                 if (diff <= 18) {
                     int64_t m_sum = other.m_mantissa * fp_detail::POW3_64[diff] + m_mantissa;
@@ -990,78 +902,33 @@ public:
     /**
      * @brief Balanced ternary subtraction: A - B = A + (-B).
      */
-    BTFP sub(const BTFP& other) const noexcept {
+    BTFP sub(const BTFP& other) const {
         return add(-other);
     }
 
-    /**
-     * @brief Balanced ternary multiplication: multiplies mantissas, sums exponents, normalizes.
-     * For MantissaTrits <= 20 (BTFP16 & BTFP32), uses a 3-way constant-divisor branch
-     * that compiles into 1-cycle umulh magic multiplies with zero loops and zero hardware sdiv.
+    /** Exact i128 mantissa product followed by one normalized rounding.
+     * Integer arithmetic is shared by binary-host and future ternary backends.
      */
-    constexpr BTFP mul(const BTFP& other) const noexcept {
-        if (is_zero() || other.is_zero()) return BTFP(0, 0);
-
-        if constexpr (MantissaTrits >= 2 && MantissaTrits <= 20) {
-            constexpr int64_t P_W2 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits - 2));
-            constexpr int64_t H_W2 = (P_W2 - 1) / 2;
-            constexpr int64_t P_W1 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits - 1));
-            constexpr int64_t H_W1 = (P_W1 - 1) / 2;
-            constexpr int64_t P_W0 = static_cast<int64_t>(fp_detail::pow3_128(MantissaTrits));
-            constexpr int64_t H_W0 = (P_W0 - 1) / 2;
-            constexpr int64_t THRESH_W1 = max_mantissa() * P_W2 + H_W2;
-            constexpr int64_t THRESH_W0 = max_mantissa() * P_W1 + H_W1;
-
-            int64_t prod = m_mantissa * other.m_mantissa;
-            int64_t u = prod < 0 ? -prod : prod;
-            int32_t e_prod = m_exponent + other.m_exponent;
-            int64_t q = 0;
-
-            if (u <= THRESH_W1) {
-                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W2)) / static_cast<uint64_t>(P_W2));
-                e_prod += (MantissaTrits - 2);
-            } else if (u <= THRESH_W0) {
-                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W1)) / static_cast<uint64_t>(P_W1));
-                e_prod += (MantissaTrits - 1);
-            } else {
-                q = static_cast<int64_t>((static_cast<uint64_t>(u) + static_cast<uint64_t>(H_W0)) / static_cast<uint64_t>(P_W0));
-                e_prod += MantissaTrits;
-            }
-
-            int64_t m_prod = (prod < 0) ? -q : q;
-            if constexpr (ExponentTrits > 0) {
-                constexpr int64_t max_e = (fp_detail::pow3_128(ExponentTrits) - 1) / 2;
-                if (e_prod > max_e || e_prod < -max_e) {
-                    return BTFP(m_prod, e_prod);
-                }
-            }
-
-            BTFP res;
-            res.m_mantissa = m_prod;
-            res.m_exponent = e_prod;
-            return res;
-        } else {
-            __int128_t m_prod = static_cast<__int128_t>(m_mantissa) * static_cast<__int128_t>(other.m_mantissa);
-            int32_t e_prod = m_exponent + other.m_exponent;
-            return normalize_128(m_prod, e_prod);
-        }
+    constexpr BTFP mul(const BTFP& other) const {
+        return normalize_128(static_cast<__int128_t>(m_mantissa) * other.m_mantissa,
+                             static_cast<int64_t>(m_exponent) + other.m_exponent);
     }
 
     /**
      * @brief Single-rounding Fused Multiply-Add: computes (a * b + c) in 128-bit arithmetic
      * and performs a single unbiased normalize_128 rounding.
      */
-    static constexpr BTFP fma(const BTFP& a, const BTFP& b, const BTFP& c) noexcept {
+    static constexpr BTFP fma(const BTFP& a, const BTFP& b, const BTFP& c) {
         if (a.is_zero() || b.is_zero()) return c;
 
         __int128_t P = static_cast<__int128_t>(a.m_mantissa) * static_cast<__int128_t>(b.m_mantissa);
-        int32_t e_p = a.m_exponent + b.m_exponent;
+        int64_t e_p = static_cast<int64_t>(a.m_exponent) + b.m_exponent;
 
         if (c.is_zero()) {
             return normalize_128(P, e_p);
         }
 
-        int32_t delta = e_p - c.m_exponent;
+        int64_t delta = e_p - c.m_exponent;
         if (delta == 0) {
             return normalize_128(P + static_cast<__int128_t>(c.m_mantissa), e_p);
         } else if (delta > 0) {
@@ -1070,14 +937,11 @@ public:
                 __int128_t S = P * fp_detail::pow3_128(delta) + static_cast<__int128_t>(c.m_mantissa);
                 return normalize_128(S, c.m_exponent);
             } else {
-                int shift_right = delta - max_exact_shift;
-                __int128_t c_shifted = fp_detail::round_div_pow3_fast128(static_cast<__int128_t>(c.m_mantissa), shift_right);
-                __int128_t S = P * fp_detail::pow3_128(max_exact_shift) + c_shifted;
-                return normalize_128(S, e_p - max_exact_shift);
+                throw std::overflow_error("BTFP FMA alignment exceeds exact i128 capacity");
             }
         } else {
-            int d = -delta; // e_c - e_p > 0
-            if (d > MantissaTrits + 4) {
+            int64_t d = -delta; // e_c - e_p > 0
+            if (d > 2 * MantissaTrits + 2) {
                 return c;
             }
             constexpr int max_c_shift = 78 - MantissaTrits;
@@ -1085,7 +949,7 @@ public:
                 __int128_t S = static_cast<__int128_t>(c.m_mantissa) * fp_detail::pow3_128(d) + P;
                 return normalize_128(S, e_p);
             } else {
-                return c;
+                throw std::overflow_error("BTFP FMA alignment needs a wider exact accumulator");
             }
         }
     }
@@ -1103,8 +967,10 @@ public:
         }
 
         int S0 = (MantissaTrits <= 36) ? (MantissaTrits + 4) : (MantissaTrits + 2);
-        int S = (((m_exponent - S0) % 2) != 0) ? (S0 + 1) : S0;
-        int32_t e_out = (m_exponent - S) / 2;
+        int S = (((static_cast<int64_t>(m_exponent) - S0) % 2) != 0) ? (S0 + 1) : S0;
+        if (MantissaTrits + S > 81)
+            throw std::overflow_error("BTFP sqrt needs a wider exact accumulator");
+        int32_t e_out = checked_exponent((static_cast<int64_t>(m_exponent) - S) / 2);
 
         unsigned __int128 N = static_cast<unsigned __int128>(m_mantissa) *
                               static_cast<unsigned __int128>(fp_detail::pow3_128(S));
@@ -1126,12 +992,18 @@ public:
             ++r;
         }
 
-        // Exact balanced midpoint rounding: N - r^2 > r => r + 1
-        if (N - r * r > r) {
-            ++r;
+        using U = unsigned __int128;
+        U scale=1;
+        while (r/scale > static_cast<U>(max_mantissa())) { scale*=3; ++e_out; }
+        U q=r/scale;
+        const U midpoint_floor=q*scale+scale/2;
+        constexpr U limit=~U(0);
+        if (midpoint_floor <= limit/midpoint_floor) {
+            U square=midpoint_floor*midpoint_floor;
+            if (square <= limit-midpoint_floor-1 && N >= square+midpoint_floor+1) ++q;
         }
-
-        return normalize_128(static_cast<__int128_t>(r), e_out);
+        q=std::clamp(q,static_cast<U>(min_norm_mantissa()),static_cast<U>(max_mantissa()));
+        return BTFP(static_cast<int64_t>(q),e_out);
     }
 
     /**
@@ -1174,33 +1046,28 @@ public:
     /**
      * @brief Balanced ternary division with symmetric nearest-integer rounding.
      */
+    static BTFP from_ratio(int64_t numerator, int64_t denominator, int64_t exponent = 0) {
+        if (!denominator) throw std::domain_error("BTFP division by zero");
+        if (!numerator) return BTFP();
+        if (exponent < static_cast<int64_t>(INT32_MIN)-128 ||
+            exponent > static_cast<int64_t>(INT32_MAX)+128)
+            throw std::overflow_error("BTFP ratio exponent outside normalization capacity");
+        using U = unsigned __int128;
+        U n = numerator < 0 ? U(0)-static_cast<U>(static_cast<__int128>(numerator)) : numerator;
+        U d = denominator < 0 ? U(0)-static_cast<U>(static_cast<__int128>(denominator)) : denominator;
+        const U top = static_cast<U>(max_mantissa())+1;
+        while (n/d > static_cast<U>(max_mantissa())) { d *= 3; ++exponent; }
+        while (n*3 < top*d) { n *= 3; --exponent; }
+        U q=n/d, r=n%d;
+        if (r*2 >= d) ++q; // explicit halfway ties away from zero
+        q = std::clamp(q,static_cast<U>(min_norm_mantissa()),static_cast<U>(max_mantissa()));
+        int64_t m=static_cast<int64_t>(q);
+        if ((numerator<0)!=(denominator<0)) m=-m;
+        return BTFP(m,checked_exponent(exponent));
+    }
     BTFP div(const BTFP& other) const {
-        if (other.is_zero()) {
-            throw std::domain_error("Division by zero in BTFP");
-        }
-        if (is_zero()) return BTFP(0, 0);
-
-        int scale_shift = MantissaTrits + 4;
-        __int128_t num = static_cast<__int128_t>(m_mantissa) * fp_detail::pow3_128(scale_shift);
-        __int128_t den = other.m_mantissa;
-
-        // Symmetric quotient rounding
-        __int128_t q = num / den;
-        __int128_t r = num % den;
-
-        // If |r| > |den| / 2, round to nearest integer
-        __int128_t abs_r = r < 0 ? -r : r;
-        __int128_t abs_den = den < 0 ? -den : den;
-        if (2 * abs_r > abs_den) {
-            if ((r > 0 && den > 0) || (r < 0 && den < 0)) {
-                q += 1;
-            } else {
-                q -= 1;
-            }
-        }
-
-        int32_t exp = m_exponent - other.m_exponent - scale_shift;
-        return normalize_128(q, exp);
+        return from_ratio(m_mantissa,other.m_mantissa,
+                          static_cast<int64_t>(m_exponent)-other.m_exponent);
     }
 
     // --------------------------------------------------------------------------
@@ -1219,7 +1086,7 @@ public:
         }
         int8_t s = sign();
         int64_t abs_m = (m_mantissa < 0) ? -m_mantissa : m_mantissa;
-        int32_t e_scale = m_exponent + (MantissaTrits - 1);
+        int32_t e_scale = checked_exponent(static_cast<int64_t>(m_exponent) + (MantissaTrits - 1));
 
         // Normalized mantissa D in [1/2, 3/2]
         BTFP D(abs_m, -(MantissaTrits - 1));
@@ -1244,7 +1111,7 @@ public:
         }
 
         // Apply exponent shift and sign
-        BTFP res(X.mantissa(), X.exponent() - e_scale);
+        BTFP res(X.mantissa(), checked_exponent(static_cast<int64_t>(X.exponent()) - e_scale));
         return (s < 0) ? -res : res;
     }
 
@@ -1316,6 +1183,8 @@ public:
     BTFP exp() const {
         if (is_zero()) return BTFP(1);
         double u = to_double();
+        if (!std::isfinite(u) || std::abs(u / fp_detail::CORDIC_LN3) > static_cast<double>(INT32_MAX) - 100)
+            throw std::overflow_error("BTFP exponential exponent outside supported range");
         double k_est = std::round(u / fp_detail::CORDIC_LN3);
         double r = u - k_est * fp_detail::CORDIC_LN3;
 
@@ -1325,7 +1194,7 @@ public:
 
         BTFP e_r = BTFP::from_double(er_val);
         int64_t k = static_cast<int64_t>(k_est);
-        BTFP res(e_r.mantissa(), static_cast<int32_t>(e_r.exponent() + k));
+        BTFP res(e_r.mantissa(), checked_exponent(static_cast<int64_t>(e_r.exponent()) + k));
         return res;
     }
 
@@ -1341,7 +1210,7 @@ public:
             return BTFP(0, 0);
         }
 
-        int32_t e_prime = m_exponent + (MantissaTrits - 1);
+        int64_t e_prime = static_cast<int64_t>(m_exponent) + (MantissaTrits - 1);
         double m_norm = static_cast<double>(m_mantissa) / static_cast<double>(fp_detail::pow3_128(MantissaTrits - 1));
         double ln_m = fp_detail::cordic_hyp_ln(m_norm);
         double total_ln = ln_m + static_cast<double>(e_prime) * fp_detail::CORDIC_LN3;
@@ -1407,14 +1276,14 @@ public:
     // Operator Overloads
     // --------------------------------------------------------------------------
 
-    inline BTFP operator+(const BTFP& other) const noexcept { return add(other); }
-    inline BTFP operator-(const BTFP& other) const noexcept { return sub(other); }
-    inline BTFP operator*(const BTFP& other) const noexcept { return mul(other); }
+    inline BTFP operator+(const BTFP& other) const { return add(other); }
+    inline BTFP operator-(const BTFP& other) const { return sub(other); }
+    inline BTFP operator*(const BTFP& other) const { return mul(other); }
     inline BTFP operator/(const BTFP& other) const { return div(other); }
 
-    inline BTFP& operator+=(const BTFP& other) noexcept { *this = add(other); return *this; }
-    inline BTFP& operator-=(const BTFP& other) noexcept { *this = sub(other); return *this; }
-    inline BTFP& operator*=(const BTFP& other) noexcept { *this = mul(other); return *this; }
+    inline BTFP& operator+=(const BTFP& other) { *this = add(other); return *this; }
+    inline BTFP& operator-=(const BTFP& other) { *this = sub(other); return *this; }
+    inline BTFP& operator*=(const BTFP& other) { *this = mul(other); return *this; }
     inline BTFP& operator/=(const BTFP& other) { *this = div(other); return *this; }
 
     inline bool operator==(const BTFP& other) const noexcept {
