@@ -1,0 +1,8 @@
+// Restricted, pure int39 map: source can generate CPU-reference and CUDA code.
+// bt-compiler examples/06_core_cuda_map.bt --cuda-map=transform -o map.ll
+// python3 tools/run_cuda_map.py map.ll --emit-ptx map.ptx  (offline, no device)
+// python3 tools/run_cuda_map.py map.ll -2 -1 0 1 2         (real CUDA device)
+func transform(x:int)->int {
+    var scaled=x*3;
+    return select(x,scaled+1,0,scaled-1);
+}
