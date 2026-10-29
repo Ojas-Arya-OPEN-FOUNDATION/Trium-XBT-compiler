@@ -1,0 +1,276 @@
+{
+  "profile": "trium-core-v0.1",
+  "runtime_abi_major": 1,
+  "scalar_integer_width": 39,
+  "scalar_integer_min": -2026277576509488133,
+  "scalar_integer_max": 2026277576509488133,
+  "float": "IEEE binary64; strict operations, no fast-math or implicit reassociation",
+  "implicit_float_conversion": "Int39 only; builtins have explicit integral conversion rules",
+  "operations": [
+    {
+      "operation": "Integer",
+      "semantics": "Exact int39 constant; Trit constants additionally lie in [-1,1].",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Floating",
+      "semantics": "Finite binary64 constant; runtime operations may produce IEEE NaNs/infinities.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Packed",
+      "semantics": "Disjoint positive/negative rails; schema-only, outside scalar execution.",
+      "core_execution": false,
+      "llvm_cpu": false,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Parameter",
+      "semantics": "Lexically resolved symbol with its declared type.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Add",
+      "semantics": "Checked exact int39 addition or ordinary binary64 addition.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Sub",
+      "semantics": "Checked exact int39 subtraction or ordinary binary64 subtraction.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Mul",
+      "semantics": "Checked exact int39 multiplication or ordinary binary64 multiplication.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Negate",
+      "semantics": "Sign reversal, preserving type and binary64 signed zero.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "IntToFloat",
+      "semantics": "Explicit int39-to-binary64 rounding conversion.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Equal",
+      "semantics": "IEEE ordered equality for binary64; exact integer equality; result +1/-1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "NotEqual",
+      "semantics": "IEEE unordered-or-not-equal for binary64 (NaN != NaN); result +1/-1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Less",
+      "semantics": "Ordered comparison; NaN gives -1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Spaceship",
+      "semantics": "Sign of comparison; binary64 NaN yields 0.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "SignSelect",
+      "semantics": "Evaluate condition once, then ONLY positive/zero/negative alternative; NaN selects zero.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "IntCast",
+      "semantics": "Explicit integral conversion; Trit destination checks [-1,1].",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Greater",
+      "semantics": "Ordered comparison; NaN gives -1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "LessEqual",
+      "semantics": "Ordered comparison; NaN gives -1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "GreaterEqual",
+      "semantics": "Ordered comparison; NaN gives -1.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "DigitAnd",
+      "semantics": "Balanced-digit minimum independently at each position.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "DigitOr",
+      "semantics": "Balanced-digit maximum independently at each position.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "DigitXor",
+      "semantics": "Balanced-digit product independently at each position.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Call",
+      "semantics": "Left-to-right argument evaluation, exact signature matching, propagated errors/effects.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Print",
+      "semantics": "Observable output; evaluate operand before output.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Sqrt",
+      "semantics": "Binary64 sqrt, including IEEE domain NaN, not library BTFP sqrt.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Abs",
+      "semantics": "Integral absolute value or IEEE binary64 fabs.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    },
+    {
+      "operation": "Fma",
+      "semantics": "Binary64 fused multiply-add, not library BTFP FMA.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": false,
+      "cuda_restriction": null
+    },
+    {
+      "operation": "Intrinsic",
+      "semantics": "Explicit planar_dot64/BTHA bit-pattern rules; checked int39 results.",
+      "core_execution": true,
+      "llvm_cpu": true,
+      "cuda_map": true,
+      "cuda_restriction": "integral operations only, pure loop-free selected function"
+    }
+  ],
+  "source_support_notes": [
+    "Library Rational<W> and BTFP<W,E> are separate C++ APIs, not .bt float or new source types.",
+    "Packed64 is expression-schema support only, not scalar-program execution.",
+    "Aggregates require explicit --legacy-llvm for native compatibility until core shape/storage lowering exists."
+  ],
+  "limits": {
+    "source_and_expansion_bytes": 8388608,
+    "import_depth": 32,
+    "tokens": 100000,
+    "parser_recursive_entries": 128,
+    "operators_per_statement_segment": 256,
+    "core_verification_work": 100000,
+    "core_nesting": 512,
+    "core_call_depth": 512,
+    "core_executor_default_operations": 10000000,
+    "native_call_depth": 512,
+    "cuda_map_batch_elements": 1000000,
+    "core_functions": 10000,
+    "core_parameters_per_function": 1000
+  },
+  "qualification": {
+    "linux_x86_64_cpp_python": "local execution tested; see current validation report",
+    "aarch64_riscv": "assembly emission only, not real device execution",
+    "cuda_map": "NVPTX compilation and CPU emulation tested; real GPU qualification unavailable locally",
+    "rust": "checked wrapper/CI path; no local Rust compiler execution"
+  },
+  "library_profiles": {
+    "BalancedInteger<W>": {
+      "widths": "1..40",
+      "arithmetic": "exact checked bounded integers",
+      "division": "Euclidean quotient/remainder; zero divisor and unrepresentable quotient fail"
+    },
+    "Rational<W>": {
+      "widths": "1..40",
+      "arithmetic": "exact, reduced by gcd before final component checks",
+      "zero": "0/1",
+      "division": "zero divisor is a domain error"
+    },
+    "BTFP<W,E>": {
+      "widths": "1..40",
+      "value": "M*3^e; normalized mantissa, canonical zero",
+      "exponents": "checked int32 plus configured exponent range",
+      "division": "direct exact-ratio rounding at all widths",
+      "fma": "exact alignment within declared i128 capacities; wider alignments fail",
+      "sqrt": "final radicand-midpoint comparison; W=40 scaling rejected",
+      "conversion_and_transcendentals": "approximate, not certified correctly rounded",
+      "contract": "docs/MATHEMATICAL_CONTRACT.md"
+    }
+  }
+}
