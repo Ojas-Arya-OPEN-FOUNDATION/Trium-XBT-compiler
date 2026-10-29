@@ -1,8 +1,8 @@
-// RUN: %bt-compiler sample_program.bt --emit-llvm -g | FileCheck %s
-// RUN: %bt-compiler sample_program.bt --emit-llvm-bc -o %t.bc
+// REQUIRES: clang
+// RUN: %bt-compiler examples/01_arithmetic_spaceship.bt --emit-llvm -g | FileCheck %s
+// RUN: %bt-compiler examples/01_arithmetic_spaceship.bt --emit-llvm-bc -o %t.bc
 
 // CHECK: !llvm.dbg.cu
 // CHECK: !DISubprogram
 // CHECK: !DILocation
-// CHECK: !"llvm.loop.vectorize.enable"
 

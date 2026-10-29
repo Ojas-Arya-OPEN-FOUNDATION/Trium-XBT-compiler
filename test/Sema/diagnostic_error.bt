@@ -1,4 +1,4 @@
-// RUN: %bt-compiler run %s 2>&1 | FileCheck %s
+// RUN: ! %bt-compiler run %s 2>&1 | FileCheck %s
 
 var a = ;
 
