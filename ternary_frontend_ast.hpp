@@ -13,6 +13,7 @@
 #include "ternary_dense_algebra.hpp"
 #include "ternary_fp.hpp"
 #include "ternary_sparse.hpp"
+#include "ternary_numeric_contract.hpp"
 
 #include <iostream>
 #include <string>
@@ -33,6 +34,7 @@
 #include <unordered_map>
 #include <fstream>
 #include <filesystem>
+#include <charconv>
 
 namespace bt::frontend {
 
@@ -48,6 +50,18 @@ struct SourceLocation {
         return std::to_string(line) + ":" + std::to_string(column);
     }
 };
+
+// Bound input before parsing/expansion, including source files loaded by imports.
+inline std::string read_source(std::istream& input,size_t limit=8*1024*1024) {
+    std::string result;char buffer[8192];
+    while(input) {
+        input.read(buffer,sizeof(buffer));size_t count=static_cast<size_t>(input.gcount());
+        if(count>limit-result.size()) throw std::length_error("source byte budget exceeded");
+        result.append(buffer,count);
+    }
+    if(!input.eof()) throw std::runtime_error("failed reading source");
+    return result;
+}
 
 enum class TokenType {
     // Special
@@ -411,28 +425,12 @@ public:
         }
         std::string text = source_.substr(start, pos_ - start);
         double val = 0.0;
-        try {
-            val = std::stod(text);
-            // libc++ strtod returns +/-HUGE_VAL (not an exception) for float
-            // overflow; normalize to the finite double maximum and report a
-            // diagnostic (previously it silently became 0.0).
-            if (std::isinf(val) || std::isnan(val)) {
-                bool negative = (text[0] == '-');
-                val = negative ? -std::numeric_limits<double>::max()
-                               : std::numeric_limits<double>::max();
-                diagnostics_.push_back(LexerDiagnostic{loc,
-                    "float literal '" + text + "' is out of 64-bit floating point range; value saturated"});
-            }
-        } catch (const std::out_of_range&) {
-            // Float literal does not fit in a double: saturate instead of
-            // silently producing 0.0, and record the diagnostic.
-            bool negative = (text[0] == '-');
-            val = negative ? -std::numeric_limits<double>::max()
-                           : std::numeric_limits<double>::max();
-            diagnostics_.push_back(LexerDiagnostic{loc,
-                "float literal '" + text + "' is out of 64-bit floating point range; value saturated"});
-        } catch (...) {
-            val = 0.0;
+        auto converted = std::from_chars(text.data(), text.data() + text.size(), val, std::chars_format::general);
+        if (converted.ec != std::errc{} || converted.ptr != text.data() + text.size() || !std::isfinite(val)) {
+            diagnostics_.push_back({loc, "invalid or out-of-range binary64 literal '" + text + "'"});
+            Token error{TokenType::Error, "invalid or out-of-range floating literal", loc};
+            prev_token_ = error;
+            return error;
         }
         Token tok{TokenType::FloatLiteral, text, loc};
         tok.float_val = val;
@@ -447,6 +445,7 @@ public:
         std::vector<Token> tokens;
         while (true) {
             Token tok = next_token();
+            if(tokens.size()>=100000) throw std::length_error("frontend token budget exceeded");
             tokens.push_back(tok);
             if (tok.type == TokenType::Eof) {
                 break;
@@ -818,12 +817,53 @@ public:
 
 class ASTVisitor;
 
+enum class BTType {
+    Unknown,
+    Void,
+    Trit,
+    TritWord,
+    PackedWord,
+    TritMatrix,
+    Float,
+    SparseMatrix,
+    Int
+};
+
+inline std::string bttype_to_string(BTType t) {
+    switch (t) {
+        case BTType::Unknown:      return "unknown";
+        case BTType::Void:         return "void";
+        case BTType::Trit:         return "trit";
+        case BTType::TritWord:     return "tritword";
+        case BTType::PackedWord:   return "packedword64";
+        case BTType::TritMatrix:   return "tritmatrix";
+        case BTType::Float:        return "float";
+        case BTType::SparseMatrix: return "sparse_matrix";
+        case BTType::Int:          return "int";
+    }
+    return "unknown";
+}
+
+inline BTType string_to_bttype(const std::string& s) {
+    if (s == "trit") return BTType::Trit;
+    if (s == "tritword") return BTType::TritWord;
+    if (s == "packedword64") return BTType::PackedWord;
+    if (s == "tritmatrix") return BTType::TritMatrix;
+    if (s == "float") return BTType::Float;
+    if (s == "sparse_matrix") return BTType::SparseMatrix;
+    if (s == "int") return BTType::Int;
+    if (s == "void") return BTType::Void;
+    return BTType::Unknown;
+}
+
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
     virtual void accept(ASTVisitor& visitor) = 0;
     virtual std::string dump() const;
     SourceLocation location;
+    // Filled by mandatory semantic analysis, never guessed from runtime values.
+    BTType checked_type{BTType::Unknown};
 };
 
 using ASTNodePtr = std::shared_ptr<ASTNode>;
@@ -886,6 +926,7 @@ public:
     std::string name;
     std::string type; // e.g. "trit", "tritword", "tritmatrix", "int"
     ASTNodePtr init_expr;
+    BTType binding_type{BTType::Unknown};
 
     void accept(ASTVisitor& visitor) override;
 };
@@ -895,6 +936,7 @@ class AssignNode : public ASTNode {
 public:
     std::string target;
     ASTNodePtr value;
+    BTType binding_type{BTType::Unknown};
 
     void accept(ASTVisitor& visitor) override;
 };
@@ -980,16 +1022,8 @@ public:
 
 // 8. Select Node (3-way Branch: Pos Block/Expr, Zero Block/Expr, Neg Block/Expr)
 //
-// NOTE ON SEMANTICS (frontend contract): the parsed form is a pure 3-way branch
-// selector. However, the LLVM codegen lowering evaluates all three branch bodies
-// EAGERLY and sequentially (pos, then zero, then neg) and muxes the last
-// computed values through the branchless helper @bt_select(cond, p, z, n).
-// Consequently:
-//   * side effects in one branch are visible to branches written after it, and
-//   * a `return` inside a branch stops further branch evaluation (and emits no
-//     dangling instructions after the return terminator).
-// This eager execution is by design of the current codegen; do not rely on
-// laziness of unselected branches.
+// Selection is lazy: evaluate the condition once, then exactly one branch.
+// Positive, zero, negative denote the sign of the condition, not just +/-1.
 class SelectNode : public ASTNode {
 public:
     ASTNodePtr condition;
@@ -1068,11 +1102,13 @@ public:
         node->kind = LiteralKind::Vector;
         // Convert big-endian (MSB-first) text into little-endian (LSB-first) trit vector
         node->vector_val.assign(v_msb_first.rbegin(), v_msb_first.rend());
-        uint64_t uval = 0;
-        for (bt::Trit t : v_msb_first) {
-            uval = uval * 3ULL + static_cast<uint64_t>(static_cast<int64_t>(bt::to_int(t)));
+        // Only positional scalar literals need an int64 cache. Wide packed
+        // values retain their rails/digits and must not masquerade as scalars.
+        __int128 positional = 0;
+        if (v_msb_first.size() <= 39) {
+            for (bt::Trit t : v_msb_first) positional = positional * 3 + bt::to_int(t);
         }
-        node->int_val = static_cast<int64_t>(uval);
+        node->int_val = static_cast<int64_t>(positional);
         node->raw_text = text;
         node->location = loc;
         return node;
@@ -1463,7 +1499,12 @@ class Preprocessor {
 public:
     static std::string resolve_imports(const std::string& source,
                                        const std::string& base_dir = ".",
-                                       std::unordered_set<std::string>* visited = nullptr) {
+                                       std::unordered_set<std::string>* visited = nullptr,
+                                       size_t depth=0,size_t* budget=nullptr) {
+        size_t local_budget=8*1024*1024;
+        if(!budget) budget=&local_budget;
+        if(depth>32 || source.size()>*budget) throw ParseError("import depth/source byte budget exceeded",{1,1});
+        *budget-=source.size();
         std::unordered_set<std::string> local_visited;
         if (!visited) {
             visited = &local_visited;
@@ -1474,17 +1515,15 @@ public:
         // imports of a file whose content is already expanded (e.g. the cycle
         // A imports B imports A, where A is the entry file) are then skipped,
         // preventing duplicated declarations.
-        auto content_key_fn = [](const std::string& content) -> std::string {
-            uint64_t h = 1469598103934665603ULL; // FNV-1a 64 offset basis
-            for (char ch : content) {
-                h ^= static_cast<unsigned char>(ch);
-                h *= 1099511628211ULL; // FNV-1a 64 prime
-            }
-            std::ostringstream ks;
-            ks << "bt-import-content::" << content.size() << "::" << std::hex << h;
-            return ks.str();
+        // Exact content identity avoids probabilistic hash collisions changing
+        // import semantics. Expansion's aggregate byte budget bounds storage.
+        auto content_key_fn = [](const std::string& content,const std::string& directory) {
+            std::error_code ec;
+            auto canonical=std::filesystem::weakly_canonical(directory,ec);
+            auto context=ec?std::filesystem::path(directory).lexically_normal():canonical;
+            return std::string("bt-import-content:")+context.string()+'\0'+content;
         };
-        visited->insert(content_key_fn(source));
+        visited->insert(content_key_fn(source,base_dir));
 
         std::ostringstream out;
         size_t pos = 0;
@@ -1582,23 +1621,22 @@ public:
                             if (!ifs.is_open()) {
                                 throw ParseError("Cannot open imported module '" + rel_path + "'", {line, 1});
                             }
-                            std::string imported_content((std::istreambuf_iterator<char>(ifs)),
-                                                          std::istreambuf_iterator<char>());
+                            std::string imported_content=read_source(ifs);
 
                             // Import-cycle guard on content identity: identical
                             // content is expanded at most once per resolve pass,
                             // so a module cycling back to its importer does not
                             // duplicate its declarations.
-                            std::string imported_ck = content_key_fn(imported_content);
+                            std::string child_dir = full_p.parent_path().empty()
+                                ? base_dir
+                                : full_p.parent_path().string();
+                            std::string imported_ck = content_key_fn(imported_content,child_dir);
                             if (visited->find(imported_ck) != visited->end()) {
                                 continue;
                             }
                             visited->insert(imported_ck);
 
-                            std::string child_dir = full_p.parent_path().empty()
-                                ? base_dir
-                                : full_p.parent_path().string();
-                            out << resolve_imports(imported_content, child_dir, visited) << "\n";
+                            out << resolve_imports(imported_content, child_dir, visited,depth+1,budget) << "\n";
                         }
                         continue;
                     }
@@ -1617,6 +1655,24 @@ class Parser {
 private:
     std::vector<Token> tokens_;
     size_t current_{0};
+    unsigned parse_depth_=0;
+    struct ParseScope {
+        Parser& parser;
+        explicit ParseScope(Parser& p):parser(p) {
+            if(p.parse_depth_>=128) throw ParseError("parser nesting budget exceeded",p.peek().loc);
+            ++p.parse_depth_;
+        }
+        ~ParseScope(){--parser.parse_depth_;}
+    };
+    void validate_tokens() const {
+        size_t operators=0;
+        if(tokens_.size()>100000) throw ParseError("token budget exceeded",{1,1});
+        for(auto& t:tokens_) {
+            if(t.type==TokenType::Semicolon || t.type==TokenType::LBrace || t.type==TokenType::RBrace) operators=0;
+            if(t.type>=TokenType::OpPlus && t.type<=TokenType::OpFatArrow && ++operators>256)
+                throw ParseError("expression operator budget exceeded",t.loc);
+        }
+    }
     std::string base_dir_{"."};
     std::unordered_set<std::string> visited_imports_;
 
@@ -1664,13 +1720,14 @@ private:
 
 public:
     explicit Parser(std::vector<Token> tokens, std::string base_dir = ".")
-        : tokens_(std::move(tokens)), base_dir_(std::move(base_dir)) {}
+        : tokens_(std::move(tokens)), base_dir_(std::move(base_dir)) {validate_tokens();}
 
     explicit Parser(const std::string& source, const std::string& base_dir = ".")
         : base_dir_(base_dir) {
         std::string resolved = Preprocessor::resolve_imports(source, base_dir_, &visited_imports_);
         Lexer lexer(resolved);
         tokens_ = lexer.tokenize_all();
+        validate_tokens();
     }
 
     std::shared_ptr<ProgramNode> parse_program() {
@@ -1698,8 +1755,7 @@ public:
                     if (!ifs.is_open()) {
                         throw ParseError("Cannot open imported module '" + path_tok.text + "'", loc);
                     }
-                    std::string imported_src((std::istreambuf_iterator<char>(ifs)),
-                                              std::istreambuf_iterator<char>());
+                    std::string imported_src=read_source(ifs);
                     std::string child_dir = full_p.parent_path().empty()
                         ? base_dir_
                         : full_p.parent_path().string();
@@ -1756,18 +1812,33 @@ private:
             if (auto lit = std::dynamic_pointer_cast<LiteralNode>(arg_expr)) {
                 elements.push_back(lit->int_val);
             } else if (auto uop = std::dynamic_pointer_cast<UnaryOpNode>(arg_expr)) {
-                if (auto num = std::dynamic_pointer_cast<LiteralNode>(uop->operand)) {
+                if (auto num = std::dynamic_pointer_cast<LiteralNode>(uop->operand); num && num->kind != LiteralKind::Vector && uop->op == UnaryOp::Negate) {
                     elements.push_back(-num->int_val);
                 } else {
-                    elements.push_back(0);
+                    throw ParseError("sparse matrix entries must be integer constants", arg_expr->location);
                 }
             } else {
-                elements.push_back(0);
+                throw ParseError("sparse matrix entries must be integer constants", arg_expr->location);
             }
         }
         consume(TokenType::RParen, "Expected ')' to close sparse_matrix declaration");
         consume(TokenType::Semicolon, "Expected ';' after sparse_matrix declaration");
 
+        if (rows == std::numeric_limits<size_t>::max() ||
+            (cols && rows > std::numeric_limits<size_t>::max() / cols) ||
+            rows > std::numeric_limits<uint32_t>::max() || cols > std::numeric_limits<uint32_t>::max())
+            throw ParseError("sparse matrix dimensions overflow", loc);
+        if (elements.size() == rows * cols) {
+            for (auto x : elements) if (x < -1 || x > 1) throw ParseError("dense sparse-matrix entries must be trits", loc);
+        } else {
+            if (elements.size() % 3) throw ParseError("sparse entries must be dense values or triplets", loc);
+            for (size_t i = 0; i < elements.size(); i += 3) {
+                if (elements[i] < 0 || static_cast<uint64_t>(elements[i]) >= rows ||
+                    elements[i+1] < 0 || static_cast<uint64_t>(elements[i+1]) >= cols ||
+                    elements[i+2] < -1 || elements[i+2] > 1)
+                    throw ParseError("sparse triplet out of range", loc);
+            }
+        }
         bt::TCSRMatrix mat(rows, cols);
         if (elements.size() == rows * cols) {
             std::vector<int8_t> dense_data(elements.begin(), elements.end());
@@ -1862,6 +1933,7 @@ private:
     }
 
     ASTNodePtr parse_statement() {
+        ParseScope depth(*this);
         if (check(TokenType::LBrace)) {
             return parse_block();
         }
@@ -1903,6 +1975,7 @@ private:
     }
 
     std::shared_ptr<BlockNode> parse_block() {
+        ParseScope depth(*this);
         SourceLocation loc = peek().loc;
         consume(TokenType::LBrace, "Expected '{' to start block");
 
@@ -2059,6 +2132,7 @@ private:
     // ==========================================================================
 
     ASTNodePtr parse_expression() {
+        ParseScope depth(*this);
         return parse_equality();
     }
 
@@ -2174,6 +2248,7 @@ private:
 
     // Unary Operators (+, -, ~, !)
     ASTNodePtr parse_unary() {
+        ParseScope depth(*this);
         if (match({TokenType::OpPlus})) {
             Token op_tok = previous();
             if (check(TokenType::Semicolon) || check(TokenType::Comma) || check(TokenType::RParen) || check(TokenType::RBrace)) {
@@ -2223,18 +2298,33 @@ private:
                 if (auto lit = std::dynamic_pointer_cast<LiteralNode>(arg_expr)) {
                     elements.push_back(lit->int_val);
                 } else if (auto uop = std::dynamic_pointer_cast<UnaryOpNode>(arg_expr)) {
-                    if (auto num = std::dynamic_pointer_cast<LiteralNode>(uop->operand)) {
+                    if (auto num = std::dynamic_pointer_cast<LiteralNode>(uop->operand); num && num->kind != LiteralKind::Vector && uop->op == UnaryOp::Negate) {
                         elements.push_back(-num->int_val);
                     } else {
-                        elements.push_back(0);
+                        throw ParseError("sparse matrix entries must be integer constants", arg_expr->location);
                     }
                 } else {
-                    elements.push_back(0);
+                    throw ParseError("sparse matrix entries must be integer constants", arg_expr->location);
                 }
             }
             consume(TokenType::RParen, "Expected ')' to close sparse_matrix constructor");
 
-            bt::TCSRMatrix mat(rows, cols);
+            if (rows == std::numeric_limits<size_t>::max() ||
+            (cols && rows > std::numeric_limits<size_t>::max() / cols) ||
+            rows > std::numeric_limits<uint32_t>::max() || cols > std::numeric_limits<uint32_t>::max())
+            throw ParseError("sparse matrix dimensions overflow", loc);
+        if (elements.size() == rows * cols) {
+            for (auto x : elements) if (x < -1 || x > 1) throw ParseError("dense sparse-matrix entries must be trits", loc);
+        } else {
+            if (elements.size() % 3) throw ParseError("sparse entries must be dense values or triplets", loc);
+            for (size_t i = 0; i < elements.size(); i += 3) {
+                if (elements[i] < 0 || static_cast<uint64_t>(elements[i]) >= rows ||
+                    elements[i+1] < 0 || static_cast<uint64_t>(elements[i+1]) >= cols ||
+                    elements[i+2] < -1 || elements[i+2] > 1)
+                    throw ParseError("sparse triplet out of range", loc);
+            }
+        }
+        bt::TCSRMatrix mat(rows, cols);
             if (elements.size() == rows * cols) {
                 std::vector<int8_t> dense_data(elements.begin(), elements.end());
                 mat = bt::TCSRMatrix::from_dense(rows, cols, dense_data);
@@ -2311,42 +2401,6 @@ private:
 // 6. Semantic Analyzer & Type Checker
 // ==============================================================================
 
-enum class BTType {
-    Unknown,
-    Void,
-    Trit,
-    TritWord,
-    TritMatrix,
-    Float,
-    SparseMatrix,
-    Int
-};
-
-inline std::string bttype_to_string(BTType t) {
-    switch (t) {
-        case BTType::Unknown:      return "unknown";
-        case BTType::Void:         return "void";
-        case BTType::Trit:         return "trit";
-        case BTType::TritWord:     return "tritword";
-        case BTType::TritMatrix:   return "tritmatrix";
-        case BTType::Float:        return "float";
-        case BTType::SparseMatrix: return "sparse_matrix";
-        case BTType::Int:          return "int";
-    }
-    return "unknown";
-}
-
-inline BTType string_to_bttype(const std::string& s) {
-    if (s == "trit") return BTType::Trit;
-    if (s == "tritword") return BTType::TritWord;
-    if (s == "tritmatrix") return BTType::TritMatrix;
-    if (s == "float") return BTType::Float;
-    if (s == "sparse_matrix") return BTType::SparseMatrix;
-    if (s == "int") return BTType::Int;
-    if (s == "void") return BTType::Void;
-    return BTType::Unknown;
-}
-
 class TypeError : public std::runtime_error {
 public:
     SourceLocation loc;
@@ -2354,303 +2408,278 @@ public:
         : std::runtime_error("[Type Error] " + l.to_string() + ": " + msg), loc(l) {}
 };
 
+// Semantic validation is mandatory at execution/code-generation entry points.
+// Integer-to-float promotion is allowed for int, but not implicitly for trit/word.
 class TypeChecker : public ASTVisitor {
-private:
-    std::unordered_map<std::string, BTType> symbol_table_;
-    std::unordered_map<std::string, BTType> func_return_types_;
+    struct Signature { BTType result; std::vector<BTType> params; };
+    std::vector<std::unordered_map<std::string, BTType>> scopes_{{}};
+    std::unordered_map<std::string, Signature> functions_;
     BTType current_type_{BTType::Unknown};
+    BTType return_type_{BTType::Int};
+    bool in_function_{false};
+    bool native_{false};
     std::vector<std::string> errors_;
 
-    void register_builtins() {
-        func_return_types_["planar_dot64"] = BTType::TritWord;
-        func_return_types_["btha_sum_p"]   = BTType::TritWord;
-        func_return_types_["btha_carry_p"] = BTType::TritWord;
-        func_return_types_["btha_sum_n"]   = BTType::TritWord;
-        func_return_types_["btha_carry_n"] = BTType::TritWord;
-        func_return_types_["fma"]          = BTType::Float;
-        func_return_types_["sqrt"]         = BTType::Float;
-        func_return_types_["abs"]          = BTType::Float;
+    [[noreturn]] void fail(const ASTNode& n, const std::string& msg) {
+        errors_.push_back(msg);
+        throw TypeError(msg, n.location);
     }
-
+    static bool integral(BTType t) {
+        return t == BTType::Int || t == BTType::Trit || t == BTType::TritWord;
+    }
+    static bool scalar(BTType t) { return integral(t) || t == BTType::Float; }
+    static bool compatible(BTType dst, BTType src) {
+        return dst == src || (dst != BTType::Trit && integral(dst) && integral(src)) ||
+               (dst == BTType::Float && src == BTType::Int);
+    }
+    static bool trit_constant(const ASTNodePtr& n) {
+        if (auto l = std::dynamic_pointer_cast<LiteralNode>(n))
+            return l->kind != LiteralKind::Vector && l->int_val >= -1 && l->int_val <= 1;
+        if (auto u = std::dynamic_pointer_cast<UnaryOpNode>(n)) return trit_constant(u->operand);
+        return false;
+    }
+    static bool accepts(BTType dst, BTType src, const ASTNodePtr& value) {
+        return compatible(dst, src) || (dst == BTType::Trit && trit_constant(value));
+    }
+    BTType eval(const ASTNodePtr& n) {
+        if (!n) return BTType::Void;
+        n->accept(*this); n->checked_type = current_type_; return current_type_;
+    }
+    void condition(const ASTNodePtr& n) {
+        if (!scalar(eval(n))) fail(*n, "condition must be a scalar");
+    }
+    BTType merge(BTType a, BTType b, const ASTNode& n) {
+        if (a == b) return a;
+        if (integral(a) && integral(b)) return BTType::Int;
+        if ((a == BTType::Float && b == BTType::Int) ||
+            (b == BTType::Float && a == BTType::Int)) return BTType::Float;
+        fail(n, "incompatible selection branch types");
+    }
+    void arity(CallNode& n, size_t count) {
+        if (n.arguments.size() != count)
+            fail(n, "function '" + n.callee + "' requires " + std::to_string(count) +
+                 " arguments, got " + std::to_string(n.arguments.size()));
+    }
+    static bool always_returns(const ASTNodePtr& n) {
+        if (std::dynamic_pointer_cast<ReturnNode>(n)) return true;
+        if (auto b = std::dynamic_pointer_cast<BlockNode>(n)) {
+            for (auto& s : b->statements) if (always_returns(s)) return true;
+        }
+        if (auto i = std::dynamic_pointer_cast<IfNode>(n))
+            return i->else_block && always_returns(i->then_block) && always_returns(i->else_block);
+        if (auto s = std::dynamic_pointer_cast<SelectNode>(n))
+            return always_returns(s->pos_branch) && always_returns(s->zero_branch) && always_returns(s->neg_branch);
+        return false;
+    }
+    void declare_function(FunctionDefNode& n) {
+        if (functions_.count(n.name) || builtin(n.name) || n.name.rfind("bt_", 0) == 0 || n.name == "printf") fail(n, "duplicate or reserved function '" + n.name + "'");
+        Signature s{string_to_bttype(n.return_type), {}};
+        if (s.result == BTType::Unknown) fail(n, "unknown return type '" + n.return_type + "'");
+        for (const auto& p : n.params) {
+            BTType t = string_to_bttype(p.type);
+            if (t == BTType::Unknown || t == BTType::Void) fail(n, "invalid parameter type '" + p.type + "'");
+            s.params.push_back(t);
+        }
+        functions_.emplace(n.name, std::move(s));
+    }
+    static bool builtin(const std::string& n) {
+        return n == "print" || n == "print_matrix" || n == "matmul" || n == "csa_reduce" ||
+            n == "transpose" || n == "zeros" || n == "ones" || n == "rand_matrix" ||
+            n == "matrix_init" || n == "vector_init" || n == "fma" || n == "sqrt" ||
+            n == "abs" || n == "planar_dot64" || n == "btha_sum_p" || n == "btha_sum_n" ||
+            n == "btha_carry_p" || n == "btha_carry_n";
+    }
 public:
-    TypeChecker() {
-        register_builtins();
-    }
-
+    explicit TypeChecker(bool native_backend = false) : native_(native_backend) {}
     const std::vector<std::string>& errors() const { return errors_; }
-
-    BTType get_symbol_type(const std::string& name) const {
-        auto it = symbol_table_.find(name);
-        return (it != symbol_table_.end()) ? it->second : BTType::Unknown;
+    BTType get_symbol_type(const std::string& n) const {
+        for (auto i = scopes_.rbegin(); i != scopes_.rend(); ++i) {
+            auto p = i->find(n); if (p != i->end()) return p->second;
+        }
+        return BTType::Unknown;
     }
-
-    void typecheck(ProgramNode& prog) {
+    // reset=false supports a validated interpreter session; callers validate on a
+    // copy and commit only on success, so failed analysis never poisons the session.
+    void typecheck(ProgramNode& n, bool reset = true) {
         errors_.clear();
-        symbol_table_.clear();
-        func_return_types_.clear();
-        register_builtins();
-        prog.accept(*this);
-        if (!errors_.empty()) {
-            throw TypeError(errors_[0]);
-        }
+        if (reset) { scopes_ = {{}}; functions_.clear(); }
+        in_function_ = false; return_type_ = BTType::Int;
+        n.accept(*this);
     }
-
-    void visit(ProgramNode& node) override {
-        for (auto& decl : node.declarations) {
-            if (decl) decl->accept(*this);
-        }
+    void visit(ProgramNode& n) override {
+        for (auto& d : n.declarations)
+            if (auto f = std::dynamic_pointer_cast<FunctionDefNode>(d)) declare_function(*f);
+        for (auto& d : n.declarations)
+            if (d && !std::dynamic_pointer_cast<FunctionDefNode>(d)) d->accept(*this);
+        for (auto& d : n.declarations)
+            if (auto f = std::dynamic_pointer_cast<FunctionDefNode>(d)) f->accept(*this);
     }
-
-    void visit(BlockNode& node) override {
-        for (auto& stmt : node.statements) {
-            if (stmt) stmt->accept(*this);
-        }
+    void visit(BlockNode& n) override {
+        scopes_.emplace_back();
+        for (auto& s : n.statements) if (s) s->accept(*this);
+        scopes_.pop_back(); current_type_ = BTType::Void;
     }
-
-    void visit(FunctionDefNode& node) override {
-        BTType ret_type = string_to_bttype(node.return_type);
-        func_return_types_[node.name] = ret_type;
-        auto prev_symbols = symbol_table_;
-        for (const auto& p : node.params) {
-            symbol_table_[p.name] = string_to_bttype(p.type);
+    void visit(FunctionDefNode& n) override {
+        if (in_function_ || scopes_.size() != 1) fail(n, "nested functions are not supported");
+        in_function_ = true; return_type_ = functions_.at(n.name).result;
+        if (native_ && !(integral(return_type_) || return_type_ == BTType::Float || return_type_ == BTType::Void))
+            fail(n, "native backend supports only scalar function results");
+        scopes_.emplace_back();
+        for (auto& p : n.params) {
+            if (scopes_.back().count(p.name)) fail(n, "duplicate parameter '" + p.name + "'");
+            BTType t = string_to_bttype(p.type);
+            if (native_ && !scalar(t)) fail(n, "native backend supports only scalar parameters");
+            scopes_.back()[p.name] = t;
         }
-        if (node.body) node.body->accept(*this);
-        symbol_table_ = std::move(prev_symbols);
-    }
-
-    void visit(VarDeclNode& node) override {
-        BTType declared = string_to_bttype(node.type);
-        if (node.init_expr) {
-            node.init_expr->accept(*this);
-            BTType init_type = current_type_;
-            if (declared != BTType::Unknown && declared != init_type) {
-                bool compatible = false;
-                if ((declared == BTType::Int || declared == BTType::Trit || declared == BTType::TritWord) &&
-                    (init_type == BTType::Int || init_type == BTType::Trit || init_type == BTType::TritWord)) {
-                    compatible = true;
-                } else if (declared == BTType::Float && init_type == BTType::Float) {
-                    compatible = true;
-                } else if (declared == BTType::SparseMatrix && init_type == BTType::SparseMatrix) {
-                    compatible = true;
-                } else if (declared == BTType::TritMatrix && init_type == BTType::TritMatrix) {
-                    compatible = true;
-                }
-
-                if (!compatible) {
-                    errors_.push_back("Incompatible initialization: cannot assign '" +
-                                     bttype_to_string(init_type) + "' to variable '" +
-                                     node.name + "' of type '" + bttype_to_string(declared) + "'");
-                }
-            }
-            if (declared == BTType::Unknown) declared = init_type;
-        }
-        symbol_table_[node.name] = (declared != BTType::Unknown) ? declared : BTType::Int;
-    }
-
-    void visit(AssignNode& node) override {
-        auto it = symbol_table_.find(node.target);
-        BTType target_type = (it != symbol_table_.end()) ? it->second : BTType::Unknown;
-        if (node.value) {
-            node.value->accept(*this);
-            BTType val_type = current_type_;
-            if (target_type != BTType::Unknown && target_type != val_type) {
-                bool compatible = false;
-                if ((target_type == BTType::Int || target_type == BTType::Trit || target_type == BTType::TritWord) &&
-                    (val_type == BTType::Int || val_type == BTType::Trit || val_type == BTType::TritWord)) {
-                    compatible = true;
-                } else if (target_type == BTType::Float && val_type == BTType::Float) {
-                    compatible = true;
-                } else if (target_type == BTType::SparseMatrix && val_type == BTType::SparseMatrix) {
-                    compatible = true;
-                }
-                if (!compatible) {
-                    errors_.push_back("Cannot assign type '" + bttype_to_string(val_type) +
-                                     "' to target '" + node.target + "' of type '" +
-                                     bttype_to_string(target_type) + "'");
-                }
-            }
-        }
-    }
-
-    void visit(BinaryOpNode& node) override {
-        node.left->accept(*this);
-        BTType lt = current_type_;
-        node.right->accept(*this);
-        BTType rt = current_type_;
-
-        if (lt == BTType::Float && rt == BTType::Float) {
-            current_type_ = BTType::Float;
-            return;
-        }
-
-        if (lt == BTType::Float || rt == BTType::Float) {
-            errors_.push_back("Invalid binary operation between 'float' and non-float type '" +
-                              bttype_to_string(lt == BTType::Float ? rt : lt) + "'");
-            current_type_ = BTType::Unknown;
-            return;
-        }
-
-        if (lt == BTType::SparseMatrix || rt == BTType::SparseMatrix) {
-            if (node.op == BinaryOp::Mul && lt == BTType::SparseMatrix &&
-                (rt == BTType::TritMatrix || rt == BTType::TritWord || rt == BTType::Int)) {
-                current_type_ = BTType::TritMatrix;
-                return;
-            }
-            errors_.push_back("Invalid operation on 'sparse_matrix' type");
-            current_type_ = BTType::Unknown;
-            return;
-        }
-
-        if (node.op == BinaryOp::Mul && lt == BTType::TritMatrix && rt == BTType::TritMatrix) {
-            current_type_ = BTType::TritMatrix;
-            return;
-        }
-
-        // Int / Trit arithmetic
-        if ((lt == BTType::Int || lt == BTType::Trit || lt == BTType::TritWord) &&
-            (rt == BTType::Int || rt == BTType::Trit || rt == BTType::TritWord)) {
-            current_type_ = (lt == BTType::Trit && rt == BTType::Trit) ? BTType::Trit : BTType::Int;
-            return;
-        }
-
-        current_type_ = lt;
-    }
-
-    void visit(UnaryOpNode& node) override {
-        node.operand->accept(*this);
-    }
-
-    void visit(SelectNode& node) override {
-        node.condition->accept(*this);
-        node.pos_branch->accept(*this);
-        BTType pt = current_type_;
-        node.zero_branch->accept(*this);
-        node.neg_branch->accept(*this);
-        current_type_ = pt;
-    }
-
-    void visit(WhileNode& node) override {
-        node.condition->accept(*this);
-        if (node.body) node.body->accept(*this);
+        if (n.body) n.body->accept(*this);
+        if (return_type_ != BTType::Void && !always_returns(n.body)) fail(n, "non-void function must return on every path");
+        scopes_.pop_back(); in_function_ = false; return_type_ = BTType::Int;
         current_type_ = BTType::Void;
     }
-
-    void visit(ReturnNode& node) override {
-        if (node.expr) {
-            node.expr->accept(*this);
-        } else {
-            current_type_ = BTType::Void;
-        }
+    void visit(VarDeclNode& n) override {
+        if (scopes_.back().count(n.name)) fail(n, "duplicate variable '" + n.name + "'");
+        BTType declared = string_to_bttype(n.type);
+        if (!n.type.empty() && declared == BTType::Unknown) fail(n, "unknown type '" + n.type + "'");
+        BTType init = n.init_expr ? eval(n.init_expr) : BTType::Int;
+        if (init == BTType::Void) fail(n, "cannot initialize a variable with void");
+        if (declared == BTType::Void) fail(n, "variable cannot have void type");
+        if (declared == BTType::Unknown) declared = init == BTType::Trit ? BTType::Int : init;
+        if (n.init_expr && !accepts(declared, init, n.init_expr)) fail(n, "incompatible initialization of '" + n.name + "'");
+        if (!n.init_expr && !scalar(declared)) fail(n, "aggregate requires an initializer");
+        n.binding_type = declared;
+        scopes_.back()[n.name] = declared; current_type_ = BTType::Void;
     }
-
-    void visit(LiteralNode& node) override {
-        switch (node.kind) {
-            case LiteralKind::Trit:    current_type_ = BTType::Trit; break;
-            case LiteralKind::Integer: current_type_ = BTType::Int; break;
-            case LiteralKind::Vector:  current_type_ = BTType::TritWord; break;
-        }
+    void visit(AssignNode& n) override {
+        BTType t = get_symbol_type(n.target);
+        if (t == BTType::Unknown) fail(n, "assignment to undefined variable '" + n.target + "'");
+        if (!accepts(t, eval(n.value), n.value)) fail(n, "incompatible assignment to '" + n.target + "'");
+        n.binding_type = t;
+        // Native arrays are SSA pointers, not mutable aggregate slots yet.
+        if (native_ && (t == BTType::TritMatrix || t == BTType::TritWord || t == BTType::SparseMatrix))
+            fail(n, "native aggregate/word assignment is not supported");
+        current_type_ = BTType::Void;
     }
-
-    void visit(FloatLiteralExprAST& /*node*/) override {
+    void visit(BinaryOpNode& n) override {
+        BTType a = eval(n.left), b = eval(n.right);
+        bool compare = n.op >= BinaryOp::Spaceship;
+        bool logic = n.op == BinaryOp::KleeneAnd || n.op == BinaryOp::KleeneOr || n.op == BinaryOp::TernaryXor;
+        if (a == BTType::PackedWord || b == BTType::PackedWord) {
+            if (logic && (a == BTType::PackedWord || integral(a)) && (b == BTType::PackedWord || integral(b))) {
+                if (native_) fail(n, "native packedword64 operations are not supported");
+                current_type_ = BTType::PackedWord; return;
+            }
+            fail(n, "packedword64 cannot implicitly convert to a positional scalar");
+        }
+        if (scalar(a) && scalar(b)) {
+            if (logic && (a == BTType::Float || b == BTType::Float)) fail(n, "Kleene logic not defined for float");
+            if ((a == BTType::Float && b != BTType::Float && b != BTType::Int) ||
+                (b == BTType::Float && a != BTType::Float && a != BTType::Int)) fail(n, "explicit conversion required between float and trit/word");
+            current_type_ = compare ? BTType::Int : ((a == BTType::Float || b == BTType::Float) ? BTType::Float : BTType::Int);
+            return;
+        }
+        if (n.op == BinaryOp::Mul && a == BTType::SparseMatrix && b == BTType::TritMatrix) {
+            current_type_ = BTType::TritMatrix; return;
+        }
+        if (!native_ && a == BTType::TritMatrix && b == BTType::TritMatrix &&
+            (n.op == BinaryOp::Add || n.op == BinaryOp::Sub || n.op == BinaryOp::Mul)) {
+            current_type_ = BTType::TritMatrix; return;
+        }
+        fail(n, "unsupported binary operand types");
+    }
+    void visit(UnaryOpNode& n) override {
+        BTType t = eval(n.operand);
+        if (t == BTType::PackedWord && !native_) { current_type_ = t; return; }
+        if (!scalar(t)) fail(n, "unary operation requires a scalar");
+        if (t == BTType::Float && n.op != UnaryOp::Negate) fail(n, "Kleene negation requires integral operands");
+    }
+    void visit(SelectNode& n) override {
+        condition(n.condition);
+        BTType a = eval(n.pos_branch), b = eval(n.zero_branch), c = eval(n.neg_branch);
+        current_type_ = merge(merge(a, b, n), c, n);
+        n.checked_type = current_type_;
+        if (native_ && current_type_ != BTType::Void && !scalar(current_type_)) fail(n, "native select requires scalar branches");
+    }
+    void visit(WhileNode& n) override { condition(n.condition); if (n.body) n.body->accept(*this); current_type_ = BTType::Void; }
+    void visit(IfNode& n) override {
+        condition(n.condition);
+        if (n.then_block) n.then_block->accept(*this);
+        if (n.else_block) n.else_block->accept(*this);
+        current_type_ = BTType::Void;
+    }
+    void visit(ReturnNode& n) override {
+        BTType t = eval(n.expr);
+        if (!in_function_ && t == BTType::Void) return;
+        if (!accepts(return_type_, t, n.expr)) fail(n, "return type does not match function result");
+        if (!in_function_ && !integral(t)) fail(n, "program exit status must be integral");
+    }
+    void visit(LiteralNode& n) override {
+        if (n.kind == LiteralKind::Integer && (n.int_val < contract::integer_min || n.int_val > contract::integer_max))
+            fail(n, "integer literal outside the 39-trit scalar domain");
+        if (n.kind == LiteralKind::Vector && n.vector_val.size() > 64)
+            fail(n, "packed literals are limited to 64 trits");
+        current_type_ = n.kind == LiteralKind::Vector ?
+            (n.vector_val.size() > 39 ? BTType::PackedWord : BTType::TritWord) :
+            (n.kind == LiteralKind::Trit && n.raw_text != "0" ? BTType::Trit : BTType::Int);
+        if (native_ && n.kind == LiteralKind::Vector && n.vector_val.size() > 39)
+            fail(n, "native positional literals are limited to 39 trits");
+    }
+    void visit(FloatLiteralExprAST& n) override {
+        if (!std::isfinite(n.value)) fail(n, "non-finite floating literal");
         current_type_ = BTType::Float;
     }
-
-    void visit(SparseMatrixDeclAST& node) override {
-        if (!node.name.empty()) {
-            symbol_table_[node.name] = BTType::SparseMatrix;
-        }
+    void visit(SparseMatrixDeclAST& n) override {
+        if (!n.name.empty() && !scopes_.back().count(n.name)) scopes_.back()[n.name] = BTType::SparseMatrix;
         current_type_ = BTType::SparseMatrix;
     }
-
-    void visit(IdentifierNode& node) override {
-        auto it = symbol_table_.find(node.name);
-        current_type_ = (it != symbol_table_.end()) ? it->second : BTType::Unknown;
+    void visit(IdentifierNode& n) override {
+        current_type_ = get_symbol_type(n.name);
+        if (current_type_ == BTType::Unknown) fail(n, "undefined variable '" + n.name + "'");
+        if (native_ && in_function_) {
+            bool local = false;
+            for (size_t i = 1; i < scopes_.size(); ++i) local |= scopes_[i].count(n.name) != 0;
+            if (!local) fail(n, "native function global captures are not supported");
+        }
     }
-
-    void visit(CallNode& node) override {
-        if (node.callee == "print") {
-            for (auto& arg : node.arguments) arg->accept(*this);
-            current_type_ = BTType::Void;
-            return;
+    void visit(CallNode& n) override {
+        std::vector<BTType> args;
+        for (auto& a : n.arguments) args.push_back(eval(a));
+        auto all_integral = [&] { for (auto t : args) if (!integral(t)) fail(n, "integral arguments required for '" + n.callee + "'"); };
+        auto all_scalar = [&] { for (auto t : args) if (!scalar(t)) fail(n, "scalar arguments required for '" + n.callee + "'"); };
+        const auto& f = n.callee;
+        if (f == "print" || f == "print_matrix") {
+            if (native_ && (f != "print" || args.size() != 1)) fail(n, "native print requires exactly one value");
+            for (auto t : args) if (t == BTType::Void || t == BTType::SparseMatrix) fail(n, "value cannot be printed");
+            current_type_ = BTType::Void; return;
         }
-        if (node.callee == "planar_dot64" || node.callee == "btha_sum_p" ||
-            node.callee == "btha_carry_p" || node.callee == "btha_sum_n" ||
-            node.callee == "btha_carry_n") {
-            if (node.arguments.size() != 4) {
-                errors_.push_back("Built-in Dual-Rail intrinsic '" + node.callee +
-                                  "' requires 4 arguments (ap, an, bp, bn), got " +
-                                  std::to_string(node.arguments.size()));
-            }
-            for (auto& arg : node.arguments) {
-                if (arg) {
-                    arg->accept(*this);
-                    if (current_type_ == BTType::Float || current_type_ == BTType::SparseMatrix) {
-                        errors_.push_back("Invalid argument type '" + bttype_to_string(current_type_) +
-                                          "' for Dual-Rail intrinsic '" + node.callee + "'");
-                    }
-                }
-            }
-            current_type_ = BTType::TritWord;
-            return;
+        if (f == "fma" || f == "sqrt" || f == "abs") {
+            arity(n, f == "fma" ? 3 : 1); all_scalar();
+            current_type_ = f == "abs" ? args[0] : BTType::Float; return;
         }
-        if (node.callee == "fma") {
-            if (node.arguments.size() != 3) {
-                errors_.push_back("Built-in 'fma' requires 3 arguments (a, b, c), got " +
-                                  std::to_string(node.arguments.size()));
-            }
-            for (auto& arg : node.arguments) {
-                if (arg) arg->accept(*this);
-            }
-            current_type_ = BTType::Float;
-            return;
+        if (f == "planar_dot64" || f == "btha_sum_p" || f == "btha_sum_n" || f == "btha_carry_p" || f == "btha_carry_n") {
+            arity(n, 4); all_integral(); current_type_ = BTType::Int; return;
         }
-        if (node.callee == "sqrt") {
-            if (node.arguments.size() != 1) {
-                errors_.push_back("Built-in 'sqrt' requires 1 argument (x), got " +
-                                  std::to_string(node.arguments.size()));
-            }
-            if (!node.arguments.empty() && node.arguments[0]) node.arguments[0]->accept(*this);
-            current_type_ = BTType::Float;
-            return;
+        if (f == "vector_init" || f == "matrix_init") {
+            if (f == "matrix_init" && args.size() < 2) fail(n, "matrix_init requires dimensions");
+            all_integral();
+            if (native_ && f == "matrix_init") fail(n, "native matrix_init is not supported");
+            current_type_ = BTType::TritMatrix; return;
         }
-        if (node.callee == "abs") {
-            if (node.arguments.size() != 1) {
-                errors_.push_back("Built-in 'abs' requires 1 argument (x), got " +
-                                  std::to_string(node.arguments.size()));
-            }
-            BTType arg_t = BTType::Unknown;
-            if (!node.arguments.empty() && node.arguments[0]) {
-                node.arguments[0]->accept(*this);
-                arg_t = current_type_;
-            }
-            current_type_ = (arg_t == BTType::Float) ? BTType::Float : BTType::TritWord;
-            return;
+        if (f == "matmul" || f == "csa_reduce" || f == "transpose" || f == "zeros" || f == "ones" || f == "rand_matrix") {
+            if (native_) fail(n, "native backend does not support '" + f + "'");
+            if (f == "csa_reduce") { if (args.empty()) fail(n, "csa_reduce requires at least one matrix"); }
+            else arity(n, f == "transpose" ? 1 : 2);
+            if (f == "zeros" || f == "ones" || f == "rand_matrix") all_integral();
+            else for (auto t : args) if (t != BTType::TritMatrix) fail(n, "matrix arguments required for '" + f + "'");
+            current_type_ = BTType::TritMatrix; return;
         }
-        if (node.callee == "matmul") {
-            current_type_ = BTType::TritMatrix;
-            return;
-        }
-        if (node.callee == "sparse_matrix") {
-            current_type_ = BTType::SparseMatrix;
-            return;
-        }
-        for (auto& arg : node.arguments) {
-            if (arg) arg->accept(*this);
-        }
-        auto it = func_return_types_.find(node.callee);
-        current_type_ = (it != func_return_types_.end()) ? it->second : BTType::Int;
+        auto it = functions_.find(f);
+        if (it == functions_.end()) fail(n, "undefined function '" + f + "'");
+        arity(n, it->second.params.size());
+        for (size_t i = 0; i < args.size(); ++i)
+            if (!accepts(it->second.params[i], args[i], n.arguments[i])) fail(n, "incompatible argument " + std::to_string(i + 1) + " for '" + f + "'");
+        current_type_ = it->second.result;
     }
-
-    void visit(IfNode& node) override {
-        node.condition->accept(*this);
-        if (node.then_block) node.then_block->accept(*this);
-        if (node.else_block) node.else_block->accept(*this);
-        current_type_ = BTType::Void;
-    }
-
-    void visit(ExpressionStmtNode& node) override {
-        if (node.expr) node.expr->accept(*this);
-    }
+    void visit(ExpressionStmtNode& n) override { eval(n.expr); }
 };
 
 using SemanticAnalyzer = TypeChecker;
