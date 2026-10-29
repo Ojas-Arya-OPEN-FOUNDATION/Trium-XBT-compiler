@@ -1,0 +1,220 @@
+{
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "iterations": 100000,
+  "samples": 7,
+  "native_llvm_opt_level": 0,
+  "sample_order": "alternating baseline/optimized each repeat",
+  "compiler_sha256": "f861e2f04f065c53a530f696916519667491a86d4fcd258fc628be917c376369",
+  "workloads": {
+    "identities_and_constants": {
+      "baseline": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 3.4475409997867246,
+          "lower_ms": 5.7791230001384974,
+          "link_ms": 25.60334999998304
+        },
+        "llvm_bytes": 5631,
+        "i128_mentions": 43,
+        "native_warm_kernel": {
+          "median_ms": 1.34304,
+          "samples_ms": [
+            1.349937,
+            1.34304,
+            1.355212,
+            1.344262,
+            1.306007,
+            1.340487,
+            1.27148
+          ]
+        },
+        "core_cli": {
+          "median_ms": 23.645947,
+          "samples_ms": [
+            23.454372,
+            23.645947,
+            23.694291,
+            23.5138,
+            23.508499,
+            24.036974,
+            26.066491
+          ]
+        }
+      },
+      "optimized": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 2.3891460000413645,
+          "lower_ms": 3.9988789999370056,
+          "link_ms": 18.596663000153058
+        },
+        "llvm_bytes": 4476,
+        "i128_mentions": 19,
+        "native_warm_kernel": {
+          "median_ms": 1.197559,
+          "samples_ms": [
+            1.207782,
+            1.197559,
+            1.188061,
+            1.181635,
+            1.177648,
+            1.200793,
+            1.201432
+          ]
+        },
+        "core_cli": {
+          "median_ms": 19.346743,
+          "samples_ms": [
+            19.346425,
+            19.18489,
+            19.431532,
+            20.429595,
+            19.346743,
+            19.158007,
+            19.408494
+          ]
+        }
+      },
+      "native_ratio": 1.1214812798367346,
+      "core_cli_ratio": 1.2222184891792898
+    },
+    "lazy_constant_selection": {
+      "baseline": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 2.242461000150797,
+          "lower_ms": 4.149711000081879,
+          "link_ms": 20.195018999856984
+        },
+        "llvm_bytes": 5626,
+        "i128_mentions": 49,
+        "native_warm_kernel": {
+          "median_ms": 0.863201,
+          "samples_ms": [
+            0.863201,
+            0.858068,
+            0.834797,
+            0.837012,
+            1.059244,
+            1.042939,
+            1.328159
+          ]
+        },
+        "core_cli": {
+          "median_ms": 15.1959,
+          "samples_ms": [
+            16.545552,
+            14.878414,
+            15.581932,
+            17.352996,
+            14.305649,
+            14.314489,
+            15.1959
+          ]
+        }
+      },
+      "optimized": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 2.2419530000661325,
+          "lower_ms": 4.167087000041647,
+          "link_ms": 19.5115619999342
+        },
+        "llvm_bytes": 3905,
+        "i128_mentions": 19,
+        "native_warm_kernel": {
+          "median_ms": 0.484905,
+          "samples_ms": [
+            0.493962,
+            0.46888,
+            0.484905,
+            0.474291,
+            0.477691,
+            0.530875,
+            0.895409
+          ]
+        },
+        "core_cli": {
+          "median_ms": 9.974403,
+          "samples_ms": [
+            11.877842,
+            9.974403,
+            10.095659,
+            10.952029,
+            9.54918,
+            9.524173,
+            9.719527
+          ]
+        }
+      },
+      "native_ratio": 1.7801445643992122,
+      "core_cli_ratio": 1.523489676525001
+    },
+    "checked_signed_map": {
+      "baseline": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 2.3462819999622297,
+          "lower_ms": 5.921553000007407,
+          "link_ms": 20.177881000108755
+        },
+        "llvm_bytes": 6148,
+        "i128_mentions": 37,
+        "native_warm_kernel": {
+          "median_ms": 1.457329,
+          "samples_ms": [
+            1.442055,
+            1.310735,
+            1.332405,
+            1.616705,
+            1.457329,
+            2.592737,
+            1.957695
+          ]
+        },
+        "core_cli": {
+          "median_ms": 30.163244,
+          "samples_ms": [
+            31.254912,
+            32.693855,
+            30.163244,
+            28.258539,
+            30.449009,
+            29.323251,
+            28.47305
+          ]
+        }
+      },
+      "optimized": {
+        "compilation_single_sample_ms": {
+          "emit_ms": 2.410048999990977,
+          "lower_ms": 4.423923999638646,
+          "link_ms": 19.302734000120836
+        },
+        "llvm_bytes": 6077,
+        "i128_mentions": 37,
+        "native_warm_kernel": {
+          "median_ms": 1.68055,
+          "samples_ms": [
+            1.576913,
+            1.436329,
+            1.68055,
+            1.706147,
+            2.007177,
+            1.976622,
+            1.483176
+          ]
+        },
+        "core_cli": {
+          "median_ms": 29.580734,
+          "samples_ms": [
+            34.901579,
+            30.741426,
+            29.580734,
+            28.656977,
+            28.287819,
+            30.284209,
+            28.228435
+          ]
+        }
+      },
+      "native_ratio": 0.8671738418969981,
+      "core_cli_ratio": 1.0196922091250338
+    }
+  }
+}
