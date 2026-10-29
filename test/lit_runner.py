@@ -31,6 +31,7 @@ import shlex
 import subprocess
 import tempfile
 import argparse
+import shutil
 
 FILECHECK_SPLIT_RE = re.compile(r'\s*\|\s*%?FileCheck\b')
 # NB: a token directly preceded by '%' (printf %%-escape) is left untouched.
@@ -47,9 +48,9 @@ def substitute_vars(cmd, test_file, tmpdir, root_dir):
         if var == 's':
             return shlex.quote(os.path.abspath(test_file))
         if var == 'bt-compiler':
-            return shlex.quote(os.path.join(root_dir, 'bt-compiler'))
+            return shlex.quote(os.environ.get('BT_COMPILER', os.path.join(root_dir, 'bt-compiler')))
         if var == 'bt-opt':
-            return shlex.quote(os.path.join(root_dir, 'bt-opt'))
+            return shlex.quote(os.environ.get('BT_OPT', os.path.join(root_dir, 'bt-opt')))
         # %t / %tN -> per-run temp file
         return shlex.quote(os.path.join(tmpdir, f'out_{var}.tmp' if var != 't' else 'out.tmp'))
     return VAR_SUB_RE.sub(lambda m: path_for(m.group(1)), cmd)
@@ -179,6 +180,16 @@ def run_test_file(test_file, root_dir):
 
     rel = os.path.relpath(test_file, root_dir)
 
+    # Missing tools are infrastructure failures, even in negated diagnostic RUNs.
+    for token, variable, executable in (("%bt-compiler", "BT_COMPILER", "bt-compiler"),
+                                         ("%bt-opt", "BT_OPT", "bt-opt")):
+        if any(token in r['cmd_raw'] for r in runs):
+            tool = os.environ.get(variable, os.path.join(root_dir, executable))
+            if not os.path.isfile(tool) or not os.access(tool, os.X_OK):
+                return False, f"required executable is unavailable: {tool}"
+    if re.search(r'(?:;|//|#)\s*REQUIRES:\s*clang\b', content) and not shutil.which('clang'):
+        return True, 'SKIPPED (requires clang)'
+
     with tempfile.TemporaryDirectory(prefix='bt_lit_') as tmpdir:
         for r in runs:
             run_label = f"{rel}: RUN line {r['line']}"
@@ -215,9 +226,7 @@ def run_test_file(test_file, root_dir):
                 if not ok:
                     return False, f"{msg}\n--- command: {exec_cmd} ---\n--- output (first 800 chars) ---\n{res.stdout[:800]}"
                 if res.returncode != 0:
-                    # Producer failed but its output satisfied every check.
-                    # Surface the status so flaky producers don't hide silently.
-                    print(f"    [note] {run_label}: producer exited {res.returncode} (output matched all checks)")
+                    return False, f"{run_label}: producer exited {res.returncode}; use explicit ! for expected diagnostics"
             else:
                 try:
                     res = subprocess.run(
@@ -261,6 +270,8 @@ def main():
         elif os.path.isfile(abs_p):
             test_files.append(abs_p)
 
+    if not test_files:
+        parser.error("no test files found")
     print("=" * 70)
     print(f"  LLVM lit Test Runner: Scanning {len(test_files)} test suite files")
     print("=" * 70)
@@ -289,7 +300,7 @@ def main():
     print(f"  Test Results: {passed} PASSED, {failed} FAILED, {skipped} SKIPPED")
     print("=" * 70)
 
-    sys.exit(1 if failed > 0 else 0)
+    sys.exit(1 if failed > 0 else (77 if skipped == len(test_files) else 0))
 
 
 if __name__ == '__main__':

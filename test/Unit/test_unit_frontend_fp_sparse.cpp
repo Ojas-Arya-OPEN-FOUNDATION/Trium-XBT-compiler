@@ -248,13 +248,13 @@ void test_llvm_codegen_patterns() {
     assert(ir.find("@smat_1_signs = internal constant") != std::string::npos);
 
     // 3. Verify multiplier-free SpMV loop
-    assert(ir.find("define void @bt_spmv") != std::string::npos);
+    assert(ir.find("define internal void @bt_spmv") != std::string::npos);
     assert(ir.find("lshr i64 %k, 6") != std::string::npos);
     assert(ir.find("and i64 %k, 63") != std::string::npos);
-    assert(ir.find("select i1 %is_pos, i64 %acc_add, i64 %acc_sub") != std::string::npos);
+    assert(ir.find("select i1 %is_pos, i128 %acc_add, i128 %acc_sub") != std::string::npos);
 
     // 4. Check multiplier-free property: within @bt_spmv body there is NO 'mul'
-    size_t spmv_start = ir.find("define void @bt_spmv");
+    size_t spmv_start = ir.find("define internal void @bt_spmv");
     size_t spmv_end = ir.find("spmv_done:");
     assert(spmv_start != std::string::npos && spmv_end != std::string::npos);
     std::string spmv_body = ir.substr(spmv_start, spmv_end - spmv_start);
@@ -360,7 +360,7 @@ void test_early_return_if_else() {
         assert(exit_code == 99 && "Early return in else branch must return 99!");
     }
 
-    // Early return with float expression truncated to i32
+    // Program exit statuses are integral; reject implicit float truncation.
     {
         std::string src = "var f: float = 7.8;\n"
                           "return f;\n";
@@ -368,8 +368,9 @@ void test_early_return_if_else() {
         auto prog = parser.parse_program();
         assert(prog != nullptr);
 
-        int exit_code = NativeLLVMJIT::execute_program(*prog, false);
-        assert(exit_code == 7 && "Float return must truncate to i32 (7)!");
+        bool rejected = false;
+        try { NativeLLVMJIT::execute_program(*prog, false); } catch (const TypeError&) { rejected = true; }
+        assert(rejected && "Float program exit status must be rejected");
     }
     std::cout << "      -> Early Return in If/Else passed.\n";
 }
@@ -572,9 +573,9 @@ void test_jit_env_restore_on_error() {
     bt::jit::TernaryJITEngine engine(cfg);
     auto root = engine.get_env();
     bool caught = false;
+    engine.execute_source("var okay = 7;\n");
     try {
         engine.execute_source(
-            "var okay = 7;\n"
             "func f() { var x = gtors; return x; }\n" // undefined variable -> throws in body
             "f();\n");
     } catch (const std::runtime_error&) {
@@ -590,7 +591,7 @@ void test_jit_env_restore_on_error() {
         try { engine.execute_source("f();\n"); } catch (const std::runtime_error&) {}
         assert(engine.get_env() == root && "no dead-frame nesting across repeated failures");
     }
-    engine.execute_source("func g(x) { return x * 2; }\nvar v = g(21);\n");
+    engine.execute_source("func g(x: int) -> int { return x * 2; }\nvar v = g(21);\n");
     assert(engine.get_env()->get("v").as_int64() == 42 && "calls still work after failures");
     std::cout << "      -> Env frame restore passed.\n";
 }
@@ -905,9 +906,9 @@ void test_math_intrinsics_fma_sqrt_abs() {
         "print(s);\n"
         "print(a1);\n"
         "print(a2);\n");
-    assert(jit_out.find("10 [BTFP32:") != std::string::npos && "fma(2, 3, 4) must be 10.0");
-    assert(jit_out.find("5 [BTFP32:") != std::string::npos && "sqrt(25.0) must be 5.0");
-    assert(jit_out.find("7.5 [BTFP32:") != std::string::npos && "abs(-7.5) must be 7.5");
+    assert(jit_out.find("10 [float64]") != std::string::npos && "fma(2, 3, 4) must be 10.0");
+    assert(jit_out.find("5 [float64]") != std::string::npos && "sqrt(25.0) must be 5.0");
+    assert(jit_out.find("7.5 [float64]") != std::string::npos && "abs(-7.5) must be 7.5");
     assert(jit_out.find("42 [") != std::string::npos && "abs(-42) must be 42");
 
     // 2. Typechecker & LLVM IR CodeGen & NativeLLVMJIT
@@ -919,7 +920,7 @@ void test_math_intrinsics_fma_sqrt_abs() {
                       "var a1: float = abs(-7.0);\n"
                       "var a2: int = abs(-42);\n"
                       "var sum_f: float = f + s + a1 + 42.0;\n"
-                      "return sum_f;\n";
+                      "if (sum_f == 64.0) { return 64; } else { return 1; }\n";
 
     Parser parser(src);
     auto prog = parser.parse_program();
