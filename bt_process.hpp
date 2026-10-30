@@ -8,15 +8,20 @@
 #include <cstring>
 #include <filesystem>
 #include <spawn.h>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+#include <chrono>
+#include <thread>
+#include <signal.h>
 
 extern char **environ;
 namespace bt::host {
-inline int run_process(const std::vector<std::string>& args) {
+struct ProcessTimeout:std::runtime_error{using std::runtime_error::runtime_error;};
+inline int run_process(const std::vector<std::string>& args,const std::string& capture="",unsigned timeout_ms=0) {
     if (args.empty() || args.front().empty()) throw std::invalid_argument("empty process command");
     std::vector<char*> argv;
     for (const auto& a : args) {
@@ -25,11 +30,38 @@ inline int run_process(const std::vector<std::string>& args) {
     }
     argv.push_back(nullptr);
     pid_t pid;
-    int err = posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_t actions;posix_spawn_file_actions_t* selected=nullptr;
+    if(!capture.empty()) {
+        if(capture.find('\0')!=std::string::npos)throw std::invalid_argument("NUL in capture path");
+        int error=posix_spawn_file_actions_init(&actions);
+        if(error)throw std::runtime_error("cannot initialize tool capture");
+        error=posix_spawn_file_actions_addopen(&actions,1,capture.c_str(),O_CREAT|O_WRONLY|O_TRUNC,0600);
+        if(!error)error=posix_spawn_file_actions_adddup2(&actions,1,2);
+        if(error){posix_spawn_file_actions_destroy(&actions);throw std::runtime_error("cannot redirect tool diagnostics");}
+        selected=&actions;
+    }
+    posix_spawnattr_t attributes;posix_spawnattr_t* attr=nullptr;
+    if(timeout_ms){
+        int error=posix_spawnattr_init(&attributes);
+        if(!error){attr=&attributes;error=posix_spawnattr_setflags(attr,POSIX_SPAWN_SETPGROUP);}
+        if(!error)error=posix_spawnattr_setpgroup(attr,0);
+        if(error){if(attr)posix_spawnattr_destroy(attr);if(selected)posix_spawn_file_actions_destroy(&actions);throw std::runtime_error("cannot set tool process group");}
+    }
+    int err = posix_spawnp(&pid, argv[0], selected, attr, argv.data(), environ);
+    if(attr)posix_spawnattr_destroy(attr);
+    if(selected)posix_spawn_file_actions_destroy(&actions);
     if (err) throw std::runtime_error("cannot execute '" + args[0] + "': " + std::strerror(err));
     int status;
-    while (waitpid(pid, &status, 0) == -1) {
-        if (errno != EINTR) throw std::runtime_error("waitpid failed");
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout_ms);
+    for(;;){
+        auto result=waitpid(pid,&status,timeout_ms?WNOHANG:0);
+        if(result==pid)break;
+        if(result<0){if(errno==EINTR)continue;throw std::runtime_error("waitpid failed");}
+        if(std::chrono::steady_clock::now()>=deadline){
+            kill(-pid,SIGKILL);while(waitpid(pid,&status,0)<0 && errno==EINTR){}
+            throw ProcessTimeout("external compiler/tool deadline exceeded");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
