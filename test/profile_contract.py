@@ -14,5 +14,7 @@ assert s['scalar_integer_min']==-h and s['scalar_integer_max']==h
 for o in s['operations']:
     assert o['semantics'] and isinstance(o['llvm_cpu'],bool)
     assert not o['cuda_map'] or o['llvm_cpu']
+    assert isinstance(o['sdk_native'],bool)
+    assert o['sdk_native']==(o['llvm_cpu'] and o['operation'] not in ('Call','Print','Packed'))
 assert s['runtime_abi_major']==1
 print(f'PASS: complete operation/profile manifest ({len(names)} operations)')

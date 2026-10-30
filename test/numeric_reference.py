@@ -9,47 +9,7 @@ import subprocess
 import sys
 
 
-def power(e):
-    return F(3**e) if e >= 0 else F(1,3**-e)
-
-
-def nearest(x,w):
-    if not x: return (0,0)
-    sign = -1 if x < 0 else 1
-    x = abs(x)
-    lo,hi = (3**(w-1)+1)//2,(3**w-1)//2
-    e = 0
-    while x > hi*power(e): e += 1
-    while x < lo*power(e): e -= 1
-    candidates = []
-    for k in range(e-2,e+3):
-        y = x/power(k)
-        m = min(hi,max(lo,(2*y.numerator+y.denominator)//(2*y.denominator)))
-        v = m*power(k)
-        candidates.append((abs(v-x),-v,sign*m,k))
-    _,_,m,k = min(candidates)
-    return m,k
-
-
-def nearest_sqrt(x,w):
-    if x < 0: raise ValueError('domain')
-    if not x: return (0,0)
-    lo,hi = (3**(w-1)+1)//2,(3**w-1)//2
-    e = 0
-    while x > (hi*power(e))**2: e += 1
-    while x < (lo*power(e))**2: e -= 1
-    candidates = {}
-    for k in range(e-2,e+3):
-        y = x/power(2*k)
-        q = isqrt(y.numerator//y.denominator)
-        for m in (q,q+1,lo,hi):
-            m = max(lo,min(hi,m)); candidates[m*power(k)] = (m,k)
-    lower = max(v for v in candidates if v*v <= x)
-    upper = min(v for v in candidates if v*v >= x)
-    return candidates[upper if x >= ((lower+upper)/2)**2 else lower]
-
-
-def value(pair): return pair[0]*power(pair[1])
+from fp_reference import power,nearest,nearest_sqrt,value
 
 rng = random.Random(0x46504d415448)
 commands,expected,labels = [],[],[]
@@ -72,8 +32,6 @@ for w in (1,2,3,10,20,40):
         e,f,g=[rng.randint(-5,5) for _ in range(3)]
         a,b,z=[value(nearest(k*power(j),w)) for k,j in ((m,e),(n,f),(c,g))]
         for op in ('add','mul','div','fma','sqrt'):
-            # Current explicit finite accumulator restrictions, not wrong answers.
-            if w == 40 and op in ('sqrt','fma'): continue
             try:
                 result = nearest_sqrt(a,w) if op=='sqrt' else nearest(
                     a+b if op=='add' else a*b if op=='mul' else a/b if op=='div' else a*b+z,w)
