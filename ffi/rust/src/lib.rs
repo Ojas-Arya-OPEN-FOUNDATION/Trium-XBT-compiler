@@ -52,6 +52,7 @@ pub struct BtBthaResult {
 // 2. Raw extern "C" ABI Declarations
 // ============================================================================
 
+#[link(name = "bt_runtime")]
 extern "C" {
     pub fn bt_runtime_abi_version() -> u32;
     pub fn bt_last_error_code() -> i32;
@@ -440,3 +441,6 @@ mod checked_tests {
         assert_eq!(unsafe {bt_last_error_code()},0);
     }
 }
+
+/// In-process compiler SDK (qualified separately from legacy runtime bindings).
+pub mod sdk;
