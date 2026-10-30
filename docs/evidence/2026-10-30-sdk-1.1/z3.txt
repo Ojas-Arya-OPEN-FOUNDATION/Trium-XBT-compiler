@@ -1,0 +1,107 @@
+### verify_z3_bigint_divmod.py
+=== Z3 SMT Formal Verification: TritBigInt Balanced Euclidean DivMod ===
+[1/3] Proving balanced Euclidean divmod identity a = q*b + r and 2|r| <= |b|...
+  -> UNSAT (Verified: a == q*b + r and 2|r| <= |b| for all integers a, b != 0).
+[2/3] Proving strict uniqueness of balanced (q, r) for any odd divisor b = 2*k + 1...
+  -> UNSAT (Verified: for every odd divisor b, balanced (q, r) is strictly unique).
+[3/3] Proving odd symmetry divmod(-a, b) == (-q, -r) and divmod(a, -b) == (-q, r)...
+  -> UNSAT (Verified: divmod(-a, b) = (-q, -r) and divmod(a, -b) = (-q, r) hold universally).
+ALL BALANCED DIVMOD Z3 PROOFS SUCCEEDED.
+### verify_z3_core_lowering.py
+PASS: CUDA multiplication precheck, int39 widths and core interval obligations
+### verify_z3_dense_algebra.py
+======================================================================
+  Z3 SMT Formal Verification: Dense Balanced Ternary Algebra & Logic
+======================================================================
+[1/5] Proving Kleene 3-Valued Logic Gates (AND, OR, NOT, XOR)...
+  -> PASSED: Kleene AND, OR, NOT, XOR all proved correct & disjoint (UNSAT).
+[2/5] Proving Branchless 3-Way Conditional Selection (ternary_select)...
+  -> PASSED: Branchless 3-Way Selection formally verified (UNSAT).
+[3/5] Proving Spaceship Comparison (<=>) ternary_compare...
+  -> PASSED: Spaceship comparison operator (<=>) verified (UNSAT).
+[4/5] Proving 4-to-2 Carry-Save Compressor Tree...
+  -> PASSED: 4-to-2 BT-CSA Compressor tree algebraically verified for all 81 states.
+[5/5] Proving Dual-Rail POPCNT Dot Product Theorem...
+  -> PASSED: Dual-Rail POPCNT dot product theorem verified for all state combinations.
+======================================================================
+  ALL Z3 SMT FORMAL VERIFICATIONS PASSED WITH 0 COUNTEREXAMPLES.
+======================================================================
+### verify_z3_floating_foundation.py
+PASS limb/carry/borrow, sqrt bounds/midpoints, remote-tail separation and binary64 capacity models
+### verify_z3_fp_fma.py
+=== Z3 SMT Formal Verification: BTFP Multiplication & Fused Multiply-Add ===
+[1/3] Proving BTFP<5>::mul 3-way constant-divisor normalization thresholds...
+  -> UNSAT (Verified: BTFP<5>::mul 3-way threshold produces normalized mantissa in 1 step).
+[1/3] Proving BTFP<12>::mul 3-way constant-divisor normalization thresholds...
+  -> UNSAT (Verified: BTFP<12>::mul 3-way threshold produces normalized mantissa in 1 step).
+[1/3] Proving BTFP<20>::mul 3-way constant-divisor normalization thresholds...
+  -> UNSAT (Verified: BTFP<20>::mul 3-way threshold produces normalized mantissa in 1 step).
+[2/3] Proving BTFP::fma single-rounding error bound <= (3^k - 1)/2 and zero bias...
+  -> UNSAT (Verified: single-rounded FMA error is strictly bounded by (3^k-1)/2 with 0 bias).
+[3/3] Proving existence of double-rounding error eliminated by single-rounded FMA...
+  -> Verified: FMA resolves exact boundary rounding (29 vs 28) where double-rounding drifts.
+ALL BTFP FMA Z3 PROOFS SUCCEEDED.
+### verify_z3_kogge_stone.py
+=== Z3 SMT Formal Verification: Kogge-Stone Parallel-Prefix Adder ===
+[1/3] Proving 7-state monotone semigroup closure (fm_p=0, fp_n=0) & associativity...
+  -> UNSAT (Verified: 7-state monotone closure, rail disjointness, and associativity hold).
+[2/3] Proving bit-exact 4-trit (2-stage) Kogge-Stone addition in QF_BV...
+  -> UNSAT (Verified: 4-trit Kogge-Stone adder is bit-exact and disjoint for all 3^9 inputs).
+[3/3] Proving 6-stage prefix completeness index invariant for W=64...
+  -> Verified: 6 stages {1,2,4,8,16,32} cover exact prefix [0..i] for all i in 0..63.
+ALL KOGGE-STONE Z3 PROOFS SUCCEEDED.
+### verify_z3_numeric_capacity.py
+PASS: rational, ratio-normalization and exact FMA capacities for widths 1..40
+### verify_z3_phase1.py
+PROVED: i128 intermediate bounds for add
+PROVED: checked add range predicate
+PROVED: i128 intermediate bounds for sub
+PROVED: checked sub range predicate
+PROVED: i128 intermediate bounds for mul
+PROVED: checked mul range predicate
+PROVED: accepted add truncation is exact (3-trit model)
+PROVED: accepted sub truncation is exact (3-trit model)
+PROVED: accepted mul truncation is exact (3-trit model)
+PROVED: selection is exhaustive and mutually exclusive
+PROVED: nearest quantization error <= scale/2
+PROVED by integer bound: CSR i128 accumulation capacity
+All Phase 1 mathematical model obligations passed
+PROVED: BTFP int64 exponent capacity: product
+PROVED: BTFP int64 exponent capacity: alignment
+PROVED: BTFP int64 exponent capacity: fma alignment
+PROVED: BTFP int64 exponent capacity: normalization
+PROVED by integer bounds: guarded BTFP accumulator capacities, W=1..40
+### verify_z3_round_div.py
+Exhaustive 8-bit proof: k=1..5, values=[-128,128) -> 0 counterexamples
+Z3 bound proof: INT64_MAX + (3^39-1)/2 = 11249649613364263940 < 2^64 = 18446744073709551616  (NO UNSIGNED WRAP)
+  -> round_div_pow3_fast64 unsigned-safe formula verified (exhaustive 8-bit domain + 64-bit bound).
+### verify_z3_sdk_contracts.py
+PASS SDK generation, admission, cache ownership, transactional output and guarded buffer-address models
+### verify_z3_sdk_words.py
+PASS uint32 addition, schoolbook product, capacity and pre-conversion overflow and native64 division-guard obligations
+### verify_z3_swar_bct.py
+=== Z3 SMT Formal Verification: Douglas W. Jones 4-Stage SWAR Tree Reduction ===
+[1/3] Proving bit-spreading bijection spread_16_to_32 in QF_BV...
+  -> UNSAT (Verified: spread_16_to_32 is exact across all 2^16 inputs).
+[2/3] Proving 4-stage SWAR tree reduction bct_to_bin_swar32 across all 3^16 states...
+  -> UNSAT (Verified: 4-stage SWAR tree reduction has 0 lane overflow and matches radix-3 Horner tree).
+[3/3] Proving dual-rail signed SWAR identity for disjoint trit words...
+  -> UNSAT (Verified: signed SWAR difference equals exact radix-3 valuation).
+ALL SWAR BCT Z3 PROOFS SUCCEEDED.
+### verify_z3_ternary.py
+==================================================================
+  Z3 SMT Formal Verification: Balanced Ternary Logic & Circuits  
+==================================================================
+>>> Proving BTHA (Balanced Ternary Half-Adder) in Z3...
+    [Z3 PROVED] BTHA satisfies output disjointness and exact algebraic soundness!
+>>> Proving BTFA (Balanced Ternary Full-Adder / 3-to-2 Compressor) in Z3...
+    [Z3 PROVED] BTFA satisfies the No-Overlap Carry Theorem and exact 3-to-2 compression!
+>>> Proving Trit Multiplication in Z3...
+    [Z3 PROVED] Dual-Rail bitplane multiplication is algebraically exact!
+>>> Proving Base-243 Division-Free Magic Multipliers in Z3...
+    [Z3 PROVED] Magic multipliers (171, 57, 19, 203) are bit-exact for all 243 byte states!
+>>> Proving Hardware 3-Input LUT Hex Constants in Z3...
+    [VERIFIED] All hardware immLut constants (0x14, 0x54, 0xCA, 0x96) verified bit-exact!
+==================================================================
+  ALL Z3 SMT THEOREMS MATHEMATICALLY PROVEN WITH ZERO COUNTEREXAMPLES!
+==================================================================

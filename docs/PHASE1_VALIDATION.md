@@ -1,5 +1,9 @@
 # Phase 1 remediation and validation record
 
+> Subsequent focused numerical delivery: [FLOATING_POINT_FOUNDATION.md](FLOATING_POINT_FOUNDATION.md).
+> Historical limits/counts below describe the earlier snapshot; W40 sqrt and
+> wider FMA alignment are now implemented and separately validated.
+
 > Historical foundation-pass record. For the later shared LLVM/CUDA/optimization
 > implementation and current validation, see [STEPS_1_TO_5_STATUS.md](STEPS_1_TO_5_STATUS.md).
 > Counts and measurements below describe the earlier pass, not the current build.

@@ -1,0 +1,1116 @@
+Start testing: Oct 29 19:31 UTC
+----------------------------------------------------------
+1/49 Testing: Layer1_Unit_Core
+1/49 Test: Layer1_Unit_Core
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_core"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Core" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+[LLVM Unit Test Layer 1] Running Core Primitives Tests...
+  [Core] Testing TritWord64 Bounds Guards & CSA Overflow Tracking...
+  [Core] Testing Douglas W. Jones SWAR BCT-to-Binary Tree Reduction...
+    -> Douglas W. Jones SWAR reduction verified bit-exact 100% across all cases.
+  [Core] Testing Branchless 6-Step Kogge-Stone Parallel Prefix Adder...
+    -> Kogge-Stone 64-trit parallel prefix adder verified bit-exact across 15,000 random & boundary cases.
+  [Core] Testing Direct Block Base-243 <-> Dual-Rail 64-Trit Transpose...
+    -> Base-243 64-trit block transpose verified 100% lossless across 10,000 random words.
+  [Core] Testing Full 64-Trit O(1) SWAR Evaluation (swar_to_int128)...
+    -> swar_to_int128 verified bit-exact across all 64-trit words.
+  [Core] Testing Generalized Width-Agnostic TritWord<UintT> (8, 16, 32, 64)...
+    -> TritWord<uint8_t/uint16_t/uint32_t/uint64_t> verified.
+  -> PASSED: All Core Unit Tests Verified.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Core" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Core" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/49 Testing: Layer1_Unit_Dense
+2/49 Test: Layer1_Unit_Dense
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_dense"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Dense" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+[LLVM Unit Test Layer 1] Running Dense Algebra & GEMM Tests...
+  [Dense] Testing Codec Guards & MultiTrit GEMM Edge Cases...
+  [Dense] Testing CacheAutotuner & gemm_autotuned (Aligned 128x128 & Unaligned 37x53x100)...
+  [Dense] Testing MultiTritMatrix encode_int_matrix, decode_int_matrix & gemm_multitrit...
+  [Dense] Testing Universal Harley-Seal (CSA 27-to-4) & BitNet b1.58 INT8 GEMM...
+  -> PASSED: All Dense Algebra & CacheAutotuner Unit Tests Verified.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Dense" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Dense" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/49 Testing: Layer1_Unit_Memory
+3/49 Test: Layer1_Unit_Memory
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_memory"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Memory" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+[LLVM Unit Test Layer 1] Running Memory Arena & Zero-Page Tests...
+  [Memory] Testing HierarchicalZeroPage Bounds & Atomic Read Count...
+      -> PASSED
+  [Memory] Testing HierarchicalZeroPage word/trit consistency...
+      -> PASSED
+  [Memory] Testing Base243Arena move safety...
+      -> PASSED
+  [Memory] Testing HierarchicalZeroMatrix rows*cols overflow...
+      -> PASSED
+  [Memory] Testing allocator noexcept correctness...
+      -> PASSED
+  -> PASSED: All Memory Arena Unit Tests Verified.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Memory" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Memory" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/49 Testing: Layer1_Unit_AST
+4/49 Test: Layer1_Unit_AST
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_ast"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_AST" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+[LLVM Unit Test Layer 1] Running Frontend AST Unit Tests...
+  -> PASSED: All AST Unit Tests Verified.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_AST" end time: Oct 29 19:31 UTC
+"Layer1_Unit_AST" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/49 Testing: Layer1_Unit_MLIR
+5/49 Test: Layer1_Unit_MLIR
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_mlir"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_MLIR" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  [LLVM Unit Test Layer 1] MLIR Dialect & Larq Lowering Engine
+======================================================================
+  [MLIR Lowering 1/6] Testing ConvertTernaryToLinalg...
+    -> PASSED: Structured iteration spaces & numerical contraction verified.
+  [MLIR Lowering 2/6] Testing ConvertTernaryToVector (Larq Bit-Sliced SIMD)...
+    -> PASSED: Larq bit-sliced SIMD vector lowerings verified across all lanes.
+  [MLIR Lowering 3/6] Testing ConvertBTHA (6 Bitwise Instructions)...
+    -> PASSED: 6-instruction bitwise BTHA verified with zero invariant violations.
+  [MLIR Lowering 4/6] Testing ConvertBase243 (Reciprocal Multipliers)...
+    -> PASSED: Division-free Base-243 reciprocal unpack verified for all 243 states.
+  [MLIR Lowering 5/6] Testing MLIR Pass Pipeline & Manager...
+    -> PASSED: Pass pipeline executed 4 passes successfully.
+  [MLIR Lowering 6/6] Testing TableGen & MLIR Text Emitters...
+    -> PASSED: TableGen & MLIR IR text generation verified.
+  [MLIR Lowering 7/8] Testing MLIR Operation Type Formatting...
+    -> PASSED: (i64, i64) -> i64 MLIR type formatting validated.
+  [MLIR Lowering 8/8] Testing Production C ABI (include/Ternary/ternary_c_abi.h)...
+    -> PASSED: All C ABI / FFI functions and structures validated.
+======================================================================
+  -> PASSED: All MLIR Lowering Unit Tests Verified (0 Failures).
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_MLIR" end time: Oct 29 19:31 UTC
+"Layer1_Unit_MLIR" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/49 Testing: Layer1_Unit_FP_Sparse
+6/49 Test: Layer1_Unit_FP_Sparse
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_fp_sparse"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_FP_Sparse" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  [LLVM Unit Test Layer 1] BT-FP & T-CSR Sparse Algebra Verification
+======================================================================
+  [BT-FP] Testing Unique Zero & Inherent Sign...
+  [BT-FP] Testing IEEE-754 Round-Trip Conversions...
+  [BT-FP] Testing Arithmetic Operations (Add, Sub, Mul, Div)...
+  [BT-FP] Verifying Zero-Bias Truncation Rounding [-0.5, +0.5]...
+  [BT-FP] Testing Integer Rounded Normalization & Multiplication...
+    -> Exact-distance BTFP32 normalization/mul regressions passed (20,100 samples).
+  [BT-FP] Testing fma, sqrt, abs, neg, pow_int & mul() Exponent-Clamping Fix...
+  [T-CSR] Testing Matrix Creation & 1-Bit Sign Bitplane Encoding...
+  [T-CSR] Testing Density & Memory Compression Metrics...
+    -> Density: 5.00%
+    -> T-CSR Memory: 274444 bytes
+    -> Dense FP32 Memory: 4000000 bytes
+    -> Memory Savings vs Dense Float: 14.57x
+    -> Non-zero Value Storage Reduction: 32.00x
+  [T-CSR] Testing Multiplier-Free SpMV (Sparse Matrix-Vector Multiply)...
+  [T-CSR] Testing Multiplier-Free SpMM (Sparse Matrix-Matrix Multiply)...
+  [BT-FP & T-CSR] Testing FP/Sparse Edge Cases & Invariant Guards...
+======================================================================
+  -> PASSED: All BT-FP & T-CSR Unit Tests 100% Verified Successfully!
+======================================================================
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_FP_Sparse" end time: Oct 29 19:31 UTC
+"Layer1_Unit_FP_Sparse" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/49 Testing: Layer1_Unit_LibBT
+7/49 Test: Layer1_Unit_LibBT
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_libbt"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_LibBT" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+[LLVM Unit Test Layer 1] Running Standalone libbt.hpp & Radix-3 FFT Suite...
+  [Test] Rational Arithmetic & Balanced Ternary String Expansion...
+  [Test] Matrix Trace & Exact Determinant...
+  [Test] Exact Gauss-Jordan Matrix Inversion...
+  [Test] Triangular Solvers (solve_upper, solve_lower)...
+  [Test] Vector Norms & Matrix Condition Checking...
+  [Test] Native Radix-3 Cooley-Tukey FFT & Parseval Energy...
+    -> N= 27 | Max Round-Trip Error: 1.047382e-15 | Parseval Preserved: 100% (diff < 1e-12)
+    -> N= 81 | Max Round-Trip Error: 1.099065e-15 | Parseval Preserved: 100% (diff < 1e-12)
+    -> N=243 | Max Round-Trip Error: 1.180183e-15 | Parseval Preserved: 100% (diff < 1e-12)
+  [Test] Fast Ternary Hamming Distance & CSA Tree Reduction...
+    -> Multi-word CSA tree reduction verified across sizes 1 to 64.
+  [Test] Exact Matrix<Rational>::solve(b), Matrix<BTFP32> & convolve_real_radix3...
+  -> PASSED: All libbt Standard Library & Radix-3 FFT Unit Tests 100% Verified.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_LibBT" end time: Oct 29 19:31 UTC
+"Layer1_Unit_LibBT" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/49 Testing: Layer1_Unit_BT_Opt
+8/49 Test: Layer1_Unit_BT_Opt
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_bt_opt"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_BT_Opt" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  [LLVM Unit Test Layer 1] bt-opt MLIR Optimizer & IREE Plugin Suite
+======================================================================
+  [bt-opt 1/6] Testing Dialect Registration & Invariant Verifiers...
+    -> PASSED: Dialect registration, types, and invariant verifiers.
+  [bt-opt 2/9] Testing TableGen Specification Files (CWD-independent)...
+    -> PASSED: TableGen dialect and operation schemas validated.
+  [bt-opt 3/9] Testing Pass Pipelining & Input-Aware Transformations...
+    -> Passes are input-aware: empty module => no canned lowering output.
+    -> PASSED: All 5 dialect lowerings executed on the ingested module (iterative CSA carry loop verified).
+  [bt-opt 4/6] Testing Bit-Sliced Numerical Execution Invariants...
+    -> PASSED: Bit-sliced arithmetic execution verified with zero errors.
+  [bt-opt 5/6] Testing IREE Compiler Plugin & Target Backends...
+    -> PASSED: IREE plugin initialized, Flow/Stream bridges and 4 backends verified.
+  [bt-opt 6/6] Testing bt-opt IR Emission & CLI Pipeline Emulation...
+    -> PASSED: Valid MLIR IR generation and canonical pipeline verified.
+  [bt-opt 7/7] Testing Production C ABI & MLIR Type Formatting...
+    -> PASSED: Production C ABI & MLIR type formatting verified.
+  [bt-opt 8/8] Testing --autotune-tile Hardware Cache-Tiled SCF Lowering...
+    -> PASSED: --autotune-tile SCF lowering & L1d/L2 cache annotation verified.
+======================================================================
+  -> PASSED: 100% of bt-opt & IREE Plugin Unit Tests Succeeded (0 Errors)!
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_BT_Opt" end time: Oct 29 19:31 UTC
+"Layer1_Unit_BT_Opt" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/49 Testing: Layer1_Unit_Frontend_FP_Sparse
+9/49 Test: Layer1_Unit_Frontend_FP_Sparse
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/require_tool.py" "clang" "/home/user/Trium-XBT-compiler/build/sdk/unit_frontend_fp_sparse"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Frontend_FP_Sparse" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+[LLVM Unit Test Layer 1] Frontend BT-FP32 & T-CSR Sparse Matrix Suite
+======================================================================
+  [1/5] Testing Float Literal Lexing and FloatLiteralExprAST...
+      -> Float Literal Lexing & AST passed.
+  [2/5] Testing Sparse Matrix Parsing and SparseMatrixDeclAST...
+      -> Sparse Matrix Parsing & AST passed.
+  [3/5] Testing TypeChecker Semantic Analysis...
+      -> TypeChecker Semantic Analysis passed.
+  [4/5] Testing LLVM IR CodeGen Patterns...
+      -> LLVM CodeGen patterns passed.
+  [5/5] Testing Bare-Metal Execution via NativeLLVMJIT...
+5.500000
+42
+-17
+      -> Native LLVM JIT execution passed.
+  [6/10] Testing Variable Shadowing in Nested If Blocks...
+      -> Variable Shadowing in Nested If passed.
+  [7/10] Testing Early Return in If/Else Blocks...
+      -> Early Return in If/Else passed.
+  [8/10] Testing Mixed Float + Int Expressions...
+      -> Mixed Float + Int Expressions passed.
+  [9/10] Testing Comparison Precedence (Relational vs Equality)...
+      -> Comparison Precedence passed.
+  [10/10] Testing Kokkos Bridge Fixes (Host View & Parallel CSA)...
+      -> Kokkos Bridge Fixes passed.
+  [14/19] Testing JIT float comparisons actually compare (not add)...
+      -> Float comparison semantics passed.
+  [15/19] Testing Kleene syntax (& | ^) on floats raises a clean error...
+      -> Kleene-on-float rejection passed.
+  [16/19] Testing JIT multiplication overflow (clean error, exact terms)...
+      -> Multiplication overflow semantics passed.
+  [17/19] Testing env frame restore when a function body throws...
+      -> Env frame restore passed.
+  [18/19] Testing sparse_matrix * dense matrix performs a TRUE SpMM...
+      -> Sparse SpMM passed.
+  [19/19] Testing JIT printing uses the full 64-trit word width...
+      -> Full-width printing passed.
+  [20/19] Testing ThreadPool reinit/no-drop/nested-dispatch guards...
+      -> ThreadPool guards passed.
+  [11/11] Testing DWARF-5 Debug Metadata and Loop Vectorization Metadata...
+      -> DWARF-5 Debug Metadata & Auto-Vectorization Loop Metadata passed (0 warnings).
+  [12/13] Testing Multi-File Module @import & import Resolution...
+      -> Multi-File Module @import & Circular Import Guard passed.
+  [13/13] Testing Inline Dual-Rail Hardware SSA Intrinsics (planar_dot64, btha_sum_p, btha_carry_p)...
+      -> Inline Dual-Rail Hardware SSA Intrinsics passed.
+  [21/21] Testing Math Intrinsics fma, sqrt, abs across JIT & Native LLVM...
+      -> Math Intrinsics (fma, sqrt, abs) across JIT & Native LLVM passed.
+  [22/22] Testing Phase 3 Compiler Fixes (Multi-Trit Literals, @bt_select, Stmt Select & Kleene Ops)...
+      -> Phase 3 Compiler Fixes verified across Native LLVM JIT.
+
+  -> ALL FRONTEND FP, SPARSE, MODULE IMPORT, INTRINSIC & PHASE 3 COMPILER FIXES PASSED (100%)
+======================================================================
+<end of output>
+Test time =   0.53 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Frontend_FP_Sparse" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Frontend_FP_Sparse" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/49 Testing: Layer1_Unit_C_ABI_FFI
+10/49 Test: Layer1_Unit_C_ABI_FFI
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_c_abi_ffi"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_C_ABI_FFI" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  [C++ Unit Test Layer] Production C ABI & Shared Runtime (libbt_runtime)
+======================================================================
+  [C ABI 1/6] Testing SWAR 64-trit Tree Reduction...
+    -> PASSED: SWAR parallel tree reduction verified.
+  [C ABI 2/6] Testing Bit-Sliced Dot Product Array...
+    -> PASSED: Array dot product popcount contraction verified.
+  [C ABI 3/6] Testing BT-FP32 Floating-Point Arithmetic...
+    -> PASSED: BT-FP32 arithmetic, FMA, sqrt, and power verified.
+  [C ABI 4/6] Testing Multiplier-Free T-CSR SpMV...
+    -> PASSED: Multiplier-free T-CSR SpMV verified.
+  [C ABI 5/6] Testing Radix-3 Cooley-Tukey FFT & IFFT...
+    -> PASSED: Radix-3 forward, inverse, and spectral convolution verified.
+  [C ABI 6/6] Testing Exported Helpers & Codecs...
+    -> PASSED: Exported helpers, BTHA, Base-243 codec, and Kleene logic verified.
+======================================================================
+  -> PASSED: All C ABI FFI Unit Tests Verified Successfully (0 Failures).
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_C_ABI_FFI" end time: Oct 29 19:31 UTC
+"Layer1_Unit_C_ABI_FFI" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/49 Testing: Layer1_Unit_BigInt_Symplectic
+11/49 Test: Layer1_Unit_BigInt_Symplectic
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_bigint_symplectic"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_BigInt_Symplectic" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  Balanced Ternary Arbitrary-Precision BigInt & Symplectic Unit Tests
+======================================================================
+[Test 1/6] Invariant Verification & Dual-Rail Primitives...
+  -> PASSED
+[Test 2/6] Multi-Word Shift Operations...
+  -> PASSED
+[Test 3/6] Cross-Word Carry Ripple Addition & Subtraction...
+  -> PASSED
+[Test 4/6] Trit & Multi-Word Multiplication...
+  -> PASSED
+[Test 5/6] Spaceship (<=>) & Relational Comparisons...
+  -> PASSED
+[Test 6/6] Multi-Word Symplectic Engine 10,000-Step Time-Reversibility...
+  -> PASSED (10,000 steps forward + 10,000 steps reverse: 100% Bit-Exact Recovery)
+[Test 7/8] TritBigInt Euclidean Domain (sign, abs, divmod, gcd, pow)...
+  -> PASSED
+[Test 8/8] Coupled N-Body SymplecticLatticeEngine (Reversibility & Total Momentum)...
+  -> PASSED
+[Test 9/9] Phase 3 Mathematical Developments (div2_exact, mul_csa, toom3, divmod_householder)...
+  -> PASSED (div2_exact, mul_csa, toom3, divmod_householder verified)
+[Test 10/10] Advanced Algorithms (countr_zero_trits, Stein GCD, xgcd, mod_inverse, Decimal String)...
+  -> PASSED (countr_zero_trits, Stein GCD, xgcd, mod_inverse, Decimal String verified)
+======================================================================
+  ALL 10 UNIT TEST SUITES PASSED WITH 0 FAILURES.
+======================================================================
+<end of output>
+Test time =   0.37 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_BigInt_Symplectic" end time: Oct 29 19:31 UTC
+"Layer1_Unit_BigInt_Symplectic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/49 Testing: Layer1_Unit_XBT_HW
+12/49 Test: Layer1_Unit_XBT_HW
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_xbt_hw"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_XBT_HW" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  Running Unit Test: RISC-V Xbt Hardware Extension & RTL Co-Simulator
+======================================================================
+  [PASS] Xbt R-Type Encoding, Decoding & Disassembly
+  [PASS] Cycle-Exact Co-Simulation of BTHA, KSADD, DOT64, UNPACK243, NEG
+  [PASS] SystemVerilog RTL Verification (All 6 Xbt Hardware Modules Verified)
+======================================================================
+  ALL XBT HARDWARE UNIT TESTS PASSED!
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_XBT_HW" end time: Oct 29 19:31 UTC
+"Layer1_Unit_XBT_HW" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/49 Testing: Layer2_Regression
+13/49 Test: Layer2_Regression
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/lit_runner.py" "/home/user/Trium-XBT-compiler/test/Regression"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer2_Regression" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  LLVM lit Test Runner: Scanning 5 test suite files
+======================================================================
+  [32m[PASS][0m    test/Regression/csa_reduce_test.bt
+  [32m[PASS][0m    test/Regression/fp_sparse_test.bt
+  [32m[PASS][0m    test/Regression/matmul_check.bt
+  [32m[PASS][0m    test/Regression/sample_exec.bt
+  [32m[PASS][0m    test/Regression/select_spaceship.bt
+======================================================================
+  Test Results: 5 PASSED, 0 FAILED, 0 SKIPPED
+======================================================================
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"Layer2_Regression" end time: Oct 29 19:31 UTC
+"Layer2_Regression" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/49 Testing: Layer3_WholeProgram
+14/49 Test: Layer3_WholeProgram
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/lit_runner.py" "/home/user/Trium-XBT-compiler/test/WholeProgram"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer3_WholeProgram" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  LLVM lit Test Runner: Scanning 1 test suite files
+======================================================================
+  [32m[PASS][0m    test/WholeProgram/matrix_pipeline.bt
+======================================================================
+  Test Results: 1 PASSED, 0 FAILED, 0 SKIPPED
+======================================================================
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"Layer3_WholeProgram" end time: Oct 29 19:31 UTC
+"Layer3_WholeProgram" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/49 Testing: Layer5_CodeGen
+15/49 Test: Layer5_CodeGen
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/lit_runner.py" "/home/user/Trium-XBT-compiler/test/CodeGen"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer5_CodeGen" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  LLVM lit Test Runner: Scanning 7 test suite files
+======================================================================
+  [32m[PASS][0m    test/CodeGen/target_arm64.test
+  [32m[PASS][0m    test/CodeGen/target_cross_compile.test
+  [32m[PASS][0m    test/CodeGen/target_dwarf_lto.test
+  [32m[PASS][0m    test/CodeGen/target_llvm.test
+  [32m[PASS][0m    test/CodeGen/target_metal.test
+  [32m[PASS][0m    test/CodeGen/target_vulkan.test
+  [32m[PASS][0m    test/CodeGen/target_x86.test
+======================================================================
+  Test Results: 7 PASSED, 0 FAILED, 0 SKIPPED
+======================================================================
+<end of output>
+Test time =   0.14 sec
+----------------------------------------------------------
+Test Passed.
+"Layer5_CodeGen" end time: Oct 29 19:31 UTC
+"Layer5_CodeGen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/49 Testing: Layer6_Dialect
+16/49 Test: Layer6_Dialect
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/lit_runner.py" "/home/user/Trium-XBT-compiler/test/Dialect"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer6_Dialect" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  LLVM lit Test Runner: Scanning 5 test suite files
+======================================================================
+  [32m[PASS][0m    test/Dialect/bt_opt_input_variance.mlir
+  [32m[PASS][0m    test/Dialect/bt_opt_linalg.mlir
+  [32m[PASS][0m    test/Dialect/bt_opt_lowering.mlir
+  [32m[PASS][0m    test/Dialect/bt_opt_parse_errors.mlir
+  [32m[PASS][0m    test/Dialect/ternary_ops.mlir
+======================================================================
+  Test Results: 5 PASSED, 0 FAILED, 0 SKIPPED
+======================================================================
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"Layer6_Dialect" end time: Oct 29 19:31 UTC
+"Layer6_Dialect" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/49 Testing: Layer7_Sema
+17/49 Test: Layer7_Sema
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/lit_runner.py" "/home/user/Trium-XBT-compiler/test/Sema"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer7_Sema" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  LLVM lit Test Runner: Scanning 2 test suite files
+======================================================================
+  [32m[PASS][0m    test/Sema/diagnostic_error.bt
+  [32m[PASS][0m    test/Sema/valid_declarations.bt
+======================================================================
+  Test Results: 2 PASSED, 0 FAILED, 0 SKIPPED
+======================================================================
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"Layer7_Sema" end time: Oct 29 19:31 UTC
+"Layer7_Sema" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/49 Testing: Core_Math_IR
+18/49 Test: Core_Math_IR
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_math_core"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Math_IR" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+Core mathematics and typed IR verifier passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Math_IR" end time: Oct 29 19:31 UTC
+"Core_Math_IR" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/49 Testing: Core_Math_Reference
+19/49 Test: Core_Math_Reference
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/math_reference.py" "/home/user/Trium-XBT-compiler/build/sdk/unit_math_core"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Math_Reference" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 3289 full-int64 Euclidean division and rational-rounding cases
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Math_Reference" end time: Oct 29 19:31 UTC
+"Core_Math_Reference" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/49 Testing: Core_Lowering_Optimizer
+20/49 Test: Core_Lowering_Optimizer
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_core_lowering"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Lowering_Optimizer" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 10000 optimizer/range cases, effect/error regressions, verifier budget, safe symbols
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Lowering_Optimizer" end time: Oct 29 19:31 UTC
+"Core_Lowering_Optimizer" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/49 Testing: Core_Profile_Contract
+21/49 Test: Core_Profile_Contract
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/profile_contract.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Profile_Contract" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: complete operation/profile manifest (27 operations)
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Profile_Contract" end time: Oct 29 19:31 UTC
+"Core_Profile_Contract" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/49 Testing: Core_Backend_Regression
+22/49 Test: Core_Backend_Regression
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/core_backend_regression.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Backend_Regression" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: native/core optimized+unoptimized effects, IEEE edges, TLS ABI, 105 malformed-source cases and imports
+<end of output>
+Test time =   1.61 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Backend_Regression" end time: Oct 29 19:31 UTC
+"Core_Backend_Regression" time elapsed: 00:00:01
+----------------------------------------------------------
+
+23/49 Testing: Core_Optimized_Differential
+23/49 Test: Core_Optimized_Differential
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/phase1_differential.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Optimized_Differential" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 525 native/AST/core-IR/Python oracle values, negative cases, overflow propagation and driver safety
+<end of output>
+Test time =   0.56 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Optimized_Differential" end time: Oct 29 19:31 UTC
+"Core_Optimized_Differential" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/49 Testing: Core_Optimized_Programs
+24/49 Test: Core_Optimized_Programs
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/core_program_differential.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Optimized_Programs" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 211 generated whole-program outcomes across native/AST/core/Python
+<end of output>
+Test time =   0.43 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Optimized_Programs" end time: Oct 29 19:31 UTC
+"Core_Optimized_Programs" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/49 Testing: CUDA_Driver_Unit
+25/49 Test: CUDA_Driver_Unit
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/cuda_driver_unit.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"CUDA_Driver_Unit" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: CUDA C-argument marshaling, transactional results, cleanup and context restoration (fake driver)
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"CUDA_Driver_Unit" end time: Oct 29 19:31 UTC
+"CUDA_Driver_Unit" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/49 Testing: CUDA_Offline_Validation
+26/49 Test: CUDA_Offline_Validation
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/cuda_map_test.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"CUDA_Offline_Validation" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: NVPTX compilation and device-free emulation (NOT GPU qualification)
+<end of output>
+Test time =   1.50 sec
+----------------------------------------------------------
+Test Passed.
+"CUDA_Offline_Validation" end time: Oct 29 19:31 UTC
+"CUDA_Offline_Validation" time elapsed: 00:00:01
+----------------------------------------------------------
+
+27/49 Testing: CUDA_Device_Qualification
+27/49 Test: CUDA_Device_Qualification
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/cuda_map_test.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler" "--device"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"CUDA_Device_Qualification" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+SKIP: real GPU qualification unavailable: CUDA driver library is not available
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"CUDA_Device_Qualification" end time: Oct 29 19:31 UTC
+"CUDA_Device_Qualification" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/49 Testing: Core_Program_IR
+28/49 Test: Core_Program_IR
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_ir_program"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Program_IR" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: whole-program IR, observable/lazy effects, budgets, exact rational edges
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Program_IR" end time: Oct 29 19:31 UTC
+"Core_Program_IR" time elapsed: 00:00:00
+----------------------------------------------------------
+
+29/49 Testing: FP_Foundation_Unit
+29/49 Test: FP_Foundation_Unit
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_fp_foundation"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"FP_Foundation_Unit" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS constexpr sticky ties, W40 sqrt/alignment, fused cancellation, binary ties and wide carries
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"FP_Foundation_Unit" end time: Oct 29 19:31 UTC
+"FP_Foundation_Unit" time elapsed: 00:00:00
+----------------------------------------------------------
+
+30/49 Testing: Core_Numeric_Reference
+30/49 Test: Core_Numeric_Reference
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/numeric_reference.py" "/home/user/Trium-XBT-compiler/build/sdk/unit_numeric_oracle"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Numeric_Reference" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 15372 exact rational/BTFP cases, including binade boundaries
+<end of output>
+Test time =   0.67 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Numeric_Reference" end time: Oct 29 19:31 UTC
+"Core_Numeric_Reference" time elapsed: 00:00:00
+----------------------------------------------------------
+
+31/49 Testing: Core_Rocq
+31/49 Test: Core_Rocq
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/check_rocq.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Rocq" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+SKIP: install Rocq or explicitly set BT_JSCOQ_CLI to jscoq 0.17.1 CLI
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Rocq" end time: Oct 29 19:31 UTC
+"Core_Rocq" time elapsed: 00:00:00
+----------------------------------------------------------
+
+32/49 Testing: Phase1_Safety
+32/49 Test: Phase1_Safety
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_phase1"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Phase1_Safety" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+Phase 1 safety, semantics, numeric boundaries and ABI checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"Phase1_Safety" end time: Oct 29 19:31 UTC
+"Phase1_Safety" time elapsed: 00:00:00
+----------------------------------------------------------
+
+33/49 Testing: Layer1_Unit_Phase3
+33/49 Test: Layer1_Unit_Phase3
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_phase3"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Phase3" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  PHASE 3 SILICON & MATHEMATICS COMPREHENSIVE VERIFICATION SUITE
+======================================================================
+  [Phase 3 - 1/9] Testing 3-Input Boolean LUT 0xF8 & Kogge-Stone Absorption...
+      -> PASSED: 3-Input LUT 0xF8 & Kogge-Stone equivalence validated.
+  [Phase 3 - 2/9] Testing 9-to-2 BTFA Carry-Save Popcount Contraction...
+      -> PASSED: 9-to-2 CSA Popcount Contraction verified (8 vs 18 POPCNTs).
+  [Phase 3 - 3/9] Testing Hardware MMU Zero-Page Virtual Matrix...
+      -> PASSED: Hardware MMU Zero Page & madvise reclamation verified.
+  [Phase 3 - 4/9] Testing Multiplier-Free Balanced Ternary CORDIC...
+      -> PASSED: CORDIC transcendentals (trig & exp/ln/tanh) validated.
+  [Phase 3 - 5/9] Testing 3rd-Order Householder Cubic Reciprocal & Division...
+      -> PASSED: Cubic Householder reciprocal & division verified (R_{k+1} = R_k^3).
+  [Phase 3 - 6/9] Testing Balanced Symmetric Toom-3 Multiplication (O(N^1.465))...
+      -> PASSED: Toom-3 symmetric multiplication verified bit-identical.
+  [Phase 3 - 7/9] Testing Radix-3 NTT over Verified Prime p = 3,874,204,891...
+      -> PASSED: Radix-3 NTT forward, inverse & exact convolution verified.
+  [Phase 3 - 8/9] Testing Bareiss Fraction-Free Determinant & Linear Solver...
+      -> PASSED: Bareiss fraction-free determinant & solver verified.
+  [Phase 3 - 9/9] Testing CMOS AOI22 Compound Gates & 32x128-bit Register File...
+      -> PASSED: Silicon AOI22 gates, 32-regfile wire-swap & systolic BTFA verified.
+======================================================================
+  ALL 9 PHASE 3 SILICON & MATHEMATICAL MODULES 100% VERIFIED!
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Phase3" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Phase3" time elapsed: 00:00:00
+----------------------------------------------------------
+
+34/49 Testing: Layer1_Unit_Universal
+34/49 Test: Layer1_Unit_Universal
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_universal"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Layer1_Unit_Universal" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  UNIVERSAL XBT FOUNDATION VERIFICATION SUITE
+======================================================================
+  [Universal 1/6] Testing TriRadixScalar (Q_{2,3,5} lossless representation)...
+      -> PASSED: TriRadixScalar Q_{2,3,5} exactness validated.
+  [Universal 2/6] Testing BlockTernaryTensor & active plane masking...
+      -> PASSED: BlockTernaryTensor plane slicing & reconstruction verified.
+  [Universal 3/6] Testing xbt_sgemm_unmodified on unmodified float matrices...
+      -> PASSED: xbt_sgemm_unmodified matches reference float GEMM.
+  [Universal 4/6] Testing Non-Linear Engine (exp, tanh, rsqrt, rmsnorm, softmax)...
+      -> PASSED: Non-linear activations & transcendentals validated.
+  [Universal 5/6] Testing MagicBlockTernary10 (Division-free Base-59049 slicer)...
+      -> PASSED: Division-free Base-59049 plane slicer validated.
+  [Universal 6/6] Testing SymplecticReversibleLayer (Bit-exact reversible residual)...
+      -> PASSED: 100% bit-exact Symplectic reversibility across 10 layers.
+======================================================================
+  ALL 6 UNIVERSAL XBT FOUNDATION MODULES 100% VERIFIED!
+======================================================================
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Layer1_Unit_Universal" end time: Oct 29 19:31 UTC
+"Layer1_Unit_Universal" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/49 Testing: Phase1_LLVM_Differential
+35/49 Test: Phase1_LLVM_Differential
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/phase1_differential.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Phase1_LLVM_Differential" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 525 native/AST/core-IR/Python oracle values, negative cases, overflow propagation and driver safety
+<end of output>
+Test time =   0.59 sec
+----------------------------------------------------------
+Test Passed.
+"Phase1_LLVM_Differential" end time: Oct 29 19:31 UTC
+"Phase1_LLVM_Differential" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/49 Testing: Core_Program_Differential
+36/49 Test: Core_Program_Differential
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/core_program_differential.py" "/home/user/Trium-XBT-compiler/build/sdk/bt-compiler"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Core_Program_Differential" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: 211 generated whole-program outcomes across native/AST/core/Python
+<end of output>
+Test time =   0.48 sec
+----------------------------------------------------------
+Test Passed.
+"Core_Program_Differential" end time: Oct 29 19:31 UTC
+"Core_Program_Differential" time elapsed: 00:00:00
+----------------------------------------------------------
+
+37/49 Testing: Phase1_Z3
+37/49 Test: Phase1_Z3
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/verify_z3_phase1.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Phase1_Z3" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PROVED: i128 intermediate bounds for add
+PROVED: checked add range predicate
+PROVED: i128 intermediate bounds for sub
+PROVED: checked sub range predicate
+PROVED: i128 intermediate bounds for mul
+PROVED: checked mul range predicate
+PROVED: accepted add truncation is exact (3-trit model)
+PROVED: accepted sub truncation is exact (3-trit model)
+PROVED: accepted mul truncation is exact (3-trit model)
+PROVED: selection is exhaustive and mutually exclusive
+PROVED: nearest quantization error <= scale/2
+PROVED by integer bound: CSR i128 accumulation capacity
+All Phase 1 mathematical model obligations passed
+PROVED: BTFP int64 exponent capacity: product
+PROVED: BTFP int64 exponent capacity: alignment
+PROVED: BTFP int64 exponent capacity: fma alignment
+PROVED: BTFP int64 exponent capacity: normalization
+PROVED by integer bounds: guarded BTFP accumulator capacities, W=1..40
+<end of output>
+Test time =   0.30 sec
+----------------------------------------------------------
+Test Passed.
+"Phase1_Z3" end time: Oct 29 19:31 UTC
+"Phase1_Z3" time elapsed: 00:00:00
+----------------------------------------------------------
+
+38/49 Testing: Runtime_ABI_Client
+38/49 Test: Runtime_ABI_Client
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/runtime_abi_regression.py" "/home/user/Trium-XBT-compiler/build/sdk/libbt_runtime.so"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Runtime_ABI_Client" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS: versioned C/Python ABI, propagated errors, no narrowing/truncation, 243 roundtrips and TLS
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"Runtime_ABI_Client" end time: Oct 29 19:31 UTC
+"Runtime_ABI_Client" time elapsed: 00:00:00
+----------------------------------------------------------
+
+39/49 Testing: Phase1_Python_FFI
+39/49 Test: Phase1_Python_FFI
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/ffi/python/bt_ffi.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"Phase1_Python_FFI" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+======================================================================
+  [Python ctypes FFI] Balanced Ternary Shared Runtime Self-Test
+======================================================================
+  [FFI 1/7] Dual-Rail Word & Disjointness Invariant ... PASSED
+  [FFI 2/7] Douglas W. Jones SWAR Tree Reduction ....... PASSED
+  [FFI 3/7] Bit-Sliced Popcount Dot Product ........... PASSED
+  [FFI 4/7] Branchless 6-Op BTHA Half-Adder ........... PASSED
+  [FFI 5/7] BT-FP32 Arithmetic (Add/Sub/Mul/Div/FMA/Sqrt) . PASSED
+  [FFI 6/7] Multiplier-Free T-CSR 1-Bit SpMV .......... PASSED
+  [FFI 7/7] Radix-3 FFT/IFFT Reversible Transform ..... PASSED
+  [Bonus]   Base-243 5-Trit/Byte Codec .............. PASSED
+  [FFI 8/8] Universal XBT Non-Linear Engine (exp/tanh/rsqrt/rmsnorm/softmax) . PASSED
+  [FFI 9/8] Universal XBT Unmodified-Float SGEMM ......... PASSED
+======================================================================
+  -> ALL PYTHON FFI VERIFICATION TESTS PASSED SUCCESSFULLY!
+======================================================================
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"Phase1_Python_FFI" end time: Oct 29 19:31 UTC
+"Phase1_Python_FFI" time elapsed: 00:00:00
+----------------------------------------------------------
+
+40/49 Testing: SDK_Host_Ownership
+40/49 Test: SDK_Host_Ownership
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_sdk_host"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Host_Ownership" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS C++ retained/moved/closed ownership and bounded private shell-free compiler process
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Host_Ownership" end time: Oct 29 19:31 UTC
+"SDK_Host_Ownership" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/49 Testing: SDK_Z3_Models
+41/49 Test: SDK_Z3_Models
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/verify_z3_sdk_contracts.py"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Z3_Models" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS SDK generation, admission, cache ownership, transactional output and guarded buffer-address models
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Z3_Models" end time: Oct 29 19:31 UTC
+"SDK_Z3_Models" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/49 Testing: SDK_Contracts
+42/49 Test: SDK_Contracts
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/contracts.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Contracts" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS API layouts, typed metadata, diagnostics, bounded source cache, concurrent compilation, invalidation and resource statuses
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Contracts" end time: Oct 29 19:31 UTC
+"SDK_Contracts" time elapsed: 00:00:00
+----------------------------------------------------------
+
+43/49 Testing: SDK_Native
+43/49 Test: SDK_Native
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/native.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Native" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS 1744 native/reference cases, actual mixed typed ABI, TLS concurrency, cache reuse/invalidation and failure transactions
+<end of output>
+Test time =   2.00 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Native" end time: Oct 29 19:31 UTC
+"SDK_Native" time elapsed: 00:00:01
+----------------------------------------------------------
+
+44/49 Testing: SDK_Math_Interchange
+44/49 Test: SDK_Math_Interchange
+Command: "/home/user/Trium-XBT-compiler/build/sdk/unit_sdk_math"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Math_Interchange" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS dual-rail full-int64, canonical wires, exact decimal/BTFP conversion, checked matmul
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Math_Interchange" end time: Oct 29 19:31 UTC
+"SDK_Math_Interchange" time elapsed: 00:00:00
+----------------------------------------------------------
+
+45/49 Testing: FP_Foundation_Reference
+45/49 Test: FP_Foundation_Reference
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/floating_foundation.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"FP_Foundation_Reference" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS 54022 exact floating-foundation checks: all 40 widths, small exhaustive domains, fused/sticky ties, binary64 bits and ABI transactions
+<end of output>
+Test time =   3.73 sec
+----------------------------------------------------------
+Test Passed.
+"FP_Foundation_Reference" end time: Oct 29 19:31 UTC
+"FP_Foundation_Reference" time elapsed: 00:00:03
+----------------------------------------------------------
+
+46/49 Testing: SDK_Integration
+46/49 Test: SDK_Integration
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/integration.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Integration" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS in-process CPU compiler SDK, transactions, exports, scalar calls, math, ownership and concurrency
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Integration" end time: Oct 29 19:31 UTC
+"SDK_Integration" time elapsed: 00:00:00
+----------------------------------------------------------
+
+47/49 Testing: SDK_Vulkan_Offline
+47/49 Test: SDK_Vulkan_Offline
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/vulkan.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Vulkan_Offline" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+PASS uint32-only program-dependent SPIR-V and reference cases / emission only
+<end of output>
+Test time =   1.18 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Vulkan_Offline" end time: Oct 29 19:31 UTC
+"SDK_Vulkan_Offline" time elapsed: 00:00:01
+----------------------------------------------------------
+
+48/49 Testing: SDK_Vulkan_Execution
+48/49 Test: SDK_Vulkan_Execution
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/vulkan.py" "/home/user/Trium-XBT-compiler/build/sdk/libtrium_sdk.so.1.1.0" "--execute"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Vulkan_Execution" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+Vulkan devices: [{'index': 0, 'name': 'SwiftShader Device (Subzero)', 'vendor_id': 6880, 'device_uuid': '53776966745368616465725555494400', 'device_id': 49374, 'driver_version': 20971520, 'api_version': 4206592, 'shader_int64': False, 'device_type': 4, 'software': True}]
+PASS cached Vulkan pipeline/buffer growth/shrink, status reset, concurrency and explicit invalidation
+PASS uint32-only program-dependent SPIR-V and reference cases / real Vulkan API execution (device type reported above)
+<end of output>
+Test time =   3.29 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Vulkan_Execution" end time: Oct 29 19:31 UTC
+"SDK_Vulkan_Execution" time elapsed: 00:00:03
+----------------------------------------------------------
+
+49/49 Testing: SDK_Relocated_Consumers
+49/49 Test: SDK_Relocated_Consumers
+Command: "/home/user/.venv/bin/python3.11" "/home/user/Trium-XBT-compiler/test/SDK/package.py" "/home/user/Trium-XBT-compiler/build/sdk"
+Directory: /home/user/Trium-XBT-compiler/build/sdk
+"SDK_Relocated_Consumers" start time: Oct 29 19:31 UTC
+Output:
+----------------------------------------------------------
+CPU SDK and exact-ratio BTFP input: 0.5
+PASS installed relocated C/C++ SDK+Math consumers without checkout include paths
+<end of output>
+Test time =   1.32 sec
+----------------------------------------------------------
+Test Passed.
+"SDK_Relocated_Consumers" end time: Oct 29 19:31 UTC
+"SDK_Relocated_Consumers" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Oct 29 19:31 UTC

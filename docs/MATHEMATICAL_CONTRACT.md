@@ -3,6 +3,8 @@
 Status: executable specification for the remediated standalone compiler and runtime.
 Last validation: 2026-10-29. See [validation and remaining gates](PHASE1_VALIDATION.md).
 This document separates intended mathematics, implementation restrictions, and proof evidence.
+The later [SDK 1.1 report](SDK_1_1.md) qualifies compiled execution and resource
+reuse without changing these numerical domains or certifying new math operations.
 The versioned stable subset and reusable library APIs are specified in
 [CORE_SEMANTICS_V0_1.md](CORE_SEMANTICS_V0_1.md).
 It is not a claim that the entire compiler is formally verified or production-certified.
@@ -129,24 +131,29 @@ For nonzero exact-normalization inputs, `3^(1-W)` is a conservative relative
 rounding-error envelope, checked separately in the independent reference suite.
 This is not a universal formal proof of the entire C++ numeric implementation.
 
-Addition/FMA have finite, checked signed-i128 alignment capacity; overly wide
-alignments raise an error instead of wrapping. **FMA no longer pre-rounds a small
-addend:** accepted nonzero alignment paths retain the exact product plus addend
-before final rounding, and excessive alignments are explicitly rejected. For
-product exponent difference `d>=0`, capacity is `d<=max(0,78-2W)`; for `d<0`,
-`-d<=78-W`. Zero-product/addend cases bypass unnecessary alignment. Square-root
-scaling still requires `W+S<=81`; W=40 sqrt is explicitly rejected. Capacity errors
-can occur even when arbitrary-precision evaluation could represent the answer.
+Addition/FMA retain an exact checked i128 fast path and use allocation-free
+512-bit scratch when close alignment requires it. For exponent gaps >160,
+coefficient/spacing bounds justify a signed sticky tail that affects exact ties
+only. Products are not prematurely rounded or range-checked in FMA. All widths
+1..40 are supported, without the former alignment-capacity rejections.
+Square root uses adaptive integer scaling with `N<9L^2` and exact squared-midpoint
+comparisons; W=40 is supported. See
+[FLOATING_POINT_FOUNDATION.md](FLOATING_POINT_FOUNDATION.md) for the profile,
+reference, bounds and actual execution evidence. This is not an arbitrary-width
+or arbitrary-precision public arithmetic type.
 
 `test/numeric_reference.py` compares exact Fraction distances across neighboring
-binades, independently of the C++ algorithm; it covers 15,072 rational/BTFP cases.
+binades, independently of the C++ algorithm; it covers 15,372 rational/BTFP cases.
 The C++ BTFP32 regression also searches candidate binades by exact distance instead
 of treating the old sequential normalizer as a mathematical oracle.
 
 Odd-power integer division has no exact half ties for integer numerators. That
 fact is not a distribution-independent statistical zero-bias theorem.
-BTFP-to/from-binary64 conversion remains approximate; finite subnormal imports are
-supported. Nonfinite imports and invalid sqrt/division domains raise errors.
+Binary64 import decodes the exact IEEE value and performs one nearest ternary
+rounding. Export correctly rounds the exact ternary value to binary64 ties-to-even,
+including subnormals, infinity on overflow and signed underflow zero. Conversion
+is generally not lossless: the target representation still rounds. Nonfinite
+imports and invalid sqrt/division domains raise errors.
 Transcendental/Householder routines remain approximations. `.bt float` remains
 ordinary binary64 and does **not** call these ternary library operations.
 

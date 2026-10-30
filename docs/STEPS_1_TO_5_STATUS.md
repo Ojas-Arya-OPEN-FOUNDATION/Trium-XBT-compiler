@@ -1,5 +1,8 @@
 # Steps 1–5: implementation and validation status
 
+> Later SDK/math/Vulkan delivery: [R1_R2_DELIVERY.md](R1_R2_DELIVERY.md).
+> Counts below remain the historical Steps 1–5 validation, not the new SDK suite.
+
 Date: **2026-10-29**. Branch: `arena/f3c30e8e-trium-xbt-compiler`.
 README is unchanged. This report supersedes the earlier foundation-pass status,
 not its historical measurements.

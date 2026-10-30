@@ -1,0 +1,107 @@
+Test project /home/user/Trium-XBT-compiler/build/sdk
+      Start  1: Layer1_Unit_Core
+ 1/49 Test  #1: Layer1_Unit_Core .................   Passed    0.02 sec
+      Start  2: Layer1_Unit_Dense
+ 2/49 Test  #2: Layer1_Unit_Dense ................   Passed    0.00 sec
+      Start  3: Layer1_Unit_Memory
+ 3/49 Test  #3: Layer1_Unit_Memory ...............   Passed    0.00 sec
+      Start  4: Layer1_Unit_AST
+ 4/49 Test  #4: Layer1_Unit_AST ..................   Passed    0.00 sec
+      Start  5: Layer1_Unit_MLIR
+ 5/49 Test  #5: Layer1_Unit_MLIR .................   Passed    0.00 sec
+      Start  6: Layer1_Unit_FP_Sparse
+ 6/49 Test  #6: Layer1_Unit_FP_Sparse ............   Passed    0.01 sec
+      Start  7: Layer1_Unit_LibBT
+ 7/49 Test  #7: Layer1_Unit_LibBT ................   Passed    0.00 sec
+      Start  8: Layer1_Unit_BT_Opt
+ 8/49 Test  #8: Layer1_Unit_BT_Opt ...............   Passed    0.00 sec
+      Start  9: Layer1_Unit_Frontend_FP_Sparse
+ 9/49 Test  #9: Layer1_Unit_Frontend_FP_Sparse ...   Passed    0.53 sec
+      Start 10: Layer1_Unit_C_ABI_FFI
+10/49 Test #10: Layer1_Unit_C_ABI_FFI ............   Passed    0.00 sec
+      Start 11: Layer1_Unit_BigInt_Symplectic
+11/49 Test #11: Layer1_Unit_BigInt_Symplectic ....   Passed    0.37 sec
+      Start 12: Layer1_Unit_XBT_HW
+12/49 Test #12: Layer1_Unit_XBT_HW ...............   Passed    0.00 sec
+      Start 13: Layer2_Regression
+13/49 Test #13: Layer2_Regression ................   Passed    0.05 sec
+      Start 14: Layer3_WholeProgram
+14/49 Test #14: Layer3_WholeProgram ..............   Passed    0.03 sec
+      Start 15: Layer5_CodeGen
+15/49 Test #15: Layer5_CodeGen ...................   Passed    0.14 sec
+      Start 16: Layer6_Dialect
+16/49 Test #16: Layer6_Dialect ...................   Passed    0.06 sec
+      Start 17: Layer7_Sema
+17/49 Test #17: Layer7_Sema ......................   Passed    0.04 sec
+      Start 18: Core_Math_IR
+18/49 Test #18: Core_Math_IR .....................   Passed    0.00 sec
+      Start 19: Core_Math_Reference
+19/49 Test #19: Core_Math_Reference ..............   Passed    0.06 sec
+      Start 20: Core_Lowering_Optimizer
+20/49 Test #20: Core_Lowering_Optimizer ..........   Passed    0.01 sec
+      Start 21: Core_Profile_Contract
+21/49 Test #21: Core_Profile_Contract ............   Passed    0.02 sec
+      Start 22: Core_Backend_Regression
+22/49 Test #22: Core_Backend_Regression ..........   Passed    1.61 sec
+      Start 23: Core_Optimized_Differential
+23/49 Test #23: Core_Optimized_Differential ......   Passed    0.56 sec
+      Start 24: Core_Optimized_Programs
+24/49 Test #24: Core_Optimized_Programs ..........   Passed    0.43 sec
+      Start 25: CUDA_Driver_Unit
+25/49 Test #25: CUDA_Driver_Unit .................   Passed    0.04 sec
+      Start 26: CUDA_Offline_Validation
+26/49 Test #26: CUDA_Offline_Validation ..........   Passed    1.50 sec
+      Start 27: CUDA_Device_Qualification
+27/49 Test #27: CUDA_Device_Qualification ........***Skipped   0.06 sec
+      Start 28: Core_Program_IR
+28/49 Test #28: Core_Program_IR ..................   Passed    0.00 sec
+      Start 29: FP_Foundation_Unit
+29/49 Test #29: FP_Foundation_Unit ...............   Passed    0.00 sec
+      Start 30: Core_Numeric_Reference
+30/49 Test #30: Core_Numeric_Reference ...........   Passed    0.67 sec
+      Start 31: Core_Rocq
+31/49 Test #31: Core_Rocq ........................***Skipped   0.03 sec
+      Start 32: Phase1_Safety
+32/49 Test #32: Phase1_Safety ....................   Passed    0.03 sec
+      Start 33: Layer1_Unit_Phase3
+33/49 Test #33: Layer1_Unit_Phase3 ...............   Passed    0.00 sec
+      Start 34: Layer1_Unit_Universal
+34/49 Test #34: Layer1_Unit_Universal ............   Passed    0.00 sec
+      Start 35: Phase1_LLVM_Differential
+35/49 Test #35: Phase1_LLVM_Differential .........   Passed    0.59 sec
+      Start 36: Core_Program_Differential
+36/49 Test #36: Core_Program_Differential ........   Passed    0.48 sec
+      Start 37: Phase1_Z3
+37/49 Test #37: Phase1_Z3 ........................   Passed    0.30 sec
+      Start 38: Runtime_ABI_Client
+38/49 Test #38: Runtime_ABI_Client ...............   Passed    0.03 sec
+      Start 39: Phase1_Python_FFI
+39/49 Test #39: Phase1_Python_FFI ................   Passed    0.02 sec
+      Start 40: SDK_Host_Ownership
+40/49 Test #40: SDK_Host_Ownership ...............   Passed    0.11 sec
+      Start 41: SDK_Z3_Models
+41/49 Test #41: SDK_Z3_Models ....................   Passed    0.07 sec
+      Start 42: SDK_Contracts
+42/49 Test #42: SDK_Contracts ....................   Passed    0.06 sec
+      Start 43: SDK_Native
+43/49 Test #43: SDK_Native .......................   Passed    2.00 sec
+      Start 44: SDK_Math_Interchange
+44/49 Test #44: SDK_Math_Interchange .............   Passed    0.06 sec
+      Start 45: FP_Foundation_Reference
+45/49 Test #45: FP_Foundation_Reference ..........   Passed    3.73 sec
+      Start 46: SDK_Integration
+46/49 Test #46: SDK_Integration ..................   Passed    0.11 sec
+      Start 47: SDK_Vulkan_Offline
+47/49 Test #47: SDK_Vulkan_Offline ...............   Passed    1.18 sec
+      Start 48: SDK_Vulkan_Execution
+48/49 Test #48: SDK_Vulkan_Execution .............   Passed    3.29 sec
+      Start 49: SDK_Relocated_Consumers
+49/49 Test #49: SDK_Relocated_Consumers ..........   Passed    1.32 sec
+
+100% tests passed out of 49
+
+Total Test time (real) =  19.64 sec
+
+The following tests did not run:
+	 27 - CUDA_Device_Qualification (Skipped)
+	 31 - Core_Rocq (Skipped)

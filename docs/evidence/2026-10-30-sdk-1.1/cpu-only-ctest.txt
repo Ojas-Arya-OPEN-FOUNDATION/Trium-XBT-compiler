@@ -1,0 +1,15 @@
+Test project /home/user/Trium-XBT-compiler/build/sdk-cpu
+    Start 40: SDK_Host_Ownership
+1/5 Test #40: SDK_Host_Ownership ...............   Passed    0.12 sec
+    Start 41: SDK_Z3_Models
+2/5 Test #41: SDK_Z3_Models ....................   Passed    0.07 sec
+    Start 42: SDK_Contracts
+3/5 Test #42: SDK_Contracts ....................   Passed    0.06 sec
+    Start 43: SDK_Native
+4/5 Test #43: SDK_Native .......................   Passed    2.15 sec
+    Start 46: SDK_Integration
+5/5 Test #46: SDK_Integration ..................   Passed    0.08 sec
+
+100% tests passed out of 5
+
+Total Test time (real) =   2.48 sec

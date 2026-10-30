@@ -4,7 +4,8 @@ Date: 2026-10-29. This is the initial **versioned contract**, not a declaration
 that the entire repository, every matrix extension, or every backend is stable.
 The full mathematical context is in [MATHEMATICAL_CONTRACT.md](MATHEMATICAL_CONTRACT.md).
 Current implementation, reproducible evidence and qualification boundaries:
-[STEPS_1_TO_5_STATUS.md](STEPS_1_TO_5_STATUS.md). The machine-readable operation
+[STEPS_1_TO_5_STATUS.md](STEPS_1_TO_5_STATUS.md). The later SDK/Vulkan work is
+recorded in [R1_R2_DELIVERY.md](R1_R2_DELIVERY.md). The machine-readable operation
 matrix is [core-profile-v0.1.json](../specs/core-profile-v0.1.json).
 
 ## 1. Supported core and error policy

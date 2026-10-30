@@ -247,7 +247,27 @@ Example: with checked bound H, `(H+1)-1` fails, while `H+(1-1)` succeeds. A comp
 cannot silently reassociate the first into the second merely because they are
 algebraically equal over unbounded integers.
 
+### Existing-hardware portability and maturity before the main Stage 6 push
+
+The user's priority is to mature CPU/GPU software execution and application
+integration before making hardware development the main implementation focus.
+Cross-vendor GPU portability, capability-aware optimization, and multi-device
+execution are separate deliverables—not newly completed capabilities. Their
+scope, maturity requirements and acceptance rules are recorded in
+[PORTABILITY_AND_MATURITY.md](PORTABILITY_AND_MATURITY.md).
+
+A detailed, researched implementation proposal now exists in
+[SDK_MATH_GPU_IMPLEMENTATION_PLAN.md](SDK_MATH_GPU_IMPLEMENTATION_PLAN.md), with
+primary-source findings in [SDK_GPU_RESEARCH.md](SDK_GPU_RESEARCH.md). **The user approved R1/R2 implementation.** Current executable SDK, Vulkan
+software-execution evidence and remaining work are in
+[R1_R2_DELIVERY.md](R1_R2_DELIVERY.md); physical GPU qualification remains isolated.
+
 ### Stage 6 — Extend to native ternary/mixed-radix targets
+
+**Standing distinction:** keep and develop this as a separate long-term hardware
+track, including RTL/co-simulation/synthesis and eventual physical qualification.
+It is not a prerequisite for useful existing-CPU/GPU software, and portable GPU
+execution does not establish hardware-synthesis readiness.
 
 **Deliverable:** a precise executable target specification, simulator and backend
 mapping, followed by physical-device qualification when suitable hardware exists.

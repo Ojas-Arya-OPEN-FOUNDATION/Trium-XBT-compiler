@@ -1,0 +1,135 @@
+{
+  "milestone_local_date": "2026-10-30",
+  "local_timezone": "Asia/Calcutta",
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "machine": "x86_64",
+  "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+  "git_base": {
+    "exit_code": 0,
+    "output": "a7e456e7ae46878437ef2ccc4bc9ba5532840bbe"
+  },
+  "branch": {
+    "exit_code": 0,
+    "output": "arena/f3c30e8e-trium-xbt-compiler"
+  },
+  "working_tree": "uncommitted cumulative implementation; hashes below identify this SDK snapshot",
+  "packages": {
+    "cmake": "4.4.4",
+    "ninja": "1.13.2",
+    "z3-solver": "5.3.2.0",
+    "llvmlite": "0.50.0",
+    "numpy": "2.4.6",
+    "ziglang": "0.17.0"
+  },
+  "host_compiler": {
+    "exit_code": 0,
+    "output": "c++ (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+  },
+  "native_compiler": {
+    "exit_code": 0,
+    "output": "clang version 22.1.8\nTarget: x86_64-unknown-linux5.10.0-gnu2.36.0\nThread model: posix\nInstalledDir: /home/user/.venv/lib/python3.11/site-packages/ziglang"
+  },
+  "native_driver_note": "Local executable is a Zig 0.17 Clang adapter; it translates a RISC-V target spelling/removes redundant -x ir and -c with -S for legacy CLI tests. SDK native compilation does not use those special-case arguments. Generated native shared objects are not ASan/UBSan instrumented.",
+  "sdk_info": {
+    "schema": 1,
+    "abi_major": 1,
+    "api_major": 1,
+    "api_minor": 1,
+    "finite_float_profile": 1,
+    "native_profile": "native-v1-loopfree",
+    "native_compiler_candidate": "/home/user/.venv/bin/clang",
+    "vulkan_built": true,
+    "sizes": {
+      "options": 40,
+      "metrics": 96,
+      "value": 24,
+      "float_value": 24
+    },
+    "source_cache_entries": 8,
+    "source_cache_bytes": 16777216,
+    "native_cache_entries_per_module": 16,
+    "vulkan_cache_entries_per_module": 4
+  },
+  "context_cache_initial": {
+    "schema": 1,
+    "generation": 1,
+    "source_entries": 0,
+    "source_bytes": 0,
+    "source_hits": 0,
+    "source_misses": 0,
+    "native_hits": 0,
+    "native_builds": 0,
+    "vulkan_hits": 0,
+    "vulkan_builds": 0,
+    "native_compiler_captured": "/home/user/.venv/bin/clang"
+  },
+  "release_library_sha256": "0ec6648c4bb79dec69b3dddc60aec426deaea34cb97e583eb546660bc213d731",
+  "asan_library_sha256": "c15617f421585ae81cb9afdc7028bde1824fb0dada3d17e23aa75c7ab67f4ed4",
+  "cpu_only_library_sha256": "db5270f9bdb1d5418163ca4c6723155d2d1bf6eab2f2483f4354058e628f2361",
+  "shader_tools_lock": {
+    "sdk_tag": "vulkan-sdk-1.4.341.0",
+    "repositories": {
+      "Vulkan-Headers": "b5c8f996196ba4aa6d8f97e52b5d3b6e70f7e4e2",
+      "SPIRV-Headers": "04f10f650d514df88b76d25e83db360142c7b174",
+      "SPIRV-Tools": "fbe4f3ad913c44fe8700545f8ffe35d1382b7093",
+      "glslang": "f0bd0257c308b9a26562c1a30c4748a0219cc951"
+    }
+  },
+  "swiftshader_commit": "cddb5c91b23ff70a1f607ea31610aa0d7f4b5ad5",
+  "software_vulkan": "SwiftShader Subzero; directly loaded libvk_swiftshader.so, not physical GPU/system-loader qualification",
+  "environment": {
+    "BT_SDK_VULKAN_LIBRARY": "/home/user/Trium-XBT-compiler/build/gpu-tools/swiftshader-subzero/Linux/libvk_swiftshader.so",
+    "BT_GLSLANG": "/home/user/Trium-XBT-compiler/build/gpu-tools/glslang-build/StandAlone/glslang",
+    "BT_SPIRV_VAL": "/home/user/Trium-XBT-compiler/build/gpu-tools/spirv-build/tools/spirv-val"
+  },
+  "rust_toolchain": {
+    "rustc": null,
+    "cargo": null,
+    "qualified": false
+  },
+  "remote_ci_performed": false,
+  "physical_gpu_performed": false,
+  "source_sha256": {
+    "CMakeLists.txt": "a761c82345309624d7abe9ede4985eee35a035e15934072cda58633f396efca7",
+    "bt_process.hpp": "2173006661e28166fd274337171ee71c6f916fc965e0a49c86e16da93a093d64",
+    "lib/SDK/sdk.cpp": "fee93a9846975a9371c1e96076bf02a319f9583d673e15387b00cd6aa91e90ad",
+    "lib/SDK/NativeRuntime.cpp": "bbf96ca006c0fb481f15b259a15b5490dc17f27710d80a76a05a17d72af9aa28",
+    "lib/SDK/NativeRuntime.hpp": "e330d6127a3e9e7cd02196665d562964c36a72f4b0e3b0ab6c2491527701be4a",
+    "lib/SDK/VulkanRuntime.cpp": "7f95b3939de7d9e7c48479e8396c70825275afc1030f5d4a5e6e8c6f21240b14",
+    "lib/SDK/VulkanRuntime.hpp": "77f2f57eaad85b48210b2f7bd21e0115a62867876772ccd0239b3a32c625b302",
+    "include/Ternary/SDK/sdk.h": "90da4cc92be2b81aad71a9473de8fb5c338774aa8243e44fdc1a98dce283a598",
+    "include/Ternary/SDK/SDK.hpp": "f1ea5c1106dc1a92a24513571938b6d60a6533141252a48f9bda6a694ff21426",
+    "include/Ternary/IR/Execute.hpp": "818f441cd61a2ade01090008e8f441c39d963b4ca473541a1e97f8ac16e8386b",
+    "ffi/python/trium/__init__.py": "59de4d19df14b7b0b8889826f903c1bd860f0f47d5f4f24d82f5c0e70d895783",
+    "ffi/rust/src/sdk.rs": "e11f152bf0d70899a864a4400b5813316f75b6c196e91683f88b333e453ea37f",
+    "specs/core-profile-v0.1.json": "11cd181f527b0fb1e32ce0755079d4245b86cad7c8100a78af953ae296ce1a3e",
+    "test/profile_contract.py": "d39531235f48ef989d93c1be25a0bbba9eec74fa91edf53e5f606b0717783321",
+    "test/SDK/host.cpp": "6e724e8a17b519569e197c4d590143976489db33bdffce3eaac48c20569d5b1c",
+    "test/SDK/contracts.py": "564e6576df472826163205fbc046a7740e1285f8c110199da931f8d6c9b4e289",
+    "test/SDK/native.py": "4c47cbd5d09a9fd2db75dcd7ea8151bc96d0d97b9957477063d9e4a1d5ae9b06",
+    "test/SDK/integration.py": "96ee18476ac4a61c087c4d74170a7f54da2d3bcd1b1dba71916ba590577ec389",
+    "test/SDK/vulkan.py": "5af21583d5dd41c90a67f445d3d293b9ea21e7e96e6f7ce45ecafee1a0f94a20",
+    "test/SDK/package.py": "d4282311ca68bee9e9d3f8d895a223aefac8ecf9ab3db21903495ae6df829031",
+    "examples/sdk/CMakeLists.txt": "f014389ade2e3b27eb0beac2d67488b19d6e8278e43059b2cf682f1ca7d54920",
+    "tools/benchmark_portable_gpu.py": "454d879e62b557c07496ca1827942ad17d4f6358a4b39d9b2d62a7ea04d6b1f7",
+    "verify_z3_sdk_contracts.py": "aa1b8b611d0fb042ef9933463f291bb82c08f14e67ee3597470d593f51a0af83"
+  },
+  "proof_scripts": [
+    "verify_z3_bigint_divmod.py",
+    "verify_z3_core_lowering.py",
+    "verify_z3_dense_algebra.py",
+    "verify_z3_floating_foundation.py",
+    "verify_z3_fp_fma.py",
+    "verify_z3_kogge_stone.py",
+    "verify_z3_numeric_capacity.py",
+    "verify_z3_phase1.py",
+    "verify_z3_round_div.py",
+    "verify_z3_sdk_contracts.py",
+    "verify_z3_sdk_words.py",
+    "verify_z3_swar_bct.py",
+    "verify_z3_ternary.py"
+  ],
+  "wheel": {
+    "trium_xbt_sdk-0.2.0.dev0-py3-none-any.whl": "7d17b56400ff0c2226ca99accc42cc9de957ee2644306de819b937d7cb412797"
+  }
+}

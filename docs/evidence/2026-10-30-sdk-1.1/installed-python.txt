@@ -1,0 +1,1 @@
+PASS installed wheel isolated import, API1.1 discovery, native scalar/map, cache reuse/invalidation and finite BTFP

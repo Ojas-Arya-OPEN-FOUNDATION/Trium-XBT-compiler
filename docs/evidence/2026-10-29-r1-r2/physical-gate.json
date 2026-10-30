@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-29T14:18:30.898366+00:00",
+  "device_results": [],
+  "physical_execution": "not_performed",
+  "policy": "physical devices only unless --allow-software; software success does not qualify physical GPUs",
+  "enumerated_devices": [
+    {
+      "index": 0,
+      "name": "SwiftShader Device (Subzero)",
+      "vendor_id": 6880,
+      "device_uuid": "53776966745368616465725555494400",
+      "device_id": 49374,
+      "driver_version": 20971520,
+      "api_version": 4206592,
+      "shader_int64": false,
+      "device_type": 4,
+      "software": true
+    }
+  ],
+  "status": "no_matching_device",
+  "exit_code": 77
+}
