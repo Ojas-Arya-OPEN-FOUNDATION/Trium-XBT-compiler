@@ -10,7 +10,8 @@
  *    - Exponent E: Signed balanced ternary integer exponent
  * 2. Inherent Sign: No sign bit. Positive, zero, or negative is determined directly by the leading trit.
  * 3. Unique Canonical Zero: M = 0 and E = 0. No +/-0 ambiguity (eliminates IEEE-754 sign-anomaly).
- * 4. Zero-Bias Truncation: Truncating fractional trits achieves exact 0 mean error on [-0.5, +0.5].
+ * 4. Rounding: nearest representable normalized value, halfway ties away from zero.
+ *    Symmetry alone is not a distribution-independent zero-bias guarantee.
  * 5. Arithmetic: High-precision add, sub, mul, div, to_double, from_double.
  */
 
@@ -18,6 +19,8 @@
 #define TERNARY_FP_HPP
 
 #include "ternary_core.hpp"
+#include "ternary_wide.hpp"
+#include <bit>
 
 #include <cstdint>
 #include <cstddef>
@@ -621,6 +624,52 @@ private:
         if (e < INT32_MIN || e > INT32_MAX) throw std::overflow_error("BTFP exponent overflow");
         return static_cast<int32_t>(e);
     }
+    // Round an exact positive ratio times 3^exp. Work in a binade where the
+    // ratio is in [L,3L); the top gap is between H and 3L=H+2, not H+1.
+    // sticky is an infinitesimal MAGNITUDE perturbation, used only after the
+    // remote-term separation bound in sum_scaled. It affects exact ties only.
+    template<size_t N> static constexpr BTFP round_ratio(fp_detail::Wide<N> n,
+            fp_detail::Wide<N> d,int64_t exp,bool negative,int sticky=0) {
+        if(d.zero())throw std::domain_error("BTFP division by zero");
+        if(n.zero())return BTFP();
+        const auto low=uint64_t(min_norm_mantissa()),high=uint64_t(max_mantissa());
+        while(n.compare(d.times(low))<0){n=n.times(3);--exp;}
+        while(n.compare(d.times(high+2))>=0){d=d.times(3);++exp;}
+        auto q=fp_detail::quotient(n,d,high);
+        const bool gap=q==high;
+        const auto midpoint=gap?2*high+2:2*q+1;
+        auto comparison=n.times(2).compare(d.times(midpoint));
+        bool up=comparison>0 || (comparison==0 && sticky>=0);
+        int64_t m;
+        if(gap && up){m=int64_t(low);++exp;}else m=int64_t(q+uint64_t(up));
+        return normalize_128(negative?-m:m,exp);
+    }
+    static constexpr BTFP sum_scaled(__int128 a,int64_t ea,__int128 b,int64_t eb) {
+        using U=unsigned __int128;using W=fp_detail::Wide<8>;
+        if(!a)return normalize_128(b,eb);if(!b)return normalize_128(a,ea);
+        if(ea<eb){auto t=a;a=b;b=t;auto e=ea;ea=eb;eb=e;}
+        auto magnitude=[](__int128 x){return x<0?U(0)-static_cast<U>(x):static_cast<U>(x);};
+        W x(magnitude(a)),y(magnitude(b));auto delta=ea-eb;
+        // Coefficients have <3^80 magnitude and W<=40. Beyond 160 trits,
+        // the remote term is smaller than every nonzero distance of the
+        // dominant exact value from a rounding midpoint. Preserve its sign
+        // to resolve midpoint ties rather than silently discarding it.
+        if(delta>160)return round_ratio(x,W(1),ea,a<0,(a<0)==(b<0)?1:-1);
+        // Retain the existing inexpensive i128 route whenever an exact,
+        // checked alignment fits. Wide scratch is a fallback, not mandatory.
+        if(delta<=80){
+            constexpr U limit=(U(1)<<127)-1;U aligned=magnitude(a),tail=magnitude(b);bool fits=true;
+            for(int64_t i=0;i<delta;++i){if(aligned>limit/3){fits=false;break;}aligned*=3;}
+            if(fits && ((a<0)!=(b<0) || aligned<=limit-tail)){
+                auto signed_aligned=a<0?-static_cast<__int128>(aligned):static_cast<__int128>(aligned);
+                return normalize_128(signed_aligned+b,eb);
+            }
+        }
+        for(int64_t i=0;i<delta;++i)x=x.times(3);
+        if((a<0)==(b<0))return round_ratio(x.plus(y),W(1),eb,a<0);
+        auto order=x.compare(y);if(!order)return BTFP();
+        return order>0?round_ratio(x.minus(y),W(1),eb,a<0):round_ratio(y.minus(x),W(1),eb,b<0);
+    }
 public:
     // --------------------------------------------------------------------------
     // Constructors
@@ -729,7 +778,7 @@ public:
     }
 
     // --------------------------------------------------------------------------
-    // Normalization & Zero-Bias Truncation Rounding
+    // Normalization and nearest-value rounding
     // --------------------------------------------------------------------------
 
     /** Round an exact integer-scaled value to the nearest normalized value.
@@ -791,11 +840,33 @@ public:
      * @brief Converts BTFP to standard IEEE-754 double precision float.
      */
     double to_double() const noexcept {
-        if (m_mantissa == 0) return 0.0;
-        // Two stages retain finite subnormals that pow(3,E) alone would flush.
-        const int32_t first = m_exponent / 2;
-        return (static_cast<double>(m_mantissa) * std::pow(3.0, first)) *
-               std::pow(3.0, m_exponent - first);
+        static_assert(sizeof(double)==8 && std::numeric_limits<double>::is_iec559);
+        using W=fp_detail::Wide<20>;using U=unsigned __int128;
+        const uint64_t sign=m_mantissa<0?uint64_t(1)<<63:0;
+        auto pack=[&](uint64_t bits){return std::bit_cast<double>(sign|bits);};
+        if(!m_mantissa)return 0.0;
+        // Conservative bounds for every W<=40. Avoid enormous allocations or
+        // exponent-sized work. Scratch needs at most 1280 bits below.
+        if(m_exponent>646)return pack(uint64_t(0x7ff)<<52);
+        if(m_exponent<-800)return pack(0);
+        W n(m_mantissa<0?U(0)-static_cast<U>(static_cast<__int128>(m_mantissa)):U(m_mantissa)),d(1);
+        if(m_exponent>=0){for(int i=0;i<m_exponent;++i)n=n.times(3);}
+        else {for(int i=0;i<-m_exponent;++i)d=d.times(3);}
+        int k=int(n.bits())-int(d.bits());
+        if(k>=0){if(n.compare(d.shifted(unsigned(k)))<0)--k;}
+        else if(n.shifted(unsigned(-k)).compare(d)<0)--k;
+        if(k>1023)return pack(uint64_t(0x7ff)<<52);
+        if(k<-1075)return pack(0);
+        const bool subnormal=k<-1022;
+        int shift=subnormal?1074:52-k;
+        if(shift>=0)n=n.shifted(unsigned(shift));else d=d.shifted(unsigned(-shift));
+        auto q=fp_detail::quotient(n,d,(uint64_t(1)<<53)-1);
+        auto comparison=n.times(2).compare(d.times(2*q+1));
+        if(comparison>0 || (comparison==0 && (q&1)))++q; // binary ties-to-even
+        if(subnormal)return pack(q); // includes rounding to minimum normal
+        if(q==(uint64_t(1)<<53)){q>>=1;++k;}
+        if(k>1023)return pack(uint64_t(0x7ff)<<52);
+        return pack((uint64_t(k+1023)<<52)|(q-(uint64_t(1)<<52)));
     }
 
     /**
@@ -809,27 +880,17 @@ public:
      * @brief Constructs a BTFP instance from a standard IEEE-754 double.
      */
     static BTFP from_double(double val) {
-        if (!std::isfinite(val)) {
-            throw std::domain_error("BTFP::from_double: NaN or Inf cannot be represented in BTFP");
-        }
-        if (val == 0.0) {
-            return BTFP(0, 0);
-        }
-
-        // Keep the conversion significand below int64 capacity even for W=40;
-        // normalize() fills remaining mantissa digits afterwards.
-        double log3_val = std::log(std::abs(val)) / std::log(3.0);
-        int est_e = static_cast<int>(std::floor(log3_val - (MantissaTrits == 40 ? 38.0 : MantissaTrits - 0.5)));
-
-        // Scale safely in two stages when |est_e| > 500 so 3^(-est_e) never overflows IEEE-754 double (~3^646)
-        int e1 = -est_e / 2;
-        int e2 = -est_e - e1;
-        double scaled = (val * std::pow(3.0, e1)) * std::pow(3.0, e2);
-        int64_t m = std::llround(scaled);
-
-        BTFP res(m, est_e);
-        res.normalize();
-        return res;
+        static_assert(sizeof(double)==8 && std::numeric_limits<double>::is_iec559);
+        const auto bits=std::bit_cast<uint64_t>(val);
+        const auto field=(bits>>52)&0x7ff;
+        if(field==0x7ff)throw std::domain_error("BTFP::from_double: nonfinite input");
+        uint64_t significand=bits&((uint64_t(1)<<52)-1);
+        if(field)significand|=uint64_t(1)<<52;
+        if(!significand)return BTFP();
+        int shift=field?int(field)-1023-52:-1074;
+        fp_detail::Wide<20> n(significand),d(1);
+        if(shift>=0)n=n.shifted(unsigned(shift));else d=d.shifted(unsigned(-shift));
+        return round_ratio(n,d,0,(bits>>63)!=0);
     }
 
     // --------------------------------------------------------------------------
@@ -864,39 +925,10 @@ public:
     }
 
     /**
-     * @brief Balanced ternary addition: aligns exponents and accumulates with 0-bias rounding.
+     * @brief Balanced ternary addition: exact alignment followed by nearest-value rounding.
      */
     BTFP add(const BTFP& other) const {
-        if (is_zero()) return other;
-        if (other.is_zero()) return *this;
-
-        if (m_exponent >= other.m_exponent) {
-            int64_t diff = static_cast<int64_t>(m_exponent) - other.m_exponent;
-            if (diff > MantissaTrits + 4) return *this;
-            if (diff > 78 - MantissaTrits) throw std::overflow_error("BTFP alignment exceeds exact i128 capacity");
-            if constexpr (MantissaTrits <= 20) {
-                if (diff <= 18) {
-                    int64_t m_sum = m_mantissa * fp_detail::POW3_64[diff] + other.m_mantissa;
-                    return BTFP(m_sum, other.m_exponent);
-                }
-            }
-            __int128_t m_a = static_cast<__int128_t>(m_mantissa) * fp_detail::pow3_128(diff);
-            __int128_t m_sum = m_a + other.m_mantissa;
-            return normalize_128(m_sum, other.m_exponent);
-        } else {
-            int64_t diff = static_cast<int64_t>(other.m_exponent) - m_exponent;
-            if (diff > MantissaTrits + 4) return other;
-            if (diff > 78 - MantissaTrits) throw std::overflow_error("BTFP alignment exceeds exact i128 capacity");
-            if constexpr (MantissaTrits <= 20) {
-                if (diff <= 18) {
-                    int64_t m_sum = other.m_mantissa * fp_detail::POW3_64[diff] + m_mantissa;
-                    return BTFP(m_sum, m_exponent);
-                }
-            }
-            __int128_t m_b = static_cast<__int128_t>(other.m_mantissa) * fp_detail::pow3_128(diff);
-            __int128_t m_sum = m_b + m_mantissa;
-            return normalize_128(m_sum, m_exponent);
-        }
+        return sum_scaled(m_mantissa,m_exponent,other.m_mantissa,other.m_exponent);
     }
 
     /**
@@ -914,96 +946,33 @@ public:
                              static_cast<int64_t>(m_exponent) + other.m_exponent);
     }
 
-    /**
-     * @brief Single-rounding Fused Multiply-Add: computes (a * b + c) in 128-bit arithmetic
-     * and performs a single unbiased normalize_128 rounding.
-     */
-    static constexpr BTFP fma(const BTFP& a, const BTFP& b, const BTFP& c) {
-        if (a.is_zero() || b.is_zero()) return c;
-
-        __int128_t P = static_cast<__int128_t>(a.m_mantissa) * static_cast<__int128_t>(b.m_mantissa);
-        int64_t e_p = static_cast<int64_t>(a.m_exponent) + b.m_exponent;
-
-        if (c.is_zero()) {
-            return normalize_128(P, e_p);
-        }
-
-        int64_t delta = e_p - c.m_exponent;
-        if (delta == 0) {
-            return normalize_128(P + static_cast<__int128_t>(c.m_mantissa), e_p);
-        } else if (delta > 0) {
-            constexpr int max_exact_shift = (78 - 2 * MantissaTrits > 0) ? (78 - 2 * MantissaTrits) : 0;
-            if (delta <= max_exact_shift) {
-                __int128_t S = P * fp_detail::pow3_128(delta) + static_cast<__int128_t>(c.m_mantissa);
-                return normalize_128(S, c.m_exponent);
-            } else {
-                throw std::overflow_error("BTFP FMA alignment exceeds exact i128 capacity");
-            }
-        } else {
-            int64_t d = -delta; // e_c - e_p > 0
-            if (d > 2 * MantissaTrits + 2) {
-                return c;
-            }
-            constexpr int max_c_shift = 78 - MantissaTrits;
-            if (d <= max_c_shift) {
-                __int128_t S = static_cast<__int128_t>(c.m_mantissa) * fp_detail::pow3_128(d) + P;
-                return normalize_128(S, e_p);
-            } else {
-                throw std::overflow_error("BTFP FMA alignment needs a wider exact accumulator");
-            }
-        }
+    /** Exact product-plus-addend with one final rounding, including remote
+     * signed sticky tails. No i128 alignment rejection for valid operands. */
+    static constexpr BTFP fma(const BTFP& a,const BTFP& b,const BTFP& c) {
+        if(a.is_zero() || b.is_zero())return c;
+        return sum_scaled(static_cast<__int128>(a.m_mantissa)*b.m_mantissa,
+                          static_cast<int64_t>(a.m_exponent)+b.m_exponent,
+                          c.m_mantissa,c.m_exponent);
     }
 
-    /**
-     * @brief Balanced ternary square root with parity-aligned 128-bit integer square root
-     * and exact midpoint rounding (N - r^2 > r => r + 1).
-     */
+    /** Exact square-root midpoint comparisons. Adaptive scaling bounds N by
+     * 9*L^2; even W=40 needs less than signed 128-bit capacity for 4*N. */
     BTFP sqrt() const {
-        if (m_mantissa < 0) {
-            throw std::domain_error("BTFP::sqrt: negative argument");
-        }
-        if (m_mantissa == 0) {
-            return BTFP(0, 0);
-        }
-
-        int S0 = (MantissaTrits <= 36) ? (MantissaTrits + 4) : (MantissaTrits + 2);
-        int S = (((static_cast<int64_t>(m_exponent) - S0) % 2) != 0) ? (S0 + 1) : S0;
-        if (MantissaTrits + S > 81)
-            throw std::overflow_error("BTFP sqrt needs a wider exact accumulator");
-        int32_t e_out = checked_exponent((static_cast<int64_t>(m_exponent) - S) / 2);
-
-        unsigned __int128 N = static_cast<unsigned __int128>(m_mantissa) *
-                              static_cast<unsigned __int128>(fp_detail::pow3_128(S));
-
-        // Seed 128-bit Heron / Newton-Raphson iteration from double sqrt
-        double approx = std::sqrt(static_cast<double>(N));
-        unsigned __int128 r = static_cast<unsigned __int128>(approx);
-        if (r == 0) r = 1;
-
-        for (int i = 0; i < 10; ++i) {
-            unsigned __int128 next_r = (r + N / r) >> 1;
-            if (next_r == r) break;
-            r = next_r;
-        }
-        while (r > N / r) {
-            --r;
-        }
-        while ((r + 1) <= N / (r + 1)) {
-            ++r;
-        }
-
-        using U = unsigned __int128;
-        U scale=1;
-        while (r/scale > static_cast<U>(max_mantissa())) { scale*=3; ++e_out; }
-        U q=r/scale;
-        const U midpoint_floor=q*scale+scale/2;
-        constexpr U limit=~U(0);
-        if (midpoint_floor <= limit/midpoint_floor) {
-            U square=midpoint_floor*midpoint_floor;
-            if (square <= limit-midpoint_floor-1 && N >= square+midpoint_floor+1) ++q;
-        }
-        q=std::clamp(q,static_cast<U>(min_norm_mantissa()),static_cast<U>(max_mantissa()));
-        return BTFP(static_cast<int64_t>(q),e_out);
+        if(m_mantissa<0)throw std::domain_error("BTFP::sqrt: negative argument");
+        if(!m_mantissa)return BTFP();
+        using U=unsigned __int128;
+        int64_t exponent=m_exponent/2;
+        if(m_exponent<0 && m_exponent%2)--exponent; // floor, not truncation
+        U n=U(m_mantissa)*(int64_t(m_exponent)-2*exponent?3:1);
+        const U low=U(min_norm_mantissa()),high=U(max_mantissa());
+        while(n<low*low){n*=9;--exponent;}
+        uint64_t lo=uint64_t(low),hi=uint64_t(high);
+        while(lo<hi){auto mid=lo+(hi-lo)/2+1;if(U(mid)*mid<=n)lo=mid;else hi=mid-1;}
+        U twice_midpoint=lo==high?2*high+2:2*U(lo)+1;
+        bool up=4*n>=twice_midpoint*twice_midpoint;
+        int64_t m;
+        if(lo==high && up){m=int64_t(low);++exponent;}else m=int64_t(lo+uint64_t(up));
+        return normalize_128(m,exponent);
     }
 
     /**
@@ -1046,24 +1015,14 @@ public:
     /**
      * @brief Balanced ternary division with symmetric nearest-integer rounding.
      */
-    static BTFP from_ratio(int64_t numerator, int64_t denominator, int64_t exponent = 0) {
-        if (!denominator) throw std::domain_error("BTFP division by zero");
-        if (!numerator) return BTFP();
-        if (exponent < static_cast<int64_t>(INT32_MIN)-128 ||
-            exponent > static_cast<int64_t>(INT32_MAX)+128)
+    static BTFP from_ratio(int64_t numerator,int64_t denominator,int64_t exponent=0) {
+        if(!denominator)throw std::domain_error("BTFP division by zero");
+        if(!numerator)return BTFP();
+        if(exponent<int64_t(INT32_MIN)-128 || exponent>int64_t(INT32_MAX)+128)
             throw std::overflow_error("BTFP ratio exponent outside normalization capacity");
-        using U = unsigned __int128;
-        U n = numerator < 0 ? U(0)-static_cast<U>(static_cast<__int128>(numerator)) : numerator;
-        U d = denominator < 0 ? U(0)-static_cast<U>(static_cast<__int128>(denominator)) : denominator;
-        const U top = static_cast<U>(max_mantissa())+1;
-        while (n/d > static_cast<U>(max_mantissa())) { d *= 3; ++exponent; }
-        while (n*3 < top*d) { n *= 3; --exponent; }
-        U q=n/d, r=n%d;
-        if (r*2 >= d) ++q; // explicit halfway ties away from zero
-        q = std::clamp(q,static_cast<U>(min_norm_mantissa()),static_cast<U>(max_mantissa()));
-        int64_t m=static_cast<int64_t>(q);
-        if ((numerator<0)!=(denominator<0)) m=-m;
-        return BTFP(m,checked_exponent(exponent));
+        using U=unsigned __int128;using W=fp_detail::Wide<8>;
+        auto mag=[](int64_t v){return v<0?U(0)-static_cast<U>(static_cast<__int128>(v)):U(v);};
+        return round_ratio(W(mag(numerator)),W(mag(denominator)),exponent,(numerator<0)!=(denominator<0));
     }
     BTFP div(const BTFP& other) const {
         return from_ratio(m_mantissa,other.m_mantissa,
