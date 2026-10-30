@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(SDKConsumer LANGUAGES C CXX)
+find_package(TriumXBT 1.1 CONFIG REQUIRED)
+add_executable(sdk_cpp main.cpp)
+target_link_libraries(sdk_cpp PRIVATE TriumXBT::SDK TriumXBT::Math)
+add_executable(sdk_c main.c)
+target_link_libraries(sdk_c PRIVATE TriumXBT::SDK)

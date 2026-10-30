@@ -49,12 +49,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: cmake -S . -B build/client -DBT_ENABLE_MLIR=OFF -DBT_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build/client --target ternary_clibi -j2
+      - run: cmake --build build/client --target ternary_clibi trium_sdk -j2
       - name: Install shared runtime to system path
         run: |
-          sudo cp build/client/libbt_runtime.so /usr/local/lib/
+          sudo cp build/client/libbt_runtime.so* build/client/libtrium_sdk.so* /usr/local/lib/
           sudo ldconfig
       - name: Run Rust tests
         run: cargo test --manifest-path ffi/rust/Cargo.toml --verbose
         env:
-          RUSTFLAGS: -L native=/usr/local/lib -l dylib=bt_runtime
+          RUSTFLAGS: -L native=/usr/local/lib -l dylib=bt_runtime -l dylib=trium_sdk
+          LD_LIBRARY_PATH: /usr/local/lib:${{ github.workspace }}/build/client
