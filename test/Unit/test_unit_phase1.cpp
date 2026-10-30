@@ -151,7 +151,7 @@ static void extended_boundaries() {
     CHECK(wide / wide == BTFP<40>(1));
     CHECK(BTFP<1>(5) == BTFP<1>(3));
     CHECK(BTFP<1>(6) == BTFP<1>(9));
-    throws_as<std::overflow_error>([&] { wide.sqrt(); });
+    CHECK(wide.sqrt().is_positive()); // W40 is now covered by exact midpoint scaling
     CHECK((BTFP<10, 62>(42)).is_positive());
     throws_as<std::length_error>([] { universal::BlockTernaryTensor<8> bad(SIZE_MAX, 64); });
     universal::BlockTernaryTensor<8> damaged(1, 1);
