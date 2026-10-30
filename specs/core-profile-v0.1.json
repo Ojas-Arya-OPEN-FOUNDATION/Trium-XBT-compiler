@@ -13,7 +13,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Floating",
@@ -21,7 +25,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Packed",
@@ -29,7 +37,11 @@
       "core_execution": false,
       "llvm_cpu": false,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": false,
+      "sdk_native_restriction": null
     },
     {
       "operation": "Parameter",
@@ -37,7 +49,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Add",
@@ -45,7 +61,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Sub",
@@ -53,7 +73,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Mul",
@@ -61,7 +85,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Negate",
@@ -69,7 +97,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "IntToFloat",
@@ -77,7 +109,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Equal",
@@ -85,7 +121,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "NotEqual",
@@ -93,7 +133,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Less",
@@ -101,7 +145,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Spaceship",
@@ -109,7 +157,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "SignSelect",
@@ -117,7 +169,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "IntCast",
@@ -125,7 +181,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Greater",
@@ -133,7 +193,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "LessEqual",
@@ -141,7 +205,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "GreaterEqual",
@@ -149,7 +217,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "DigitAnd",
@@ -157,7 +229,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "DigitOr",
@@ -165,7 +241,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "DigitXor",
@@ -173,7 +253,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Call",
@@ -181,7 +265,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": false,
+      "sdk_native_restriction": null
     },
     {
       "operation": "Print",
@@ -189,7 +277,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": false,
+      "sdk_native_restriction": null
     },
     {
       "operation": "Sqrt",
@@ -197,7 +289,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Abs",
@@ -205,7 +301,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Fma",
@@ -213,7 +313,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": false,
-      "cuda_restriction": null
+      "cuda_restriction": null,
+      "vulkan_map": false,
+      "vulkan_restriction": null,
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     },
     {
       "operation": "Intrinsic",
@@ -221,7 +325,11 @@
       "core_execution": true,
       "llvm_cpu": true,
       "cuda_map": true,
-      "cuda_restriction": "integral operations only, pure loop-free selected function"
+      "cuda_restriction": "integral operations only, pure loop-free selected function",
+      "vulkan_map": true,
+      "vulkan_restriction": "pure integral map-v1; uint32-word ABI; optional feature-gated native64 multiplication",
+      "sdk_native": true,
+      "sdk_native_restriction": "pure scalar function; no source loops/calls/IO; static work admission; host Clang required"
     }
   ],
   "source_support_notes": [
@@ -248,7 +356,9 @@
     "linux_x86_64_cpp_python": "local execution tested; see current validation report",
     "aarch64_riscv": "assembly emission only, not real device execution",
     "cuda_map": "NVPTX compilation and CPU emulation tested; real GPU qualification unavailable locally",
-    "rust": "checked wrapper/CI path; no local Rust compiler execution"
+    "rust": "checked wrapper/CI path; no local Rust compiler execution",
+    "vulkan_map": "SPIR-V validated; actual SwiftShader CPU Vulkan execution passed; native64 emission/feature rejection tested; physical GPU gates isolated",
+    "sdk_native": "actual cached shared-object execution and mixed scalar ABI compared with reference; platform/compiler-specific; no universal target claim"
   },
   "library_profiles": {
     "BalancedInteger<W>": {
@@ -272,5 +382,10 @@
       "conversion_and_transcendentals": "approximate, not certified correctly rounded",
       "contract": "docs/MATHEMATICAL_CONTRACT.md"
     }
-  }
+  },
+  "sdk_abi_major": 1,
+  "vulkan_kernel_abi_major": 1,
+  "sdk_api_version": "1.1",
+  "sdk_native_profile": "native-v1-loopfree",
+  "sdk_btfp_profile": "btfp-finite-v1; specs/ternary-float-v1.json; distinct from legacy BTFP<W,E> and source binary64"
 }
