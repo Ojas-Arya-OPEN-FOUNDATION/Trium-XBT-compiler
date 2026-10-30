@@ -8,6 +8,7 @@
 #include <array>
 #include <algorithm>
 namespace bt::ir {
+struct ResourceLimit:std::runtime_error{using std::runtime_error::runtime_error;};
 using Value=std::variant<std::monostate,int64_t,double>;
 class Executor {
     const Program program;
@@ -17,7 +18,7 @@ class Executor {
     std::unordered_map<std::string,size_t> function_indices;
     using Frame=std::unordered_map<uint32_t,Value>;
     struct Flow { bool returned=false; Value value; };
-    void tick() { if(limit && ++steps>limit) throw std::runtime_error("typed core execution budget exceeded"); }
+    void tick() { if(limit && ++steps>limit) throw ResourceLimit("typed core execution budget exceeded"); }
     static double real(const Value& v) {
         return std::holds_alternative<double>(v)?std::get<double>(v):static_cast<double>(std::get<int64_t>(v));
     }
@@ -47,7 +48,7 @@ class Executor {
         case Op::Call: {
             std::vector<Value> arguments;
             for(auto& x:e.operands) arguments.push_back(evaluate(*x,frame));
-            if(calls>=512) throw std::runtime_error("typed core call depth exceeded");
+            if(calls>=512) throw ResourceLimit("typed core call depth exceeded");
             const auto& f=program.functions.at(function_indices.at(e.name));
             Frame local;
             for(size_t i=0;i<arguments.size();++i) local.emplace(f.parameters[i].symbol,arguments[i]);
@@ -133,6 +134,22 @@ public:
         :program(std::move(p)),output(output),limit(budget) {
         verify_program(program);
         for(size_t i=0;i<program.functions.size();++i) function_indices.emplace(program.functions[i].name,i);
+    }
+    Value invoke(const std::string& name,const std::vector<Value>& args) {
+        auto index=function_indices.find(name);
+        if(index==function_indices.end())throw std::invalid_argument("unknown core export");
+        auto& f=program.functions[index->second];
+        if(args.size()!=f.parameters.size())throw std::invalid_argument("export argument count mismatch");
+        steps=0;calls=1;Frame frame;
+        for(size_t i=0;i<args.size();++i) {
+            auto type=f.parameters[i].type;
+            if(type==Type::Float64) {if(!std::holds_alternative<double>(args[i]))throw std::invalid_argument("expected float64 argument");}
+            else {if(!std::holds_alternative<int64_t>(args[i]))throw std::invalid_argument("expected integral argument");
+                auto n=std::get<int64_t>(args[i]);math::ScalarInteger::check(n);
+                if(type==Type::Trit && (n < -1 || n > 1))throw std::invalid_argument("invalid trit argument");}
+            frame.emplace(f.parameters[i].symbol,args[i]);
+        }
+        return execute(f.body,frame).value;
     }
     int64_t run() {
         steps=0;calls=0;Frame frame;

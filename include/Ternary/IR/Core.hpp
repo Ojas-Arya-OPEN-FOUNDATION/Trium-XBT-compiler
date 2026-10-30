@@ -11,7 +11,7 @@
 #include <string>
 
 // Backend-neutral scalar expression IR schema, version 0.1. This verifier is
-// used by whole-program lowering/execution; LLVM still consumes the checked AST.
+// used by whole-program lowering/execution; the default scalar LLVM emitter consumes this verified core.
 namespace bt::ir {
 enum class Type { Int39, Trit, Positional39, Packed64, Float64, Void };
 enum class Op { Integer, Floating, Packed, Parameter, Add, Sub, Mul, Negate,
