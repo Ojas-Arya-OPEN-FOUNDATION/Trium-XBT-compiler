@@ -226,52 +226,52 @@ constexpr double CORDIC_LN3    = 1.098612288668109691395245231132844143;
 
 // Circular micro-angles theta_i = atan(3^-i) for i = 0..20
 constexpr std::array<double, 21> CORDIC_CIRC_THETA = {
-    7.853981633974482790e-01, // i = 0 (pi / 4)
-    3.217505543966421855e-01, // i = 1
-    1.106572211738956341e-01, // i = 2
-    3.702011587393002484e-02, // i = 3
-    1.234505184422448817e-02, // i = 4
-    4.115203107111478978e-03, // i = 5
-    1.371741252092227191e-03, // i = 6
-    4.572474026939744472e-04, // i = 7
-    1.524157890956372044e-04, // i = 8
-    5.080526338157843419e-05, // i = 9
-    1.693508780681130752e-05, // i = 10
-    5.645029269416799853e-06, // i = 11
-    1.881676423156699871e-06, // i = 12
-    6.272254743862246624e-07, // i = 13
-    2.090751581287659240e-07, // i = 14
-    6.969171937625620355e-08, // i = 15
-    2.323057312541876981e-08, // i = 16
-    7.743524375139591591e-09, // i = 17
-    2.581174791713197059e-09, // i = 18
-    8.603915972377323531e-10, // i = 19
-    2.867971990792441349e-10  // i = 20
+    7.853981633974482790e-01,
+    3.217505543966421855e-01,
+    1.106572211738956479e-01,
+    3.702011587393002484e-02,
+    1.234505184422448817e-02,
+    4.115203107111478111e-03,
+    1.371741252092227407e-03,
+    4.572473389612662629e-04,
+    1.524157890956372044e-04,
+    5.080526338157844097e-05,
+    1.693508780681130752e-05,
+    5.645029269416799853e-06,
+    1.881676423156699871e-06,
+    6.272254743862246624e-07,
+    2.090751581287659240e-07,
+    6.969171937625621679e-08,
+    2.323057312541876981e-08,
+    7.743524375139591591e-09,
+    2.581174791713197059e-09,
+    8.603915972377323531e-10,
+    2.867971990792441349e-10
 };
 
 // Circular scale factors 1 / sqrt(1 + 3^(-2i)) for i = 0..20
 constexpr std::array<double, 21> CORDIC_CIRC_K = {
-    7.071067811865474617e-01, // i = 0
-    9.486832980505137680e-01, // i = 1
-    9.938837346736189016e-01, // i = 2
-    9.993148337667671077e-01, // i = 3
-    9.999238008152206980e-01, // i = 4
-    9.999915325636431485e-01, // i = 5
-    9.999990591631161552e-01, // i = 6
-    9.999998954624373937e-01, // i = 7
-    9.999999883847136006e-01, // i = 8
-    9.999999987094125853e-01, // i = 9
-    9.999999998566013737e-01, // i = 10
-    9.999999999840669673e-01, // i = 11
-    9.999999999982296384e-01, // i = 12
-    9.999999999998032685e-01, // i = 13
-    9.999999999999782396e-01, // i = 14
-    9.999999999999975575e-01, // i = 15
-    9.999999999999997780e-01, // i = 16
-    1.000000000000000000e+00, // i = 17
-    1.000000000000000000e+00, // i = 18
-    1.000000000000000000e+00, // i = 19
-    1.000000000000000000e+00  // i = 20
+    7.071067811865475727e-01,
+    9.486832980505137680e-01,
+    9.938837346736189016e-01,
+    9.993148337667671077e-01,
+    9.999238008152206980e-01,
+    9.999915325636432595e-01,
+    9.999990591631161552e-01,
+    9.999998954624372827e-01,
+    9.999999883847136006e-01,
+    9.999999987094125853e-01,
+    9.999999998566013737e-01,
+    9.999999999840668563e-01,
+    9.999999999982296384e-01,
+    9.999999999998032685e-01,
+    9.999999999999781286e-01,
+    9.999999999999975575e-01,
+    9.999999999999997780e-01,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00
 };
 
 // Hyperbolic iteration sequence: i = 1, 1, 2, 3, ..., 20 (21 steps)
@@ -281,52 +281,52 @@ constexpr std::array<int, 21> CORDIC_HYP_SEQ = {
 
 // Hyperbolic micro-angles theta^H_i = artanh(3^-i) for sequence i = 1, 1, 2..20
 constexpr std::array<double, 21> CORDIC_HYP_THETA = {
-    3.465735902799725876e-01, // seq 0 (i = 1)
-    3.465735902799725876e-01, // seq 1 (i = 1)
-    1.115717756571049657e-01, // seq 2 (i = 2)
-    3.705398607686091750e-02, // seq 3 (i = 3)
-    1.234630629518581636e-02, // seq 4 (i = 4)
-    4.115249568257721771e-03, // seq 5 (i = 5)
-    1.371742972875416959e-03, // seq 6 (i = 6)
-    4.572474026939744472e-04, // seq 7 (i = 7)
-    1.524157914561913665e-04, // seq 8 (i = 8)
-    5.080526346899224790e-05, // seq 9 (i = 9)
-    1.693508781012337237e-05, // seq 10 (i = 10)
-    5.645029269619373712e-06, // seq 11 (i = 11)
-    1.881676423133759678e-06, // seq 12 (i = 12)
-    6.272254743877697564e-07, // seq 13 (i = 13)
-    2.090751581055819175e-07, // seq 14 (i = 14)
-    6.969171931243800169e-08, // seq 15 (i = 15)
-    2.323057303623466749e-08, // seq 16 (i = 16)
-    7.743524317306160569e-09, // seq 17 (i = 17)
-    2.581174822767747215e-09, // seq 18 (i = 18)
-    8.603916460772305399e-10, // seq 19 (i = 19)
-    2.867972525310162694e-10  // seq 20 (i = 20)
+    3.465735902799726431e-01,
+    3.465735902799726431e-01,
+    1.115717756571048824e-01,
+    3.705398607686093831e-02,
+    1.234630629518575044e-02,
+    4.115249568257734782e-03,
+    1.371742972875421946e-03,
+    4.572474026939772119e-04,
+    1.524157914561079913e-04,
+    5.080526346900327966e-05,
+    1.693508781004926376e-05,
+    5.645029269536724472e-06,
+    1.881676423161141500e-06,
+    6.272254743863891986e-07,
+    2.090751581287720120e-07,
+    6.969171937625644178e-08,
+    2.323057312541877974e-08,
+    7.743524375139591591e-09,
+    2.581174791713197059e-09,
+    8.603915972377323531e-10,
+    2.867971990792441349e-10
 };
 
 // Hyperbolic scale factors 1 / sqrt(1 - 3^(-2i)) for sequence i = 1, 1, 2..20
 constexpr std::array<double, 21> CORDIC_HYP_K = {
-    1.060660171779821193e+00, // seq 0 (i = 1)
-    1.060660171779821193e+00, // seq 1 (i = 1)
-    1.006230589874905323e+00, // seq 2 (i = 2)
-    1.000686577492486684e+00, // seq 3 (i = 3)
-    1.000076216607709512e+00, // seq 4 (i = 4)
-    1.000008467651454680e+00, // seq 5 (i = 5)
-    1.000000940839539165e+00, // seq 6 (i = 6)
-    1.000000104537595469e+00, // seq 7 (i = 7)
-    1.000000011615286732e+00, // seq 8 (i = 8)
-    1.000000001290587415e+00, // seq 9 (i = 9)
-    1.000000000143398626e+00, // seq 10 (i = 10)
-    1.000000000015933255e+00, // seq 11 (i = 11)
-    1.000000000001770362e+00, // seq 12 (i = 12)
-    1.000000000000196732e+00, // seq 13 (i = 13)
-    1.000000000000021982e+00, // seq 14 (i = 14)
-    1.000000000000002442e+00, // seq 15 (i = 15)
-    1.000000000000000444e+00, // seq 16 (i = 16)
-    1.000000000000000222e+00, // seq 17 (i = 17)
-    1.000000000000000000e+00, // seq 18 (i = 18)
-    1.000000000000000000e+00, // seq 19 (i = 19)
-    1.000000000000000000e+00  // seq 20 (i = 20)
+    1.060660171779821193e+00,
+    1.060660171779821193e+00,
+    1.006230589874905323e+00,
+    1.000686577492486684e+00,
+    1.000076216607709512e+00,
+    1.000008467651454680e+00,
+    1.000000940839539387e+00,
+    1.000000104537595469e+00,
+    1.000000011615286732e+00,
+    1.000000001290587415e+00,
+    1.000000000143398626e+00,
+    1.000000000015933255e+00,
+    1.000000000001770362e+00,
+    1.000000000000196732e+00,
+    1.000000000000021760e+00,
+    1.000000000000002442e+00,
+    1.000000000000000222e+00,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00,
+    1.000000000000000000e+00
 };
 
 // Powers of 3 as double for O(1) multiplier-free step division:
@@ -371,8 +371,9 @@ constexpr std::array<double, 9> HOUSEHOLDER_SEED_TABLE = {
  * Dynamic scale factor K = prod_{d_i != 0} 1 / sqrt(1 + 3^(-2i)).
  */
 inline void cordic_circ_sincos(double rad, double& out_sin, double& out_cos) noexcept {
+    if (!std::isfinite(rad)) {out_sin=out_cos=std::numeric_limits<double>::quiet_NaN();return;}
     if (rad == 0.0) {
-        out_sin = 0.0;
+        out_sin = rad;
         out_cos = 1.0;
         return;
     }
@@ -481,8 +482,11 @@ inline double cordic_atan_octant(double y, double x) noexcept {
  * @brief Multiplier-Free Balanced Ternary CORDIC atan2(y, x).
  */
 inline double cordic_circ_atan2(double y, double x) noexcept {
-    if (x == 0.0 && y == 0.0) return 0.0;
-    if (x == 0.0) return (y > 0.0) ? CORDIC_PI_2 : -CORDIC_PI_2;
+    // Honor IEEE axes, signed zeros and nonfinite inputs. Normalize finite
+    // nonzero vectors to avoid overflow inside CORDIC near DBL_MAX.
+    if (!std::isfinite(x) || !std::isfinite(y) || x==0.0 || y==0.0)return std::atan2(y,x);
+    double scale=std::max(std::abs(x),std::abs(y));x/=scale;y/=scale;
+    if(x==0.0 || y==0.0)return std::atan2(y,x);
     if (x > 0.0) {
         if (y >= 0.0) {
             return (y <= x) ? cordic_atan_octant(y, x) : (CORDIC_PI_2 - cordic_atan_octant(x, y));
@@ -507,8 +511,9 @@ inline double cordic_circ_atan2(double y, double x) noexcept {
  * Iteration sequence: i = 1, 1, 2, 3, ..., 20.
  */
 inline void cordic_hyp_sincos(double r, double& out_sinh, double& out_cosh) noexcept {
+    if (!std::isfinite(r) || std::abs(r)>CORDIC_LN3/2) {out_sinh=out_cosh=std::numeric_limits<double>::quiet_NaN();return;}
     if (r == 0.0) {
-        out_sinh = 0.0;
+        out_sinh = r;
         out_cosh = 1.0;
         return;
     }
@@ -554,6 +559,7 @@ inline void cordic_hyp_sincos(double r, double& out_sinh, double& out_cosh) noex
  * Computes ln(M) for M in [1/2, 3/2] in vectoring mode.
  */
 inline double cordic_hyp_ln(double M) noexcept {
+    if(!std::isfinite(M) || M<0.5 || M>1.5)return std::numeric_limits<double>::quiet_NaN();
     double x = M + 1.0;
     double y = M - 1.0;
     double z = 0.0;
@@ -617,6 +623,7 @@ public:
     }
 
 private:
+    template<int,int> friend struct fp_detail::Numerical;
     int64_t m_mantissa{0}; // Normalized mantissa: |M| in [min_norm_mantissa, max_mantissa], or 0
     int32_t m_exponent{0}; // Signed exponent E (powers of 3)
 
@@ -644,6 +651,27 @@ private:
         if(gap && up){m=int64_t(low);++exp;}else m=int64_t(q+uint64_t(up));
         return normalize_128(negative?-m:m,exp);
     }
+    // Exact positive real R-th root, R=2 or 3, using powered rational
+    // midpoints. No binary floating approximation or premature range check.
+    template<unsigned R,size_t N> static constexpr BTFP round_root(
+            fp_detail::Wide<N> n,int64_t exponent,bool negative=false) {
+        static_assert(R==2 || R==3);
+        using Wide=fp_detail::Wide<N>;if(n.zero())return BTFP();
+        int64_t remainder=exponent%R;if(remainder<0)remainder+=R;
+        for(int64_t i=0;i<remainder;++i)n=n.times(3);
+        int64_t e=(exponent-remainder)/R;Wide d(1);
+        auto power=[](Wide v,uint64_t m){for(unsigned i=0;i<R;++i)v=v.times(m);return v;};
+        const uint64_t low=min_norm_mantissa(),high=max_mantissa();
+        constexpr uint64_t radix=R==2?9:27;
+        while(n.compare(power(d,low))<0){n=n.times(radix);--e;}
+        while(n.compare(power(d,high+2))>=0){d=d.times(radix);++e;}
+        uint64_t a=0,b=high;
+        while(a<b){auto m=a+(b-a)/2+1;if(power(d,m).compare(n)<=0)a=m;else b=m-1;}
+        const bool gap=a==high;auto midpoint=gap?2*high+2:2*a+1;
+        bool up=n.times(uint64_t(1)<<R).compare(power(d,midpoint))>=0;
+        int64_t result;if(gap && up){result=int64_t(low);++e;}else result=int64_t(a+uint64_t(up));
+        return normalize_128(negative?-result:result,e);
+    }
     static constexpr BTFP sum_scaled(__int128 a,int64_t ea,__int128 b,int64_t eb) {
         using U=unsigned __int128;using W=fp_detail::Wide<8>;
         if(!a)return normalize_128(b,eb);if(!b)return normalize_128(a,ea);
@@ -665,7 +693,7 @@ private:
                 return normalize_128(signed_aligned+b,eb);
             }
         }
-        for(int64_t i=0;i<delta;++i)x=x.times(3);
+        x=x.times_pow3(delta);
         if((a<0)==(b<0))return round_ratio(x.plus(y),W(1),eb,a<0);
         auto order=x.compare(y);if(!order)return BTFP();
         return order>0?round_ratio(x.minus(y),W(1),eb,a<0):round_ratio(y.minus(x),W(1),eb,b<0);
@@ -1029,6 +1057,38 @@ public:
                           static_cast<int64_t>(m_exponent)-other.m_exponent);
     }
 
+    // Additional exact finite operations. Negative powers invert the exact
+    // power, not a previously rounded positive result.
+    BTFP reciprocal() const {return from_ratio(1,m_mantissa,-int64_t(m_exponent));}
+    BTFP pow_int(int32_t power) const {
+        if(power < -16 || power > 16)throw fp_detail::NumericalLimit("BTFP integer power limit: -16..16");
+        if(!power)return from_ratio(1,1);
+        if(is_zero()){if(power<0)throw std::domain_error("BTFP zero to negative power");return BTFP();}
+        using Wide=fp_detail::Wide<32>;Wide magnitude(1);
+        uint64_t m=m_mantissa<0?uint64_t(-m_mantissa):uint64_t(m_mantissa);
+        int count=power<0?-power:power;for(int i=0;i<count;++i)magnitude=magnitude.times(m);
+        auto exponent=int64_t(m_exponent)*power;bool negative=m_mantissa<0 && (count%2);
+        return power<0?round_ratio(Wide(1),magnitude,exponent,negative):round_ratio(magnitude,Wide(1),exponent,negative);
+    }
+    BTFP cbrt() const {
+        using Wide=fp_detail::Wide<32>;
+        return round_root<3>(Wide(m_mantissa<0?uint64_t(-m_mantissa):uint64_t(m_mantissa)),m_exponent,m_mantissa<0);
+    }
+    BTFP hypot(const BTFP& other) const {
+        if(is_zero())return other.is_negative()?-other:other;
+        if(other.is_zero())return is_negative()?-*this:*this;
+        auto a=*this,b=other;if(a.m_exponent<b.m_exponent)std::swap(a,b);
+        int64_t delta=int64_t(a.m_exponent)-b.m_exponent;
+        // b^2/(sqrt(a^2+b^2)+|a|) < half a's minimum upward gap
+        // when delta>W. This also avoids materializing 3^INT_MAX.
+        if(delta>MantissaTrits)return a.is_negative()?-a:a;
+        using Wide=fp_detail::Wide<32>;
+        uint64_t x=a.m_mantissa<0?uint64_t(-a.m_mantissa):uint64_t(a.m_mantissa);
+        uint64_t y=b.m_mantissa<0?uint64_t(-b.m_mantissa):uint64_t(b.m_mantissa);
+        auto n=Wide(x).times(x);for(int64_t i=0;i<2*delta;++i)n=n.times(3);
+        return round_root<2>(n.plus(Wide(y).times(y)),2*int64_t(b.m_exponent));
+    }
+
     // --------------------------------------------------------------------------
     // 3rd-Order Householder Cubic-Convergence Reciprocal & Division
     // --------------------------------------------------------------------------
@@ -1145,7 +1205,11 @@ public:
         if (!std::isfinite(u) || std::abs(u / fp_detail::CORDIC_LN3) > static_cast<double>(INT32_MAX) - 100)
             throw std::overflow_error("BTFP exponential exponent outside supported range");
         double k_est = std::round(u / fp_detail::CORDIC_LN3);
-        double r = u - k_est * fp_detail::CORDIC_LN3;
+        double r = std::fma(-k_est, fp_detail::CORDIC_LN3, u);
+        // Keep the reduced helper's declared domain despite rounded quotient
+        // selection near half-bin boundaries (especially for large u).
+        if(r>fp_detail::CORDIC_LN3/2){r-=fp_detail::CORDIC_LN3;k_est+=1;}
+        else if(r < -fp_detail::CORDIC_LN3/2){r+=fp_detail::CORDIC_LN3;k_est-=1;}
 
         double sh = 0.0, ch = 0.0;
         fp_detail::cordic_hyp_sincos(r, sh, ch);

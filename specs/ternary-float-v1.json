@@ -7,20 +7,63 @@
   "mantissa_storage": "int64",
   "normalized_min_magnitude": "(3^(width-1)+1)/2",
   "normalized_max_magnitude": "(3^width-1)/2",
-  "zero": {"mantissa": 0, "exponent": 0},
+  "zero": {
+    "mantissa": 0,
+    "exponent": 0
+  },
   "sdk_exponent_min": -2147483648,
   "sdk_exponent_max": 2147483647,
   "rounding": "nearest normalized value in the unbounded-exponent lattice; halfway ties away from zero",
   "range_policy": "after rounding, reject nonzero results outside configured exponent bounds; do not saturate, flush or substitute zero",
   "special_values": [],
   "subnormals": false,
-  "primitive_operations": ["add", "sub", "mul", "div", "sqrt", "fma"],
+  "primitive_operations": [
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "sqrt",
+    "fma"
+  ],
   "fma": "exact product plus exact addend, one final rounding; product range is not checked prematurely",
   "sqrt": "nearest to exact positive real square root using squared midpoint comparisons",
   "binary64_import": "exact finite IEEE binary64 input value, one ternary rounding; both binary zeros become canonical zero; reject NaN and infinities",
   "binary64_export": "nearest IEEE binary64 ties-to-even; may produce infinity or signed underflow zero; independent of host rounding mode",
-  "sdk_status": {"invalid_or_domain": 1, "exponent_range": 2},
+  "sdk_status": {
+    "invalid_or_domain": 1,
+    "exponent_range": 2
+  },
   "sdk_record": "native ABI value struct, NOT an on-disk or hardware wire format; reserved fields zero; canonical inputs only",
   "sdk_output_transaction": "failure preserves caller-owned result storage",
-  "not_qualified": ["transcendental functions", "correctly rounded pow_int", "GPU BTFP execution", "FPGA or physical ternary circuits", "arbitrary widths or alternative rounding modes"]
+  "not_qualified": [
+    "transcendental functions",
+    "GPU BTFP execution",
+    "FPGA or physical ternary circuits",
+    "arbitrary widths or alternative rounding modes",
+    "unbounded integer powers, arrays or polynomial degree"
+  ],
+  "extended_operations": {
+    "reciprocal": "exact ratio 1/x, one final rounding",
+    "cbrt": "signed real cube root; powered rational midpoint comparison",
+    "hypot": "sqrt(x*x+y*y) with no intermediate product rounding/range rejection",
+    "pow_int": "exact integer power then one final rounding, -16..16; x^0=1 including 0^0"
+  },
+  "sdk_api_min_extended": "1.2",
+  "numerical_profile": {
+    "id": "exact-reductions-v1",
+    "operations": [
+      "sum",
+      "dot",
+      "norm2",
+      "polynomial"
+    ],
+    "rounding": "single final nearest/ties-away from exact represented inputs",
+    "maximum_terms": 4096,
+    "maximum_exponent_window_trits": 256,
+    "window": "active exact terms after stripping all coefficient factors of 3; checked before cancellation",
+    "polynomial": "ascending coefficients; maximum degree 16; whole polynomial exact before rounding",
+    "scratch_bits": 2048,
+    "empty": "canonical zero; reduction width explicit",
+    "resource_failure": "status 6; no truncation, fallback or partial output"
+  }
 }
