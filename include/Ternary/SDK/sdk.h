@@ -27,11 +27,20 @@ typedef struct {uint32_t struct_size,backend;double compile_ms,upload_ms,execute
  * Nearest ternary result, ties away; binary64 export uses IEEE ties-to-even.
  * Overflow/underflow reject, no NaN/Inf/subnormal BTFP encodings. */
 typedef struct {uint32_t width,reserved;int64_t mantissa;int32_t exponent;uint32_t reserved2;} bt_sdk_float_value;
-enum {BT_SDK_FP_ADD=1,BT_SDK_FP_SUB=2,BT_SDK_FP_MUL=3,BT_SDK_FP_DIV=4,BT_SDK_FP_SQRT=5,BT_SDK_FP_FMA=6};
+enum {BT_SDK_FP_ADD=1,BT_SDK_FP_SUB=2,BT_SDK_FP_MUL=3,BT_SDK_FP_DIV=4,BT_SDK_FP_SQRT=5,BT_SDK_FP_FMA=6,BT_SDK_FP_RECIPROCAL=7,BT_SDK_FP_CBRT=8,BT_SDK_FP_HYPOT=9};
 BT_SDK_API bt_sdk_status bt_sdk_float_from_ratio(uint32_t,int64_t,int64_t,int64_t,bt_sdk_float_value*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_float_from_double(uint32_t,double,bt_sdk_float_value*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_float_to_double(const bt_sdk_float_value*,double*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_float_apply(uint32_t,const bt_sdk_float_value*,const bt_sdk_float_value*,const bt_sdk_float_value*,bt_sdk_float_value*,char*,size_t);
+/* API 1.2: exact represented-input math, one final rounding. Array count <=4096,
+ * active 3-free term exponent window <=256. Polynomial ascending coefficients,
+ * count<=17. Pow exponent -16..16, x^0=1 including 0^0. Resource failure=6.
+ * Empty reductions yield canonical zero at explicit width; dot needs b for n>0.
+ * Output may alias an input record; all failures preserve output. CPU-only. */
+enum {BT_SDK_FP_SUM=1,BT_SDK_FP_DOT=2,BT_SDK_FP_NORM2=3};
+BT_SDK_API bt_sdk_status bt_sdk_float_powi(const bt_sdk_float_value*,int32_t,bt_sdk_float_value*,char*,size_t);
+BT_SDK_API bt_sdk_status bt_sdk_float_reduce(uint32_t,uint32_t,const bt_sdk_float_value*,const bt_sdk_float_value*,uint64_t,bt_sdk_float_value*,char*,size_t);
+BT_SDK_API bt_sdk_status bt_sdk_float_polynomial(const bt_sdk_float_value*,const bt_sdk_float_value*,uint64_t,bt_sdk_float_value*,char*,size_t);
 BT_SDK_API uint32_t bt_sdk_abi_version(void);
 /* Additive API 1.1; ABI-1 structs/layouts remain unchanged. Candidate compiler
  * discovery is NOT a guarantee that compilation/device qualification succeeds.

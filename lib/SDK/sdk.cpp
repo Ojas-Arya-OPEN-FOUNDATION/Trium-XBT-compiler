@@ -11,6 +11,8 @@
 #include <functional>
 #include "VulkanRuntime.hpp"
 #include "NativeRuntime.hpp"
+#include "FloatRuntime.hpp"
+#include "NumericalRuntime.hpp"
 #include "bt_process.hpp"
 #include <list>
 namespace {
@@ -38,6 +40,7 @@ struct Closed:std::runtime_error{using std::runtime_error::runtime_error;};
 void message(char* out,size_t n,const char* text) noexcept {if(out && n){auto len=std::min(n-1,std::strlen(text));std::memcpy(out,text,len);out[len]=0;}}
 template<class F> bt_sdk_status boundary(char* out,size_t n,F fn) noexcept {
     message(out,n,"");try{fn();return BT_SDK_OK;}
+    catch(const bt::fp_detail::NumericalLimit& e){message(out,n,e.what());return BT_SDK_RESOURCE;}
     catch(const Resource& e){message(out,n,e.what());return BT_SDK_RESOURCE;}
     catch(const bt::ir::ResourceLimit& e){message(out,n,e.what());return BT_SDK_RESOURCE;}
     catch(const bt::host::ProcessTimeout& e){message(out,n,e.what());return BT_SDK_RESOURCE;}
@@ -119,32 +122,23 @@ void initialize(Module& m){if(!m.metadata.empty())return;
     for(size_t i=0;i<m.program.functions.size();++i)m.exports.emplace(m.program.functions[i].name,i);
     m.pure=pure_exports(m);m.metadata=describe(m);
 }
-template<int W=1,class F> void float_width(uint32_t width,F&& fn){
-    if(width==W)fn.template operator()<W>();
-    else if constexpr(W<40)float_width<W+1>(width,std::forward<F>(fn));
-    else throw std::invalid_argument("BTFP width must be 1..40");
-}
-template<int W> bt::BTFP<W> read_float(const bt_sdk_float_value* v){
-    required(v && v->width==W && !v->reserved && !v->reserved2,"invalid BTFP record/profile");
-    const auto lo=bt::BTFP<W>::min_norm_mantissa(),hi=bt::BTFP<W>::max_mantissa();
-    required(v->mantissa==0?v->exponent==0:
-        ((v->mantissa>=lo && v->mantissa<=hi)||(v->mantissa<=-lo && v->mantissa>=-hi)),"noncanonical BTFP record");
-    return bt::BTFP<W>(v->mantissa,v->exponent);
-}
-template<int W> bt_sdk_float_value write_float(bt::BTFP<W> v){return {W,0,v.mantissa(),v.exponent(),0};}
+using bt::sdk::detail::float_width;
+using bt::sdk::detail::read_float;
+using bt::sdk::detail::write_float;
 
 }
 extern "C" {
 uint32_t bt_sdk_abi_version(){return 1;}
-uint32_t bt_sdk_api_version(){return 0x00010001;}
+uint32_t bt_sdk_api_version(){return 0x00010002;}
 bt_sdk_status bt_sdk_info(char* output,size_t* bytes,char* err,size_t cap){return boundary(err,cap,[&]{
-    std::string text="{\"schema\":1,\"abi_major\":1,\"api_major\":1,\"api_minor\":1,\"finite_float_profile\":1,\"native_profile\":\"native-v1-loopfree\",\"native_compiler_candidate\":"+json(bt::sdk::native_compiler())+",\"vulkan_built\":";
+    std::string text="{\"schema\":1,\"abi_major\":1,\"api_major\":1,\"api_minor\":2,\"finite_float_profile\":1,\"native_profile\":\"native-v1-loopfree\",\"native_compiler_candidate\":"+json(bt::sdk::native_compiler())+",\"vulkan_built\":";
 #if defined(BT_SDK_HAS_VULKAN)
     text+="true";
 #else
     text+="false";
 #endif
     text+=",\"sizes\":{\"options\":"+std::to_string(sizeof(bt_sdk_options))+",\"metrics\":"+std::to_string(sizeof(bt_sdk_metrics))+",\"value\":"+std::to_string(sizeof(bt_sdk_value))+",\"float_value\":"+std::to_string(sizeof(bt_sdk_float_value))+"},\"source_cache_entries\":8,\"source_cache_bytes\":16777216,\"native_cache_entries_per_module\":16,\"vulkan_cache_entries_per_module\":4}";
+    text.pop_back();text+=",\"numerical_profile\":\"exact-reductions-v1\",\"numerical_operations\":[\"sum\",\"dot\",\"norm2\",\"polynomial\"],\"numerical_max_terms\":4096,\"numerical_max_window_trits\":256,\"polynomial_max_degree\":16,\"pow_int_min\":-16,\"pow_int_max\":16,\"finite_float_extended_operations\":[\"reciprocal\",\"cbrt\",\"hypot\",\"pow_int\"]}";
     text_query(text,output,bytes);
 });}
 bt_sdk_status bt_sdk_module_info(bt_sdk_handle id,char* output,size_t* bytes,char* err,size_t cap){return boundary(err,cap,[&]{text_query(module(id)->metadata,output,bytes);});}
@@ -242,7 +236,8 @@ bt_sdk_status bt_sdk_float_to_double(const bt_sdk_float_value* input,double* out
     required(input && output,"null BTFP storage");float_width(input->width,[&]<int W>(){*output=read_float<W>(input).to_double();});
 });}
 bt_sdk_status bt_sdk_float_apply(uint32_t op,const bt_sdk_float_value* a,const bt_sdk_float_value* b,const bt_sdk_float_value* c,bt_sdk_float_value* output,char* err,size_t cap){return boundary(err,cap,[&]{
-    required(a && output && op>=1 && op<=6,"invalid BTFP operation/storage");
+    required(a && output && op>=1 && op<=9,"invalid BTFP operation/storage");
+    if(op>=7){*output=bt::sdk::detail::float_extended(op,a,b);return;}
     float_width(a->width,[&]<int W>(){auto x=read_float<W>(a);bt::BTFP<W> r;
         if(op==BT_SDK_FP_SQRT)r=x.sqrt();
         else {auto y=read_float<W>(b);switch(op){
@@ -252,5 +247,9 @@ bt_sdk_status bt_sdk_float_apply(uint32_t op,const bt_sdk_float_value* a,const b
         }}*output=write_float(r);
     });
 });}
+
+bt_sdk_status bt_sdk_float_powi(const bt_sdk_float_value* a,int32_t power,bt_sdk_float_value* output,char* err,size_t cap){return boundary(err,cap,[&]{required(output,"null BTFP output");*output=bt::sdk::detail::float_powi(a,power);});}
+bt_sdk_status bt_sdk_float_reduce(uint32_t width,uint32_t op,const bt_sdk_float_value* a,const bt_sdk_float_value* b,uint64_t count,bt_sdk_float_value* output,char* err,size_t cap){return boundary(err,cap,[&]{required(output,"null BTFP output");*output=bt::sdk::detail::float_reduce(width,op,a,b,count);});}
+bt_sdk_status bt_sdk_float_polynomial(const bt_sdk_float_value* x,const bt_sdk_float_value* coefficients,uint64_t count,bt_sdk_float_value* output,char* err,size_t cap){return boundary(err,cap,[&]{required(output,"null BTFP output");*output=bt::sdk::detail::float_polynomial(x,coefficients,count);});}
 
 }

@@ -19,6 +19,18 @@ public:
     static TernaryFloat from_double(uint32_t width,double x){bt_sdk_float_value v;char err[4096];check(bt_sdk_float_from_double(width,x,&v,err,sizeof err),err);return TernaryFloat(v);}
     const bt_sdk_float_value& record()const{return value;}
     double to_double()const{double out;char err[4096];check(bt_sdk_float_to_double(&value,&out,err,sizeof err),err);return out;}
+    TernaryFloat pow_int(int32_t power)const{bt_sdk_float_value out;char err[4096];check(bt_sdk_float_powi(&value,power,&out,err,sizeof err),err);return TernaryFloat(out);}
+    static TernaryFloat reduce(uint32_t width,uint32_t operation,const std::vector<TernaryFloat>& a,const std::vector<TernaryFloat>& b={}){
+        if(a.size()>4096 || b.size()>4096)throw Error(BT_SDK_RESOURCE,"BTFP reduction count exceeds 4096");
+        if(operation==BT_SDK_FP_DOT && a.size()!=b.size())throw Error(BT_SDK_INVALID,"dot shape mismatch");
+        std::vector<bt_sdk_float_value> av,bv;for(auto& v:a)av.push_back(v.value);for(auto& v:b)bv.push_back(v.value);
+        bt_sdk_float_value out;char err[4096];check(bt_sdk_float_reduce(width,operation,av.data(),bv.data(),av.size(),&out,err,sizeof err),err);return TernaryFloat(out);
+    }
+    TernaryFloat polynomial(const std::vector<TernaryFloat>& c)const{
+        if(c.size()>17)throw Error(BT_SDK_RESOURCE,"polynomial degree exceeds 16");
+        std::vector<bt_sdk_float_value> cv;for(auto& v:c)cv.push_back(v.value);bt_sdk_float_value out;char err[4096];
+        check(bt_sdk_float_polynomial(&value,cv.data(),cv.size(),&out,err,sizeof err),err);return TernaryFloat(out);
+    }
     TernaryFloat apply(uint32_t op,const TernaryFloat* b=nullptr,const TernaryFloat* c=nullptr)const{bt_sdk_float_value out;char err[4096];check(bt_sdk_float_apply(op,&value,b?&b->value:nullptr,c?&c->value:nullptr,&out,err,sizeof err),err);return TernaryFloat(out);}
 };
 // Owning RAII contexts are retained by modules. Explicit close invalidates later
