@@ -60,13 +60,20 @@ inline std::vector<int> inherited_descriptors() {
 inline std::vector<std::string> platform_toolchain_flags() {
     std::vector<std::string> flags;
 #if defined(__APPLE__)
+#if defined(__aarch64__) || defined(__arm64__)
+    flags.push_back("-arch");
+    flags.push_back("arm64");
+#elif defined(__x86_64__)
+    flags.push_back("-arch");
+    flags.push_back("x86_64");
+#endif
     const char* sdk = std::getenv("SDKROOT");
-    if (sdk && *sdk) {
-        flags.push_back("-isysroot");
-        flags.push_back(sdk);
-    } else if (std::filesystem::exists("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")) {
+    if (std::filesystem::exists("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")) {
         flags.push_back("-isysroot");
         flags.push_back("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk");
+    } else if (sdk && *sdk) {
+        flags.push_back("-isysroot");
+        flags.push_back(sdk);
     }
 #endif
     return flags;
