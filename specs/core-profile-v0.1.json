@@ -385,7 +385,8 @@
   },
   "sdk_abi_major": 1,
   "vulkan_kernel_abi_major": 1,
-  "sdk_api_version": "1.1",
+  "sdk_api_version": "1.2",
   "sdk_native_profile": "native-v1-loopfree",
-  "sdk_btfp_profile": "btfp-finite-v1; specs/ternary-float-v1.json; distinct from legacy BTFP<W,E> and source binary64"
+  "sdk_btfp_profile": "btfp-finite-v1; specs/ternary-float-v1.json; distinct from legacy BTFP<W,E> and source binary64",
+  "sdk_numerical_profile": "exact-reductions-v1; specs/ternary-float-v1.json"
 }
