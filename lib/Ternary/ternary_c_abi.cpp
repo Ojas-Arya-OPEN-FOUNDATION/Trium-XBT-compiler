@@ -372,18 +372,24 @@ int64_t bt_kleene_xor(int64_t a, int64_t b) {
 
 void xbt_sgemm(const float* a, const float* b, float* c, size_t m, size_t k, size_t n, int min_plane_sum_cutoff) {
     return abi_call([&]() -> void {
+        if (!a || !b || !c) throw std::invalid_argument("null matrix buffer in xbt_sgemm");
+        if (m == 0 || k == 0 || n == 0) return;
         bt::blas::xbt_sgemm_unmodified<8>(a, b, c, m, k, n, min_plane_sum_cutoff);
     });
 }
 
 void xbt_rmsnorm(const float* x, const float* weight, float* out, size_t n, float eps) {
     return abi_call([&]() -> void {
+        if (!x || !out) throw std::invalid_argument("null vector buffer in xbt_rmsnorm");
+        if (n == 0) return;
         bt::nonlinear::xbt_rmsnorm(x, weight, out, n, eps);
     });
 }
 
 void xbt_softmax(const float* x, float* out, size_t n) {
     return abi_call([&]() -> void {
+        if (!x || !out) throw std::invalid_argument("null vector buffer in xbt_softmax");
+        if (n == 0) return;
         bt::nonlinear::xbt_softmax(x, out, n);
     });
 }

@@ -21,6 +21,15 @@
 extern char **environ;
 namespace bt::host {
 struct ProcessTimeout:std::runtime_error{using std::runtime_error::runtime_error;};
+inline std::string safe_strerror(int err) {
+    char buf[256] = {};
+#if defined(__APPLE__) || !defined(_GNU_SOURCE)
+    strerror_r(err, buf, sizeof(buf));
+    return std::string(buf);
+#else
+    return std::string(strerror_r(err, buf, sizeof(buf)));
+#endif
+}
 inline int run_process(const std::vector<std::string>& args,const std::string& capture="",unsigned timeout_ms=0) {
     if (args.empty() || args.front().empty()) throw std::invalid_argument("empty process command");
     std::vector<char*> argv;
@@ -41,16 +50,21 @@ inline int run_process(const std::vector<std::string>& args,const std::string& c
         selected=&actions;
     }
     posix_spawnattr_t attributes;posix_spawnattr_t* attr=nullptr;
-    if(timeout_ms){
+    short flags = 0;
+#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
+    flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+    if(timeout_ms) flags |= POSIX_SPAWN_SETPGROUP;
+    if(flags){
         int error=posix_spawnattr_init(&attributes);
-        if(!error){attr=&attributes;error=posix_spawnattr_setflags(attr,POSIX_SPAWN_SETPGROUP);}
-        if(!error)error=posix_spawnattr_setpgroup(attr,0);
-        if(error){if(attr)posix_spawnattr_destroy(attr);if(selected)posix_spawn_file_actions_destroy(&actions);throw std::runtime_error("cannot set tool process group");}
+        if(!error){attr=&attributes;error=posix_spawnattr_setflags(attr,flags);}
+        if(!error && (flags & POSIX_SPAWN_SETPGROUP))error=posix_spawnattr_setpgroup(attr,0);
+        if(error){if(attr)posix_spawnattr_destroy(attr);if(selected)posix_spawn_file_actions_destroy(&actions);throw std::runtime_error("cannot configure tool process attributes");}
     }
     int err = posix_spawnp(&pid, argv[0], selected, attr, argv.data(), environ);
     if(attr)posix_spawnattr_destroy(attr);
     if(selected)posix_spawn_file_actions_destroy(&actions);
-    if (err) throw std::runtime_error("cannot execute '" + args[0] + "': " + std::strerror(err));
+    if (err) throw std::runtime_error("cannot execute '" + args[0] + "': " + safe_strerror(err));
     int status;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout_ms);
     for(;;){
