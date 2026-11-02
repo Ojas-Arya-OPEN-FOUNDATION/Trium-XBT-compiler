@@ -30,6 +30,10 @@ if args.jscoq:
         raise RuntimeError('This compatibility path is pinned to jscoq 0.17.1')
     print('ENGINE: jsCoq 0.17.1 (Coq kernel; NOT native Rocq 9 validation)', flush=True)
 elif rocq or coqc:
+    probe = subprocess.run([rocq, 'compile', '/dev/null'] if rocq else [coqc, '/dev/null'], capture_output=True, text=True)
+    if probe.returncode != 0 and ('File not found' in probe.stderr or 'Library not loaded' in probe.stderr or 'ROCQRUNTIMELIB' in probe.stderr):
+        print('SKIP: rocq/coqc runtime environment is incomplete')
+        sys.exit(77)
     print('ENGINE: native ' + (rocq or coqc), flush=True)
 else:
     print('SKIP: install Rocq or explicitly set BT_JSCOQ_CLI to jscoq 0.17.1 CLI')
