@@ -27,7 +27,24 @@ jobs:
           cmake -S . -B build/ci -G Ninja -DBT_ENABLE_MLIR=OFF
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}
           -DBT_ENABLE_ASAN=${{ matrix.config.asan }}
-      - run: cmake --build build/ci --target check-all -j 2
+      - name: Build and test
+        run: |
+          set +e
+          cmake --build build/ci --target check-all -v -j 2
+          STATUS=$?
+          if [ $STATUS -ne 0 ]; then
+            echo "### Check-All Failed (Status $STATUS)" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            ctest --test-dir build/ci --rerun-failed --output-on-failure >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            if [ -f build/ci/Testing/Temporary/LastTest.log ]; then
+              echo "### Last Test Log" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              cat build/ci/Testing/Temporary/LastTest.log | grep -A 30 -B 5 -E "FAIL|FAILED|Error|error" >> "$GITHUB_STEP_SUMMARY" 2>&1 || tail -n 100 build/ci/Testing/Temporary/LastTest.log >> "$GITHUB_STEP_SUMMARY" 2>&1
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit $STATUS
+          fi
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1
