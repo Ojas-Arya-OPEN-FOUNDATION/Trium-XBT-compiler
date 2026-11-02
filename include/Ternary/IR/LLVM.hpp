@@ -39,6 +39,12 @@ class LLVMEmitter {
         auto lo=instruction("icmp slt i64 "+n+", "+std::to_string(low));
         auto hi=instruction("icmp sgt i64 "+n+", "+std::to_string(high));guard(instruction("or i1 "+lo+", "+hi));
     }
+    std::string clamp64(const std::string& n,int64_t low=math::ScalarInteger::minimum,int64_t high=math::ScalarInteger::maximum) {
+        auto hi=instruction("icmp sgt i64 "+n+", "+std::to_string(high));
+        auto c1=instruction("select i1 "+hi+", i64 "+std::to_string(high)+", i64 "+n);
+        auto lo=instruction("icmp slt i64 "+c1+", "+std::to_string(low));
+        return instruction("select i1 "+lo+", i64 "+std::to_string(low)+", i64 "+c1);
+    }
     std::string checked128(const std::string& n) {
         auto lo=instruction("icmp slt i128 "+n+", "+std::to_string(math::ScalarInteger::minimum));
         auto hi=instruction("icmp sgt i128 "+n+", "+std::to_string(math::ScalarInteger::maximum));
@@ -62,6 +68,10 @@ class LLVMEmitter {
                 guard(instruction("icmp ugt i64 "+ab+", "+bound));
             }
             auto r=instruction(op+" i64 "+a+", "+b);check64(r);return r;
+        }
+        if(e.op==Op::Add || e.op==Op::Sub) {
+            auto r=instruction(op+" i64 "+a+", "+b);
+            return clamp64(r);
         }
         auto x=instruction("sext i64 "+a+" to i128"),y=instruction("sext i64 "+b+" to i128");
         return checked128(instruction(op+" i128 "+x+", "+y));
@@ -188,7 +198,24 @@ class LLVMEmitter {
 declare i64 @llvm.ctpop.i64(i64)
 define internal i64 @bt.core.logic(i64 %a0, i64 %b0, i32 %mode) {
 entry:
-  br label %loop
+  %is_trit_a_lo = icmp sge i64 %a0, -1
+  %is_trit_a_hi = icmp sle i64 %a0, 1
+  %is_trit_a = and i1 %is_trit_a_lo, %is_trit_a_hi
+  %is_trit_b_lo = icmp sge i64 %b0, -1
+  %is_trit_b_hi = icmp sle i64 %b0, 1
+  %is_trit_b = and i1 %is_trit_b_lo, %is_trit_b_hi
+  %both_trits = and i1 %is_trit_a, %is_trit_b
+  br i1 %both_trits, label %fast_trit, label %loop
+fast_trit:
+  %less_fast = icmp slt i64 %a0, %b0
+  %min_fast = select i1 %less_fast, i64 %a0, i64 %b0
+  %max_fast = select i1 %less_fast, i64 %b0, i64 %a0
+  %product_fast = mul i64 %a0, %b0
+  %is.and_fast = icmp eq i32 %mode, 0
+  %is.or_fast = icmp eq i32 %mode, 1
+  %d0_fast = select i1 %is.and_fast, i64 %min_fast, i64 %product_fast
+  %digit_fast = select i1 %is.or_fast, i64 %max_fast, i64 %d0_fast
+  ret i64 %digit_fast
 loop:
   %a = phi i64 [ %a0, %entry ], [ %qa, %body ]
   %b = phi i64 [ %b0, %entry ], [ %qb, %body ]
