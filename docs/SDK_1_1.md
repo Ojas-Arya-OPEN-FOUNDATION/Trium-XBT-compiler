@@ -2,6 +2,10 @@
 
 **Milestone: 2026-10-30.** This develops the existing compiler/math SDK rather than starting the future hardware track. ABI major **1** is preserved; API version is **1.1** (`0x00010001`), shared-library/package version **1.1.0**, SONAME major **1**. README and license grants are unchanged.
 
+The subsequent [SDK 1.2 numerical milestone](ADVANCED_NUMERICS_SDK_1_2.md) adds
+finite-FP operations and exact numerical routines; the version-1.1 results below
+remain the historical execution/resource qualification.
+
 ## 1. What applications can do now
 
 - Compile a self-contained source module in-process, discover its exported signatures, and retain it across many calls.

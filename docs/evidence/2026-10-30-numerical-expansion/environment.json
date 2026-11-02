@@ -1,0 +1,147 @@
+{
+  "milestone_date": "2026-10-30",
+  "branch": {
+    "exit_code": 0,
+    "output": "arena/f3c30e8e-trium-xbt-compiler"
+  },
+  "git_base": {
+    "exit_code": 0,
+    "output": "a7e456e7ae46878437ef2ccc4bc9ba5532840bbe"
+  },
+  "working_tree": "cumulative uncommitted development snapshot, not a published release",
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+  "packages": {
+    "cmake": "4.4.4",
+    "ninja": "1.13.2",
+    "z3-solver": "5.3.3.0",
+    "llvmlite": "0.50.0",
+    "numpy": "2.4.6",
+    "ziglang": "0.17.0"
+  },
+  "host_compiler": {
+    "exit_code": 0,
+    "output": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+  },
+  "native_compiler": {
+    "exit_code": 0,
+    "output": "clang version 22.1.8\nTarget: x86_64-unknown-linux5.10.0-gnu2.36.0\nThread model: posix\nInstalledDir: /home/user/.venv/lib/python3.11/site-packages/ziglang"
+  },
+  "native_driver_note": "Zig 0.17 Clang adapter; rewrites a RISC-V triple and removes redundant -x ir / -c with -S for old CLI tests; SDK native does not use those special cases",
+  "sdk_info": {
+    "schema": 1,
+    "abi_major": 1,
+    "api_major": 1,
+    "api_minor": 2,
+    "finite_float_profile": 1,
+    "native_profile": "native-v1-loopfree",
+    "native_compiler_candidate": "/home/user/.venv/bin/clang",
+    "vulkan_built": false,
+    "sizes": {
+      "options": 40,
+      "metrics": 96,
+      "value": 24,
+      "float_value": 24
+    },
+    "source_cache_entries": 8,
+    "source_cache_bytes": 16777216,
+    "native_cache_entries_per_module": 16,
+    "vulkan_cache_entries_per_module": 4,
+    "numerical_profile": "exact-reductions-v1",
+    "numerical_operations": [
+      "sum",
+      "dot",
+      "norm2",
+      "polynomial"
+    ],
+    "numerical_max_terms": 4096,
+    "numerical_max_window_trits": 256,
+    "polynomial_max_degree": 16,
+    "pow_int_min": -16,
+    "pow_int_max": 16,
+    "finite_float_extended_operations": [
+      "reciprocal",
+      "cbrt",
+      "hypot",
+      "pow_int"
+    ]
+  },
+  "release_library_sha256": "9c672bcae75aad09fc9b690a6a594846960b6dbe8d5468dec45fb5ac8537129b",
+  "asan_library_sha256": "a33fd0496d30e8157481b778cc93f5497209acf032afbcbeb664107f0b4721c5",
+  "source_sha256": {
+    "CMakeLists.txt": "e4d8b0abdce37c074360798a8e2d32df00653ea8225a059bb7ee9d40df268952",
+    "ternary_fp.hpp": "e225b09e1e283d18e308df6bbd73b8bdff2238f3dd8b301ac21c14ed3162da8f",
+    "ternary_wide.hpp": "11f4fa2532e9818dd055dc2521d999eef902ab32d8e4bca5ad784ef113241675",
+    "include/Ternary/Math/Numerical.hpp": "c78ea2eb6f083c5ae8eb3f1951e36a7eec4b269825500ae5cf7276e7ab5a97bc",
+    "include/Ternary/SDK/sdk.h": "8403bbfaa6dc087867975941cf45214672d2f578b65b6fa7be83f531bca09d54",
+    "include/Ternary/SDK/SDK.hpp": "f1647d693c1cf5543123b0ffc9b53a20ae184c6e28b37cb7de866e0985a297ae",
+    "lib/SDK/sdk.cpp": "906baafe8326e617bc22cc40dec0f61fa6ff0625a5580e9f9c42f3767e06b989",
+    "lib/SDK/FloatRuntime.hpp": "58d1574f5a86144986fa3c6ba770dbce296d347c2f6f089b8250300fd7eb49d8",
+    "lib/SDK/NumericalRuntime.hpp": "7d34cacfe65958432258ad33d8e1d9b479e0a917c80ac6d5c6d8d4bef2f0fffc",
+    "lib/SDK/NumericalRuntime.cpp": "9171cadcfa00b476e18a8c2b0dcd92e219776437a9047cf51e3a3a7500d8ee10",
+    "ffi/python/trium/__init__.py": "dc10600df455bb65961dae95283fea70ef54b9f0cc7e23225c1b62f974a656fe",
+    "specs/ternary-float-v1.json": "1ea21f8c8f89f04b5954dc93fd453af97f73970ee5c88c3c27b65f4eda0d5922",
+    "specs/core-profile-v0.1.json": "2e8a2013731fc046bd285efa8f00fa5a08b065d22922c8e6c1e17e9bcaac5424",
+    "test/numerical_reference.py": "d96bac6d469b15db8b49bb43050334b4cd69c3b8b80c8fe00d11d9fac0e9fa5b",
+    "test/SDK/numerical.cpp": "77c2aa9530b6d17f5c901bf3bcb226bd1fb3bed4746b32866a759a67611193f3",
+    "test/cordic_survey.cpp": "98c82d6e7ee795b83e2eb81871b8da944b6faed4ca8ef9878be6275e78c970c9",
+    "tools/verify_cordic_constants.py": "f77f2579f5235b99982bd699bf1af59cd617e635b2776bd48049e20bd4e40834",
+    "verify_z3_numerical.py": "2415cc80d705ebc099119861aab5d01a48c4d38c4cf84b39df444809999e6359",
+    "examples/sdk/main.c": "9106327ca8bfc9083074b1c7e42e589919a9d566ba9612a120edb5a5c6dd299f",
+    "examples/sdk/main.cpp": "d07f5ba3c8d2c1166ef5aa4979593efcd021ecc20a73f4eab739d6a4c6ca764c",
+    "examples/sdk/CMakeLists.txt": "7f5261faa23a5612c00c59c9c39c7e2b869d5fd3fec418e287f0ad01c642b3d6"
+  },
+  "root_proof_scripts": [
+    "verify_z3_bigint_divmod.py",
+    "verify_z3_core_lowering.py",
+    "verify_z3_dense_algebra.py",
+    "verify_z3_floating_foundation.py",
+    "verify_z3_fp_fma.py",
+    "verify_z3_kogge_stone.py",
+    "verify_z3_numeric_capacity.py",
+    "verify_z3_numerical.py",
+    "verify_z3_phase1.py",
+    "verify_z3_round_div.py",
+    "verify_z3_sdk_contracts.py",
+    "verify_z3_sdk_words.py",
+    "verify_z3_swar_bct.py",
+    "verify_z3_ternary.py"
+  ],
+  "qualification": {
+    "release": {
+      "passed": 49,
+      "skipped": 4,
+      "total": 53,
+      "seconds": 25.97
+    },
+    "asan_ubsan": {
+      "passed": 49,
+      "skipped": 4,
+      "total": 53,
+      "seconds": 63.14
+    },
+    "advanced_exact_cases": 13326,
+    "existing_float_exact_cases": 54022,
+    "legacy_exact_cases": 15372,
+    "native_differential_cases": 1744,
+    "root_z3_scripts": 14,
+    "new_z3_model_obligations": 51,
+    "cordic_constants_checked": 84,
+    "cordic_constants_corrected": 36,
+    "vulkan_built": false,
+    "vulkan_requalified": false,
+    "physical_gpu_performed": false,
+    "rust_qualified": false,
+    "remote_ci_performed": false,
+    "standalone_installed_math_headers": true
+  },
+  "survey": {
+    "before": "current helper implementation with only the four constant tables restored from git base; isolates table changes",
+    "samples": "test/cordic_survey.cpp; g++ -std=c++20 -O2; 2001 circular, 1001 hyperbolic/log, 1000 positive-octant atan2 inputs",
+    "scope": "sampled libm comparison, not a universal error bound",
+    "baseline_header_sha256": "acaaad3c360b97c139d243272e9f63a35d46118a0ce588883219442a58100670"
+  },
+  "wheel": {
+    "trium_xbt_sdk-0.2.0.dev0-py3-none-any.whl": "eecc8f4a9ab3bdaf0ccc45ebc145ea01e7ecfe42ead17275f1fb8fa14b50e91c"
+  }
+}

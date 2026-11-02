@@ -11,6 +11,10 @@ the first five stages is now recorded in
 [STEPS_1_TO_5_STATUS.md](STEPS_1_TO_5_STATUS.md); the gates below remain the
 acceptance criteria, not an assertion that every hardware gate has closed.
 
+The next numerical slice is implemented in [advanced numerics / SDK 1.2](ADVANCED_NUMERICS_SDK_1_2.md):
+exact extended FP, bounded reductions/polynomials, and audited low-level constants.
+It does not close the broader solver/tensor/transcendental/hardware gates.
+
 ## 1. Your goals, restated
 
 The goal is to develop **a production-grade balanced-ternary compiler and reusable

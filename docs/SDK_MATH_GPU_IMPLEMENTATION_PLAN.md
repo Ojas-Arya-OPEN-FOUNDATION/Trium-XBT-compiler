@@ -7,7 +7,9 @@ not a claim that every work package is complete. The subsequent
 [FLOATING_POINT_FOUNDATION.md](FLOATING_POINT_FOUNDATION.md) implements the focused
 primitive/capacity milestone. The subsequent [SDK 1.1 milestone](SDK_1_1.md) adds
 compiled native CPU execution, typed discovery, bounded caches and persistent
-Vulkan dispatch resources. Broader tensor/tuning/hardware packages below remain
+Vulkan dispatch resources. The later [SDK 1.2 numerical delivery](ADVANCED_NUMERICS_SDK_1_2.md) expands finite
+FP and single-round numerical routines with separate resource contracts.
+Broader tensor/tuning/hardware packages below remain
 separate gates. README remains unchanged.
 
 ## 1. Objective and honest end state

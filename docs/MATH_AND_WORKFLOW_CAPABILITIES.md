@@ -4,6 +4,10 @@ Date: 2026-10-30. Current executable SDK scope, not an all-workload claim.
 The [focused floating-point milestone](FLOATING_POINT_FOUNDATION.md) adds all-width
 CPU BTFP primitives, exact-reference validation and explicit SDK access; it does
 not add GPU floating-point/tensor execution.
+The [SDK 1.2 numerical milestone](ADVANCED_NUMERICS_SDK_1_2.md) adds exact
+reciprocal/cube-root/hypot/bounded powers, single-round reductions/norms and
+polynomials, plus corrected legacy helper tables. These are CPU math APIs, not
+GPU floating tensors.
 The [SDK 1.1 execution milestone](SDK_1_1.md) adds reusable native CPU execution
 for pure loop-free scalar functions, mixed typed invocation, discoverable
 signatures and reusable Vulkan resources. This makes repeated application calls

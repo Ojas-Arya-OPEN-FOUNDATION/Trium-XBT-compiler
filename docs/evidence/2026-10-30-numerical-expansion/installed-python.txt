@@ -1,0 +1,1 @@
+PASS isolated installed wheel: API1.2 discovery, extended FP, exact dot/norm/polynomial and existing compiled native execution
