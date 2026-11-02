@@ -62,6 +62,10 @@ def _library(path=None):
     if lib._api_version>=0x10001:
         signatures.update({'info':[C.c_void_p,C.POINTER(C.c_size_t)],'module_info':[h,C.c_void_p,C.POINTER(C.c_size_t)],'cache_info':[h,C.c_void_p,C.POINTER(C.c_size_t)],'cache_clear':[h],
           'invoke_ex':[h,C.c_char_p,C.c_uint32,C.POINTER(_Value),C.c_uint32,C.POINTER(_Value),C.POINTER(Metrics)]})
+    if lib._api_version>=0x10002:
+        signatures.update({'float_powi':[C.POINTER(_Float),C.c_int32,C.POINTER(_Float)],
+          'float_reduce':[C.c_uint32,C.c_uint32,C.POINTER(_Float),C.POINTER(_Float),C.c_uint64,C.POINTER(_Float)],
+          'float_polynomial':[C.POINTER(_Float),C.POINTER(_Float),C.c_uint64,C.POINTER(_Float)]})
     for name,args in signatures.items():
         fn=getattr(lib,'bt_sdk_'+name);fn.argtypes=args+err;fn.restype=C.c_int32
     return lib
@@ -134,10 +138,36 @@ class Context:
     def float_to_double(self,value):
         record=value._record();out=C.c_double();_check(self.lib,'float_to_double',C.byref(record),C.byref(out));return out.value
     def float_apply(self,operation,a,b=None,c=None):
-        operations={'add':1,'sub':2,'mul':3,'div':4,'sqrt':5,'fma':6}
+        operations={'add':1,'sub':2,'mul':3,'div':4,'sqrt':5,'fma':6,'reciprocal':7,'cbrt':8,'hypot':9}
         if operation not in operations:raise ValueError('unknown BTFP operation')
+        if operations[operation]>6 and self.lib._api_version<0x10002:raise Error(4,'extended BTFP requires API 1.2')
         records=[v._record() if v is not None else None for v in (a,b,c)];out=_Float()
         _check(self.lib,'float_apply',operations[operation],*[C.byref(v) if v is not None else None for v in records],C.byref(out));return TernaryFloat._from_record(out)
+    def _numerical_api(self):
+        if self.lib._api_version<0x10002:raise Error(4,'numerical routines require API 1.2')
+    def float_powi(self,value,power):
+        self._numerical_api()
+        if type(power)is not int or not -(2**31)<=power<2**31:raise ValueError('expected int32 power')
+        a=value._record();out=_Float();_check(self.lib,'float_powi',C.byref(a),power,C.byref(out));return TernaryFloat._from_record(out)
+    def float_reduce(self,operation,values,other=None,*,width=None):
+        self._numerical_api();operations={'sum':1,'dot':2,'norm2':3}
+        if operation not in operations:raise ValueError('unknown BTFP reduction')
+        values=list(islice(values,4097))
+        if len(values)>4096:raise Error(6,'BTFP reduction count exceeds 4096')
+        if width is None:width=values[0].width if values else 20
+        if type(width)is not int or not 1<=width<=40:raise ValueError('width must be 1..40')
+        av=(_Float*len(values))(*(v._record() for v in values));bv=None
+        if operation=='dot':
+            if other is None:raise ValueError('dot needs a second array')
+            other=list(islice(other,4097))
+            if len(other)!=len(values):raise ValueError('dot shape mismatch')
+            bv=(_Float*len(other))(*(v._record() for v in other))
+        out=_Float();_check(self.lib,'float_reduce',width,operations[operation],av,bv,len(values),C.byref(out));return TernaryFloat._from_record(out)
+    def float_polynomial(self,x,coefficients):
+        self._numerical_api();coefficients=list(islice(coefficients,18))
+        if len(coefficients)>17:raise Error(6,'polynomial degree exceeds 16')
+        a=x._record();cv=(_Float*len(coefficients))(*(v._record() for v in coefficients));out=_Float()
+        _check(self.lib,'float_polynomial',C.byref(a),cv,len(coefficients),C.byref(out));return TernaryFloat._from_record(out)
     def matmul(self,a,b,m,k,n):
         if any(type(x)is not int or x<0 or x>1000000 for x in (m,k,n)) or m*k!=len(a) or k*n!=len(b) or m*n>1000000:raise ValueError('matrix shapes/storage mismatch')
         av=(C.c_int64*len(a))(*map(_integer,a));bv=(C.c_int64*len(b))(*map(_integer,b));out=(C.c_int64*(m*n))()
