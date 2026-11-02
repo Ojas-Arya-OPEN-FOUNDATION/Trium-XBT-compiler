@@ -1,0 +1,5 @@
+bt::nonlinear::xbt_silu_fast(-inf) = -nan
+bt::nonlinear::xbt_gelu_fast(-inf) = -nan
+bt::nonlinear::xbt_softmax: finite input -> finite output (no issue found)
+bt::nonlinear::xbt_rmsnorm(1e-45 denormals, eps=0) = inf (N-03)
+bt::nonlinear::xbt_exp_btfp32(BTFP32(1000)) -> std::terminate (SIGABRT, exit 134)

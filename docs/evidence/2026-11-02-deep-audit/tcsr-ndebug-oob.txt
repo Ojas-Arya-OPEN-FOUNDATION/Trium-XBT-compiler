@@ -1,0 +1,14 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==8782==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008 (pc 0x555afa4d0b69 bp 0x0ffffba77c84 sp 0x7fffdd3be410 T0)
+==8782==The signal is caused by a READ memory access.
+==8782==Hint: address points to the zero page.
+    #0 0x555afa4d0b69 in bt::TCSRMatrix::get_sign(unsigned long) const build/upstream-review/snapshot/ternary_sparse.hpp:282
+    #1 0x555afa4d0b69 in main build/deep-audit/probes2.cpp:12
+    #2 0x7f4d16e45249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #3 0x7f4d16e45304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #4 0x555afa4cf340 in _start (/home/user/Trium-XBT-compiler/build/deep-audit/probes2-matrix+0xd340)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV build/upstream-review/snapshot/ternary_sparse.hpp:282 in bt::TCSRMatrix::get_sign(unsigned long) const
+==8782==ABORTING

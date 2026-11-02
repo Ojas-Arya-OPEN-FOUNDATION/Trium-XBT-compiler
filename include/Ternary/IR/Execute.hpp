@@ -151,6 +151,10 @@ public:
         }
         return execute(f.body,frame).value;
     }
+    // Steps consumed by the most recent invoke(); lets a batch caller enforce an
+    // aggregate budget instead of granting every element a fresh per-call budget.
+    uint64_t steps_used() const noexcept { return steps; }
+    uint64_t step_limit() const noexcept { return limit; }
     int64_t run() {
         steps=0;calls=0;Frame frame;
         auto flow=execute(program.body,frame);

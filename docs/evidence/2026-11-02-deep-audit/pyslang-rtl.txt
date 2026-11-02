@@ -1,0 +1,6 @@
+Parser: pyslang 12.1.0 (SystemVerilog frontend)
+Input: hw/riscv_xbt_extension.sv
+Result: parsed successfully; 1 warning:
+  hw/riscv_xbt_extension.sv: unique case with default (benign)
+No elaboration, synthesis, formal or simulation was performed. Verilator, Icarus,
+Yosys, SymbiYosys and EQY are not installed in this container.

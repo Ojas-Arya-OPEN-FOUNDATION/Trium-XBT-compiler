@@ -1,0 +1,28 @@
+{
+  "allocators": {
+    "DualRailPlanes(SIZE_MAX)": "num_words=18446744073709551615 capacity=0 bytes=0; ASan heap-buffer-overflow WRITE at set_word",
+    "allocate_aligned(SIZE_MAX-31)": "accepted; 64-byte block returned",
+    "Base243Arena.allocate<uint64_t>(SIZE_MAX/4)": "accepted; 8-byte block",
+    "Base243Arena(SIZE_MAX/8+2)": "accepted"
+  },
+  "threads": {
+    "worker_exception": "std::terminate (SIGABRT)",
+    "caller_exception": "ASan stack-use-after-scope at std::latch::count_down (ternary_kokkos_bridge.hpp:404)",
+    "concurrent_initialize": "SIGSEGV"
+  },
+  "process": {"inherited_parent_fd": 1},
+  "numerics": {
+    "gemm_1x1_1e-22_squared": 0.0,
+    "gemm_1e38_cancellation": "NaN",
+    "rmsnorm_denormal_eps0": "inf",
+    "tri_radix_2^-2000_5^800": "NaN",
+    "silu_neg_inf": "NaN",
+    "gelu_neg_inf": "NaN",
+    "exp_btfp32_1000": "std::terminate"
+  },
+  "held_up": {
+    "kogge_stone_model_pairs": 20000,
+    "rounding_checks": "250000 one-shot + 50000 sequential",
+    "rtl_parse": "success"
+  }
+}

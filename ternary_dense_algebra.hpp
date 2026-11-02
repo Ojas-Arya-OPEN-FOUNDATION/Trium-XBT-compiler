@@ -327,28 +327,36 @@ public:
         if (c > SIZE_MAX - 63 || (c && r > SIZE_MAX / c))
             throw std::length_error("ternary matrix dimensions overflow");
         words_per_row = (c + 63) / 64;
+        if (words_per_row && r > SIZE_MAX / words_per_row)
+            throw std::length_error("ternary matrix word count overflow");
         data.resize(rows * words_per_row, TritWord64(0, 0));
     }
 
-    inline TritWord64& word(size_t r, size_t w) noexcept {
-        assert(r < rows && w < words_per_row);
+    // Bounds checks in these public accessors are unconditional, not assert-only:
+    // a release (NDEBUG) build must never read or write outside `data`.
+    inline TritWord64& word(size_t r, size_t w) {
+        if (r >= rows || w >= words_per_row)
+            throw std::out_of_range("TernaryMatrix::word: index out of range");
         return data[r * words_per_row + w];
     }
 
-    inline const TritWord64& word(size_t r, size_t w) const noexcept {
-        assert(r < rows && w < words_per_row);
+    inline const TritWord64& word(size_t r, size_t w) const {
+        if (r >= rows || w >= words_per_row)
+            throw std::out_of_range("TernaryMatrix::word: index out of range");
         return data[r * words_per_row + w];
     }
 
-    inline Trit get(size_t r, size_t c) const noexcept {
-        assert(r < rows && c < cols);
+    inline Trit get(size_t r, size_t c) const {
+        if (r >= rows || c >= cols) throw std::out_of_range("TernaryMatrix::get: index out of range");
         size_t w = c / 64;
         size_t bit = c % 64;
         return word(r, w).getTrit(bit);
     }
 
-    inline void set(size_t r, size_t c, Trit t) noexcept {
-        assert(r < rows && c < cols);
+    inline void set(size_t r, size_t c, Trit t) {
+        if (r >= rows || c >= cols) throw std::out_of_range("TernaryMatrix::set: index out of range");
+        if (t != Trit::Neg && t != Trit::Zero && t != Trit::Pos)
+            throw std::invalid_argument("TernaryMatrix::set: value is not a trit");
         size_t w = c / 64;
         size_t bit = c % 64;
         word(r, w).setTrit(bit, t);
@@ -380,13 +388,13 @@ public:
         data.resize(r * c, 0);
     }
 
-    inline int64_t& operator()(size_t r, size_t c) noexcept {
-        assert(r < rows && c < cols);
+    inline int64_t& operator()(size_t r, size_t c) {
+        if (r >= rows || c >= cols) throw std::out_of_range("DenseMatrixInt64: index out of range");
         return data[r * cols + c];
     }
 
-    inline int64_t operator()(size_t r, size_t c) const noexcept {
-        assert(r < rows && c < cols);
+    inline int64_t operator()(size_t r, size_t c) const {
+        if (r >= rows || c >= cols) throw std::out_of_range("DenseMatrixInt64: index out of range");
         return data[r * cols + c];
     }
 };
@@ -397,8 +405,8 @@ public:
  * Pre-transposes B into B^T (N x K) so all dot products are sequential streaming POPCNTs!
  */
 inline void gemm(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
 
     // Cache-aligned Transpose of B
     TernaryMatrix BT = B.transpose();
@@ -423,8 +431,8 @@ inline void gemm(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt6
  */
 inline void gemm_tiled(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C,
                        size_t tile_size = 64) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
 
     TernaryMatrix BT = B.transpose();
 
@@ -460,8 +468,8 @@ inline void gemm_tiled(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatr
  */
 inline void gemm_tiled_l1_l2(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C,
                              size_t M_tile = 64, size_t N_tile = 64, size_t K_words_tile = 16) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
 
     TernaryMatrix BT = B.transpose();
 
@@ -585,8 +593,8 @@ struct DenseDualRailPlanes {
         return DenseDualRailPlanes(mat);
     }
 
-    inline Trit get(size_t r, size_t c) const noexcept {
-        assert(r < rows && c < cols);
+    inline Trit get(size_t r, size_t c) const {
+        if (r >= rows || c >= cols) throw std::out_of_range("DenseDualRailPlanes::get: index out of range");
         size_t w = c / 64;
         size_t bit = c % 64;
         size_t idx = r * words_per_row + w;
@@ -597,8 +605,8 @@ struct DenseDualRailPlanes {
         return Trit::Zero;
     }
 
-    inline void set(size_t r, size_t c, Trit t) noexcept {
-        assert(r < rows && c < cols);
+    inline void set(size_t r, size_t c, Trit t) {
+        if (r >= rows || c >= cols) throw std::out_of_range("DenseDualRailPlanes::set: index out of range");
         size_t w = c / 64;
         size_t bit = c % 64;
         size_t idx = r * words_per_row + w;
@@ -911,8 +919,8 @@ inline void gemm_autotuned(const DenseDualRailPlanes& A, const DenseDualRailPlan
  * @brief Convenience overload of gemm_autotuned for TernaryMatrix and DenseMatrixInt64.
  */
 inline void gemm_autotuned(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
     DenseDualRailPlanes A_planes(A);
     DenseDualRailPlanes BT_planes(B.transpose());
     gemm_autotuned(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
@@ -1018,8 +1026,8 @@ inline void gemm_csa9(const DualRailPlanes& A, const DualRailPlanes& B_T,
  * @brief Convenience overload of gemm_csa9 for TernaryMatrix and DenseMatrixInt64.
  */
 inline void gemm_csa9(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
     DenseDualRailPlanes A_planes(A);
     DenseDualRailPlanes BT_planes(B.transpose());
     gemm_csa9(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
@@ -1159,8 +1167,8 @@ inline void gemm_universal_harley_seal(const DualRailPlanes& A, const DualRailPl
 }
 
 inline void gemm_universal_harley_seal(const TernaryMatrix& A, const TernaryMatrix& B, DenseMatrixInt64& C) {
-    assert(A.cols == B.rows);
-    assert(C.rows == A.rows && C.cols == B.cols);
+    if (A.cols != B.rows) throw std::invalid_argument("GEMM: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols) throw std::invalid_argument("GEMM: output dimensions mismatch");
     DenseDualRailPlanes A_planes(A);
     DenseDualRailPlanes BT_planes(B.transpose());
     gemm_universal_harley_seal(A_planes, BT_planes, C.data, A.rows, B.cols, A.cols);
@@ -1194,13 +1202,13 @@ public:
         return planes.empty() ? 0 : planes[0].cols;
     }
 
-    inline TernaryMatrix& plane(size_t p) noexcept {
-        assert(p < num_planes);
+    inline TernaryMatrix& plane(size_t p) {
+        if (p >= planes.size()) throw std::out_of_range("plane index out of range");
         return planes[p];
     }
 
-    inline const TernaryMatrix& plane(size_t p) const noexcept {
-        assert(p < num_planes);
+    inline const TernaryMatrix& plane(size_t p) const {
+        if (p >= planes.size()) throw std::out_of_range("plane index out of range");
         return planes[p];
     }
 
@@ -1302,8 +1310,8 @@ inline void gemm_multitrit(const MultiTritMatrix& A, const MultiTritMatrix& B, D
     size_t M = A.plane(0).rows;
     size_t K = A.plane(0).cols;
     size_t N = B.plane(0).cols;
-    assert(B.plane(0).rows == K);
-    assert(C.rows == M && C.cols == N);
+    if (B.plane(0).rows != K) throw std::invalid_argument("gemm_multitrit: inner dimensions differ");
+    if (C.rows != M || C.cols != N) throw std::invalid_argument("gemm_multitrit: output dimensions mismatch");
 
     // Zero accumulator
     std::fill(C.data.begin(), C.data.end(), 0);

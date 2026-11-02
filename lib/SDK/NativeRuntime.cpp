@@ -65,21 +65,13 @@ NativeProgram::NativeProgram(const ir::Function& f,const std::string& compiler):
     text+=wrapper.str();auto source=state->directory.file("module.ll"),image=state->directory.file("module.so"),log=state->directory.file("compiler.log");
     {std::ofstream stream(source);stream<<text;if(!stream)throw std::runtime_error("cannot write native compiler input");}
     int status;
-    try{
-        std::vector<std::string> compile_args = {compiler,"-O3","-Wno-override-module","-shared","-fPIC"};
-#if defined(__APPLE__)
-        const char* sdk = std::getenv("SDKROOT");
-        if (std::filesystem::exists("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")) {
-            compile_args.push_back("-isysroot");
-            compile_args.push_back("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk");
-        } else if (sdk) {
-            compile_args.push_back("-isysroot");
-            compile_args.push_back(sdk);
-        }
-#endif
-        compile_args.insert(compile_args.end(), {source,"-o",image,"-lm"});
-        status=host::run_process(compile_args,log,60000);
-    }
+    // Same host toolchain flags as the driver (e.g. an explicit macOS SDKROOT),
+    // so native JIT and cross-compilation never disagree about the system SDK.
+    std::vector<std::string> command{compiler,"-O3","-Wno-override-module"};
+    for(auto& flag:host::platform_toolchain_flags())command.push_back(flag);
+    for(auto& argument:{std::string("-shared"),std::string("-fPIC"),source,std::string("-o"),image,std::string("-lm")})
+        command.push_back(argument);
+    try{status=host::run_process(command,log,60000);}
     catch(const host::ProcessTimeout&){throw;}
     catch(const std::exception& e){throw Unavailable(e.what());}
     if(status){std::ifstream stream(log);std::string diagnostic(16384,'\0');stream.read(diagnostic.data(),diagnostic.size());diagnostic.resize(stream.gcount());throw Unavailable("native compiler failed: "+diagnostic);}

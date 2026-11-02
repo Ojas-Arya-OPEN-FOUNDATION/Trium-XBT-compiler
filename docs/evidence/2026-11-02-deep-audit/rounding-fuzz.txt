@@ -1,0 +1,1 @@
+PASS 250000 one-shot divisibility checks and 50000 sequential-equivalence checks (k=1..43)

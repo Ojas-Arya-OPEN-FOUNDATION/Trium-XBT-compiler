@@ -103,13 +103,6 @@ private:
 
     // All scalar arithmetic is widened before checking. Failure unwinds generated
     // functions through an explicit status channel, never C++ exceptions or UB.
-    void clamp_integer_64(const std::string& val, const std::string& result) {
-        std::string hi = new_reg(), c1 = new_reg(), lo = new_reg();
-        fn_body_ << "  " << hi << " = icmp sgt i64 " << val << ", " << contract::integer_max << dbg_tag() << "\n";
-        fn_body_ << "  " << c1 << " = select i1 " << hi << ", i64 " << contract::integer_max << ", i64 " << val << dbg_tag() << "\n";
-        fn_body_ << "  " << lo << " = icmp slt i64 " << c1 << ", " << contract::integer_min << dbg_tag() << "\n";
-        fn_body_ << "  " << result << " = select i1 " << lo << ", i64 " << contract::integer_min << ", i64 " << c1 << dbg_tag() << "\n";
-    }
     void check_integer(const std::string& wide, const std::string& result) {
         std::string lo = new_reg(), hi = new_reg(), bad = new_reg();
         std::string ok = new_label("integer_ok");
@@ -950,15 +943,19 @@ public:
         std::string res = new_reg();
         switch (node.op) {
             case frontend::BinaryOp::Add: {
-                std::string raw = new_reg();
-                fn_body_ << "  " << raw << " = add i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
-                clamp_integer_64(raw, res);
+                std::string a = new_reg(), b = new_reg(), wide = new_reg();
+                fn_body_ << "  " << a << " = sext i64 " << left_val << " to i128\n";
+                fn_body_ << "  " << b << " = sext i64 " << right_val << " to i128\n";
+                fn_body_ << "  " << wide << " = add i128 " << a << ", " << b << "\n";
+                check_integer(wide, res);
                 break;
             }
             case frontend::BinaryOp::Sub: {
-                std::string raw = new_reg();
-                fn_body_ << "  " << raw << " = sub i64 " << left_val << ", " << right_val << dbg_tag() << "\n";
-                clamp_integer_64(raw, res);
+                std::string a = new_reg(), b = new_reg(), wide = new_reg();
+                fn_body_ << "  " << a << " = sext i64 " << left_val << " to i128\n";
+                fn_body_ << "  " << b << " = sext i64 " << right_val << " to i128\n";
+                fn_body_ << "  " << wide << " = sub i128 " << a << ", " << b << "\n";
+                check_integer(wide, res);
                 break;
             }
             case frontend::BinaryOp::Mul: {

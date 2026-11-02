@@ -39,12 +39,6 @@ class LLVMEmitter {
         auto lo=instruction("icmp slt i64 "+n+", "+std::to_string(low));
         auto hi=instruction("icmp sgt i64 "+n+", "+std::to_string(high));guard(instruction("or i1 "+lo+", "+hi));
     }
-    std::string clamp64(const std::string& n,int64_t low=math::ScalarInteger::minimum,int64_t high=math::ScalarInteger::maximum) {
-        auto hi=instruction("icmp sgt i64 "+n+", "+std::to_string(high));
-        auto c1=instruction("select i1 "+hi+", i64 "+std::to_string(high)+", i64 "+n);
-        auto lo=instruction("icmp slt i64 "+c1+", "+std::to_string(low));
-        return instruction("select i1 "+lo+", i64 "+std::to_string(low)+", i64 "+c1);
-    }
     std::string checked128(const std::string& n) {
         auto lo=instruction("icmp slt i128 "+n+", "+std::to_string(math::ScalarInteger::minimum));
         auto hi=instruction("icmp sgt i128 "+n+", "+std::to_string(math::ScalarInteger::maximum));
@@ -71,7 +65,8 @@ class LLVMEmitter {
         }
         if(e.op==Op::Add || e.op==Op::Sub) {
             auto r=instruction(op+" i64 "+a+", "+b);
-            return clamp64(r);
+            check64(r);
+            return r;
         }
         auto x=instruction("sext i64 "+a+" to i128"),y=instruction("sext i64 "+b+" to i128");
         return checked128(instruction(op+" i128 "+x+", "+y));

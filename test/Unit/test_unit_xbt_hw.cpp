@@ -1,6 +1,12 @@
 /**
  * @file test/Unit/test_unit_xbt_hw.cpp
- * @brief Unit Tests for RISC-V "Xbt" Custom-0 Hardware Extension RTL & Co-Simulator
+ * @brief Unit Tests for the RISC-V "Xbt" Custom-0 ISA model and RTL source inventory
+ *
+ * Scope: these tests validate the C++ behavioural model of the Xbt instructions
+ * against independent reference arithmetic. The SystemVerilog RTL is checked for
+ * module presence (and linted only when a Verilator binary is available); NO RTL
+ * co-simulation is performed here. Co-simulation requires Verilator/Icarus and is
+ * documented as pending hardware qualification.
  */
 
 #include "../../hw/xbt_alu_model.hpp"
@@ -11,6 +17,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <filesystem>
 
 using namespace bt;
 using namespace bt::hw;
@@ -124,10 +132,13 @@ static void test_coprocessor_execution() {
     assert(cpu.cycles == prev_cycles); // 0 ALU clock cycles for wire-swap negation
     assert(cpu.zero_gate_negations == prev_neg + 1);
 
-    std::cout << "  [PASS] Cycle-Exact Co-Simulation of BTHA, KSADD, DOT64, UNPACK243, NEG\n";
+    std::cout << "  [PASS] Behavioural ISA model of BTHA, KSADD, DOT64, UNPACK243, NEG\n";
 }
 
 static void test_systemverilog_rtl_presence() {
+    // Honest scope: this is a source inventory, not a co-simulation. The model is
+    // checked against reference arithmetic in test_coprocessor_execution(); the RTL
+    // itself is only linted when a real simulator is installed.
     std::ifstream sv_file;
     // Resolve path independent of CWD: try a few candidates, then __FILE__-relative.
     const char* candidates[] = {
@@ -169,7 +180,31 @@ static void test_systemverilog_rtl_presence() {
         assert(content.find(mod) != std::string::npos && "Missing required SystemVerilog module!");
     }
 
-    std::cout << "  [PASS] SystemVerilog RTL Verification (All 6 Xbt Hardware Modules Verified)\n";
+    // Optional real RTL check: lint with Verilator when one is installed. Without a
+    // simulator this is reported as SKIP instead of being presented as verification.
+    const char* path = std::getenv("PATH");
+    std::string verilator;
+    if (path) {
+        std::stringstream entries(path);
+        std::string item;
+        while (std::getline(entries, item, ':')) {
+            if (item.empty()) continue;
+            std::string candidate = item + "/verilator";
+            std::ifstream probe(candidate);
+            if (std::filesystem::is_regular_file(candidate)) { verilator = candidate; break; }
+        }
+    }
+    if (verilator.empty()) {
+        std::cout << "  [SKIP] Verilator RTL lint: no verilator on PATH (RTL not simulated)\n";
+    } else {
+        std::string command = "\"" + verilator + "\" --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSED "
+                              "\"hw/riscv_xbt_extension.sv\" >/dev/null 2>&1";
+        int status = std::system(command.c_str());
+        assert(status == 0 && "Verilator lint of hw/riscv_xbt_extension.sv failed");
+        std::cout << "  [PASS] Verilator lint of hw/riscv_xbt_extension.sv\n";
+    }
+
+    std::cout << "  [PASS] SystemVerilog RTL source inventory (6 Xbt modules present; not a co-simulation)\n";
 }
 
 int main() {

@@ -258,10 +258,15 @@ public:
     /**
      * @brief Look up element at (r, c) in O(log(row_nnz)) time via binary search.
      */
-    Trit get(size_t r, size_t c) const noexcept {
+    Trit get(size_t r, size_t c) const {
         if (r >= rows || c >= cols) return Trit::Zero;
+        if (row_ptr.size() != rows + 1)
+            throw std::logic_error("TCSRMatrix::get: row_ptr size does not match rows");
         size_t start = row_ptr[r];
-        size_t end = row_ptr[r + 1];
+        // While the builder is still appending, the end offset of the row it is
+        // currently filling has not been written yet (row_ptr[r + 1] is still 0),
+        // so reads of the last row silently returned Zero. Use the live nnz then.
+        size_t end = (r == m_current_build_row) ? nnz : row_ptr[r + 1];
         if (start >= end) return Trit::Zero;
 
         auto it = std::lower_bound(col_indices.begin() + start, col_indices.begin() + end, static_cast<uint32_t>(c));
@@ -273,18 +278,18 @@ public:
         return Trit::Zero;
     }
 
-    int8_t get_int(size_t r, size_t c) const noexcept {
+    int8_t get_int(size_t r, size_t c) const {
         return to_int(get(r, c));
     }
 
-    Trit get_sign(size_t nz_idx) const noexcept {
-        assert(nz_idx < nnz);
+    Trit get_sign(size_t nz_idx) const {
+        if (nz_idx >= nnz) throw std::out_of_range("TCSRMatrix::get_sign: nonzero index out of range");
         bool is_pos = (signs[nz_idx / 64] >> (nz_idx % 64)) & 1ULL;
         return is_pos ? Trit::Pos : Trit::Neg;
     }
 
-    bool is_pos(size_t nz_idx) const noexcept {
-        assert(nz_idx < nnz);
+    bool is_pos(size_t nz_idx) const {
+        if (nz_idx >= nnz) throw std::out_of_range("TCSRMatrix::is_pos: nonzero index out of range");
         return (signs[nz_idx / 64] >> (nz_idx % 64)) & 1ULL;
     }
 

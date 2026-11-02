@@ -1,0 +1,1 @@
+unit_frontend_fp_sparse: /home/user/Trium-XBT-compiler/build/upstream-review/snapshot/test/Unit/test_unit_frontend_fp_sparse.cpp:771: void test_dwarf_debug_metadata_and_vectorization(): Assertion `status == 0 && "Clang compilation of IR with DWARF-5 & loop metadata must succeed with 0 warnings/errors!"' failed.

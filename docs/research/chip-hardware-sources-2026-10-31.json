@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-10-31",
+  "method": "Primary-source repository documentation and selected interface/circuit/library files read through GitHub CLI. Sources pinned to commits; no third-party source vendored. Not a systematic literature review or experimental replication.",
+  "sources": [
+    {
+      "id": "S1",
+      "repository": "riscv/riscv-isa-manual",
+      "commit": "8fb3965fe4b501a6bfa00c34affffcdbdb2c552c",
+      "title": "Custom instruction allocation",
+      "files_reviewed": [
+        {
+          "path": "src/unpriv/rv-32-64g.adoc",
+          "url": "https://github.com/riscv/riscv-isa-manual/blob/8fb3965fe4b501a6bfa00c34affffcdbdb2c552c/src/unpriv/rv-32-64g.adoc",
+          "sha256": "b999d3cc44be34f0e5dffe83e1bfe88bfe25cd74b23ea2f3abfff24ef402337b"
+        }
+      ],
+      "finding_and_limit": "Custom-0 through custom-3 are the recommended custom major opcodes; reserved encodings are not a safe substitute. This is not a registered Xbt extension or a CPU integration.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S2",
+      "repository": "openhwfoundation/core-v-xif",
+      "commit": "d26eeab305270dd6462126b775cdbe28fb989477",
+      "title": "Coprocessor protocol",
+      "files_reviewed": [
+        {
+          "path": "docs/source/x_ext.rst",
+          "url": "https://github.com/openhwfoundation/core-v-xif/blob/d26eeab305270dd6462126b775cdbe28fb989477/docs/source/x_ext.rst",
+          "sha256": "b686521d16054cc61db877d7cb3a591ed56d15d130f25b4a3ed64ca2038610f0"
+        }
+      ],
+      "finding_and_limit": "Issue/register/commit/result channels, speculative kill/commit and optional memory interfaces are explicit. Register widths/read counts are configured, not arbitrary 128-bit ternary registers. Match a specific core and specification revision.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S3",
+      "repository": "openhwfoundation/cv32e40x",
+      "commit": "d952cd63bc1b4eb58cd893c28ef8283c781e345e",
+      "title": "A concrete RISC-V integration candidate",
+      "files_reviewed": [
+        {
+          "path": "docs/user_manual/source/x_ext.rst",
+          "url": "https://github.com/openhwfoundation/cv32e40x/blob/d952cd63bc1b4eb58cd893c28ef8283c781e345e/docs/user_manual/source/x_ext.rst",
+          "sha256": "ecdb0b6e2e6b6cf3b078fbe6ca0c9dfc055a95399b337642ee84cb889d779606"
+        }
+      ],
+      "finding_and_limit": "The core exposes an extension interface; control-transfer instructions are not supported through it. Separate core verification infrastructure and compatible interface revisions remain required.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S4",
+      "repository": "google/CFU-Playground",
+      "commit": "7f8ec4147b39db98534f8a10f9ddb1c26aca5648",
+      "title": "A small FPGA custom-function exploration route",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/google/CFU-Playground/blob/7f8ec4147b39db98534f8a10f9ddb1c26aca5648/README.md",
+          "sha256": "f412aa3bbf3e019a9c5cfcf536415fb8a86da3022b1db15e9a992af5dcfc93b4"
+        }
+      ],
+      "finding_and_limit": "The README describes instruction/kernel/FPGA iteration and no-board simulation, supported board examples, and its prototype/not-officially-supported disclaimer. It is an alternative experiment, not a second mandatory SoC integration.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S5",
+      "repository": "enjoy-digital/litex",
+      "commit": "57dc334007b56f9b3b74e2a4ac97882d96bd4260",
+      "title": "FPGA SoC and control infrastructure",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/enjoy-digital/litex/blob/57dc334007b56f9b3b74e2a4ac97882d96bd4260/README.md",
+          "sha256": "26173b1f0a8c747cd15da89b182c81b1227dbdd45b14c97edda1cebabe71facc"
+        }
+      ],
+      "finding_and_limit": "Buses, memory/peripheral generation, BIOS and CSR headers, host bridges and LiteScope are described. Proposed first control-plane host; none is integrated into Trium-XBT in this research.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S6",
+      "repository": "ucb-bar/chipyard",
+      "commit": "157dd69e49b9866be2bf8db390ee78bc38cd4438",
+      "title": "Larger SoC route",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/ucb-bar/chipyard/blob/157dd69e49b9866be2bf8db390ee78bc38cd4438/README.md",
+          "sha256": "2d24092303384984451f5e688d0fa833cb7e879b41b2d9356fc944ba95d3d442"
+        }
+      ],
+      "finding_and_limit": "The framework covers RISC-V cores, MMIO/custom accelerators, simulation, FPGA-assisted simulation and VLSI flows. Consider later if Rocket/RoCC is chosen; not the same interface as CV-X-IF.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S7",
+      "repository": "microsoft/BitNet",
+      "commit": "0b341e582afbf9e1011f24744b554c96a3477eb5",
+      "title": "A relevant binary-hardware ternary-weight baseline",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/microsoft/BitNet/blob/0b341e582afbf9e1011f24744b554c96a3477eb5/README.md",
+          "sha256": "f4e045fd07ed789ea28095c3f87ef0453d0c31218fb033b74543dff0f16910b0"
+        }
+      ],
+      "finding_and_limit": "Official inference framework describing CPU/GPU low-bit kernels. It demonstrates the category of binary-hardware optimization; upstream advertised performance is not a Trium measurement or an equal-workload comparison.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S8",
+      "repository": "verilator/verilator",
+      "commit": "92ac4051b66ab409351361910b865b9db98b816e",
+      "title": "Actual HDL compilation and simulation",
+      "files_reviewed": [
+        {
+          "path": "README.rst",
+          "url": "https://github.com/verilator/verilator/blob/92ac4051b66ab409351361910b865b9db98b816e/README.rst",
+          "sha256": "dae4b3358e3adc77181a5dd7da6c67397e4d7271ec6290e5eac3c2304050f451"
+        }
+      ],
+      "finding_and_limit": "Accepts SystemVerilog, performs lint and compiles simulation models into C++/SystemC. Reading an RTL file or incrementing a C++ cycle counter is not this process.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S9",
+      "repository": "cocotb/cocotb",
+      "commit": "3ec55d81a04b73663e7b0fc5f829f81e2882907f",
+      "title": "Independent Python-driven HDL tests",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/cocotb/cocotb/blob/3ec55d81a04b73663e7b0fc5f829f81e2882907f/README.md",
+          "sha256": "3d35c383c48a1e428a04c344c0eaba4ebdb987e4b308d8a87b162284db65ac71"
+        }
+      ],
+      "finding_and_limit": "Python testbenches for Verilog/VHDL; requires a simulator. A verification harness does not synthesize a chip or prove analog behavior.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S10",
+      "repository": "YosysHQ/sby",
+      "commit": "79fc9eddca5e33a28cc2f2cd19c9825efd9a7255",
+      "title": "RTL property checking",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/YosysHQ/sby/blob/79fc9eddca5e33a28cc2f2cd19c9825efd9a7255/README.md",
+          "sha256": "34f7038a82a95846692e455a57ff3fb4f682594c670bc65b5f4462c863ad3dd3"
+        }
+      ],
+      "finding_and_limit": "Front end for Yosys-based formal flows; engines/components have separate terms and syntax support differs between open and commercial suites. A completed proof must report its assumptions and supported frontend.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S11",
+      "repository": "YosysHQ/eqy",
+      "commit": "33015166c47398dff1ac72a699f4212891bb0618",
+      "title": "RTL/netlist equivalence",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/YosysHQ/eqy/blob/33015166c47398dff1ac72a699f4212891bb0618/README.md",
+          "sha256": "dd5e188ee216d195d6fc3772f2f1b1ef0a0b1f0cd316fe656202cabd595c7a0e"
+        }
+      ],
+      "finding_and_limit": "Yosys-based equivalence checking frontend. Use to check transformations where supported; not a substitute for an independently specified arithmetic reference.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S12",
+      "repository": "The-OpenROAD-Project/OpenROAD-flow-scripts",
+      "commit": "202c7fccbce32e86db899c54b0a0f0484f869cc3",
+      "title": "Binary digital RTL-to-GDS flow",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/202c7fccbce32e86db899c54b0a0f0484f869cc3/README.md",
+          "sha256": "e68ffe87730f003896467aebcec9acd65983c682f987e6b00df12eaac7ea77eb"
+        }
+      ],
+      "finding_and_limit": "Documents synthesis, floorplan, placement, clock tree, routing and finishing stages. Flow completion is not a foundry reservation, production signoff or physical ternary-cell implementation.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S13",
+      "repository": "librelane/librelane",
+      "commit": "64ef80802d3d189b476636d2a6b17888c03304ee",
+      "title": "Current modular digital implementation option",
+      "files_reviewed": [
+        {
+          "path": "Readme.md",
+          "url": "https://github.com/librelane/librelane/blob/64ef80802d3d189b476636d2a6b17888c03304ee/Readme.md",
+          "sha256": "a7356d2150e6257d3806e64829e710c5640635e0cb1cc26f2dbece62e205b0a8"
+        }
+      ],
+      "finding_and_limit": "Current LibreLane README describes configurable reproducible implementation flows. The separately reviewed chipfoundry/openlane2 README explicitly points development here; use a pinned supported flow rather than assuming the old brand/repository is current.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S14",
+      "repository": "google/skywater-pdk",
+      "commit": "7198cf647113f56041e02abf3eb623692820c5e1",
+      "title": "Open process data and explicit maturity warning",
+      "files_reviewed": [
+        {
+          "path": "README.rst",
+          "url": "https://github.com/google/skywater-pdk/blob/7198cf647113f56041e02abf3eb623692820c5e1/README.rst",
+          "sha256": "7b7907778e72221076e1ee137339c68865a044c2e52e3299a8dff1db9884bcae"
+        }
+      ],
+      "finding_and_limit": "README calls this open release an experimental preview/alpha, intended for test chips and initial verification rather than production. A mature process does not make every public PDK release or ternary design production-qualified.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S15",
+      "repository": "RTimothyEdwards/open_pdks",
+      "commit": "f55b79336b96b4d0a90abec0bdebdee4f4c34ab3",
+      "title": "PDK preparation is a separate dependency",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/RTimothyEdwards/open_pdks/blob/f55b79336b96b4d0a90abec0bdebdee4f4c34ab3/README.md",
+          "sha256": "9706e54c8ac791a350cc552fadc77c4ce1df87a7f7bb297dfef3b54e769fc3ff"
+        }
+      ],
+      "finding_and_limit": "Builds foundry data for open tools; sky130/gf180 support and prebuilt IHP distinction are documented. A PDK builder is not a ternary cell library, a fabrication contract or a generic advanced-node model.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S16",
+      "repository": "Xyce/Xyce",
+      "commit": "e5b7b9bb5b221630c66654c059fc2d33524f5b21",
+      "title": "Circuit/device simulation capability",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/Xyce/Xyce/blob/e5b7b9bb5b221630c66654c059fc2d33524f5b21/README.md",
+          "sha256": "92b532c3f09ace36075400c7cfb3f38d4b57d2a0d5e2593e74fb47c56dc5ed60"
+        }
+      ],
+      "finding_and_limit": "SPICE-compatible DC/transient/noise analyses and compact/custom models are described. Simulator capability does not validate a particular device model, PDK translation or fabrication process.",
+      "licensing_caution": "Upstream terms remain separate; this research is not a full per-file license audit."
+    },
+    {
+      "id": "S17",
+      "repository": "jeshraghian/mr-ternary",
+      "commit": "57a401031674b37d99f58fb47389fb49db4f0212",
+      "title": "Author-supplied physical-ternary circuit research",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/jeshraghian/mr-ternary/blob/57a401031674b37d99f58fb47389fb49db4f0212/README.md",
+          "sha256": "512a2db0dba4eb44672a1788dba797594f20f0db1b2f9dadbefb1e82fbc0ac46"
+        }
+      ],
+      "finding_and_limit": "SPICE supplement to High-Density Memristor-CMOS Ternary Logic Family, DOI 10.1109/TCSI.2020.3027693. Includes circuit/model references and warns ordinary DC sweeps can be inaccurate for its time-dependent memristor model. Not independently simulated or treated as fabricated Trium hardware.",
+      "licensing_caution": "No repository-wide license grant was identified in the reviewed README/metadata; it explicitly notes original authors’ model copyrights. Review all files and obtain rights before reuse."
+    },
+    {
+      "id": "S18",
+      "repository": "jeyeong-park/T-STA",
+      "commit": "c7d9557f92a4eb187bb3d49513635acc16966aa7",
+      "title": "Six-transition ternary timing research",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/jeyeong-park/T-STA/blob/c7d9557f92a4eb187bb3d49513635acc16966aa7/README.md",
+          "sha256": "ca31c83def819e08f8cddde707b674451b85d2476cb0599c0294b90495b1ae95"
+        },
+        {
+          "path": "std_cells.sp",
+          "url": "https://github.com/jeyeong-park/T-STA/blob/c7d9557f92a4eb187bb3d49513635acc16966aa7/std_cells.sp",
+          "sha256": "7184ed5ed18380f15bbd40fe73aba3fd97f1815f496ec11cf494e96922b5cd5a"
+        },
+        {
+          "path": "ternary.lib",
+          "url": "https://github.com/jeyeong-park/T-STA/blob/c7d9557f92a4eb187bb3d49513635acc16966aa7/ternary.lib",
+          "sha256": "9cc3f889bbbf6f8903830f6cdbffe08549c22e8f1d58194acb7923ad87e5cc3e"
+        }
+      ],
+      "finding_and_limit": "Research cells and extended Ternary Liberty data cover six ternary transitions; the actual std_cells.sp and ternary.lib headers/tables were inspected. Requires an external 32 nm Stanford CNTFET model; characterized with HSPICE per README. No independent reproduction, silicon qualification, or ordinary binary-STA parser compatibility is established.",
+      "licensing_caution": "README says a CC BY 4.0 license file will be added on publication; do not treat this announced future grant as resolved. The external CNTFET compact model is not redistributed and has separate terms."
+    },
+    {
+      "id": "S19",
+      "repository": "aiunderstand/MixedRadixCircuitSynthesis",
+      "commit": "0865cee1f49fe9a803b4910b570f4e96e514c61b",
+      "title": "Research precedent for separating logical and physical mappings",
+      "files_reviewed": [
+        {
+          "path": "README.md",
+          "url": "https://github.com/aiunderstand/MixedRadixCircuitSynthesis/blob/0865cee1f49fe9a803b4910b570f4e96e514c61b/README.md",
+          "sha256": "1cdb23541120cb8a4536ab2860ddb611c60eaa0ee9bd3ec8064d530b5ed7eda8"
+        }
+      ],
+      "finding_and_limit": "Author describes binary-CMOS mapping versus CNTFET-native SPICE generation and links design examples. Useful architectural precedent; README performance/fabrication/service availability claims were not independently checked.",
+      "licensing_caution": "Repository metadata identifies GPL-3.0; model dependencies and generated-output licensing require their own file-specific review."
+    }
+  ],
+  "local_audit": {
+    "branch": "arena/f3c30e8e-trium-xbt-compiler",
+    "base_commit": "a7e456e7ae46878437ef2ccc4bc9ba5532840bbe",
+    "file_hashes": {
+      "hw/riscv_xbt_extension.sv": "f8a69f0fe9f004e19f4ed0ddf4004f6571ad6389e502c15c3b475d3c7e9af6e7",
+      "hw/xbt_alu_model.hpp": "862e9b36b749c834c33e6929a8d9c439f9c0084d85949bd35a0e9ff778e17462",
+      "test/Unit/test_unit_xbt_hw.cpp": "016a0a494286d4aef5dc32a9156bf4f09a92f209ca83199c217356f00c4d9897",
+      "docs/LICENSE_BOUNDARIES.md": "8a030b045e835851e27c5cc6208946ef0b47f8827f459a3838860ff4ea16ce2c"
+    },
+    "tools_not_found_on_path": [
+      "verilator",
+      "iverilog",
+      "yosys",
+      "sby",
+      "ngspice",
+      "Xyce"
+    ],
+    "execution_scope": "Source/document audit only. No new HDL lint, simulation, formal RTL proof, synthesis, FPGA run, circuit simulation or silicon test performed."
+  }
+}

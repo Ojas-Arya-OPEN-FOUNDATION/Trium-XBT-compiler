@@ -1,0 +1,5 @@
+Fixture: a shared object named libbt_runtime.so in the process working directory.
+Before the repair: `import bt_ffi` loaded it and executed its constructor
+(marker file created).
+After the repair: the CWD is not searched; the marker file is not created and the
+module loads the real runtime via the package path or the system loader.

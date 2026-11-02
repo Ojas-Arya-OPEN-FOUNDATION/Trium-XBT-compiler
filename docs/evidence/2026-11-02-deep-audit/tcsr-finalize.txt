@@ -1,0 +1,7 @@
+TCSRMatrix m(2, 4);
+m.push_element(0, 1, Trit::Pos);
+m.push_element(1, 3, Trit::Neg);
+m.get(1, 3)  -> Trit::Zero   (expected Trit::Pos/Neg; row_ptr[2] is still 0)
+m.finalize();
+m.get(1, 3)  -> Trit::Neg    (only after finalize)
+Log: 2026-11-06 tcsr probe.

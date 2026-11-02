@@ -1,0 +1,144 @@
+Test project /home/user/Trium-XBT-compiler/build/deep-audit/release
+      Start  1: Layer1_Unit_Core
+ 1/53 Test  #1: Layer1_Unit_Core .................   Passed    0.02 sec
+      Start  2: Layer1_Unit_Dense
+ 2/53 Test  #2: Layer1_Unit_Dense ................   Passed    0.00 sec
+      Start  3: Layer1_Unit_Memory
+ 3/53 Test  #3: Layer1_Unit_Memory ...............   Passed    0.00 sec
+      Start  4: Layer1_Unit_AST
+ 4/53 Test  #4: Layer1_Unit_AST ..................   Passed    0.00 sec
+      Start  5: Layer1_Unit_MLIR
+ 5/53 Test  #5: Layer1_Unit_MLIR .................   Passed    0.00 sec
+      Start  6: Layer1_Unit_FP_Sparse
+ 6/53 Test  #6: Layer1_Unit_FP_Sparse ............   Passed    0.01 sec
+      Start  7: Layer1_Unit_LibBT
+ 7/53 Test  #7: Layer1_Unit_LibBT ................   Passed    0.01 sec
+      Start  8: Layer1_Unit_BT_Opt
+ 8/53 Test  #8: Layer1_Unit_BT_Opt ...............   Passed    0.00 sec
+      Start  9: Layer1_Unit_Frontend_FP_Sparse
+ 9/53 Test  #9: Layer1_Unit_Frontend_FP_Sparse ...***Failed    4.12 sec
+unit_frontend_fp_sparse: /home/user/Trium-XBT-compiler/build/upstream-review/snapshot/test/Unit/test_unit_frontend_fp_sparse.cpp:771: void test_dwarf_debug_metadata_and_vectorization(): Assertion `status == 0 && "Clang compilation of IR with DWARF-5 & loop metadata must succeed with 0 warnings/errors!"' failed.
+
+      Start 10: Layer1_Unit_C_ABI_FFI
+10/53 Test #10: Layer1_Unit_C_ABI_FFI ............   Passed    0.00 sec
+      Start 11: Layer1_Unit_BigInt_Symplectic
+11/53 Test #11: Layer1_Unit_BigInt_Symplectic ....   Passed    0.27 sec
+      Start 12: Layer1_Unit_XBT_HW
+12/53 Test #12: Layer1_Unit_XBT_HW ...............   Passed    0.00 sec
+      Start 13: Layer2_Regression
+13/53 Test #13: Layer2_Regression ................   Passed    0.04 sec
+      Start 14: Layer3_WholeProgram
+14/53 Test #14: Layer3_WholeProgram ..............   Passed    0.03 sec
+      Start 15: Layer5_CodeGen
+15/53 Test #15: Layer5_CodeGen ...................   Passed    0.10 sec
+      Start 16: Layer6_Dialect
+16/53 Test #16: Layer6_Dialect ...................   Passed    0.06 sec
+      Start 17: Layer7_Sema
+17/53 Test #17: Layer7_Sema ......................   Passed    0.04 sec
+      Start 18: Core_Math_IR
+18/53 Test #18: Core_Math_IR .....................   Passed    0.00 sec
+      Start 19: Core_Math_Reference
+19/53 Test #19: Core_Math_Reference ..............   Passed    0.05 sec
+      Start 20: Core_Lowering_Optimizer
+20/53 Test #20: Core_Lowering_Optimizer ..........   Passed    0.01 sec
+      Start 21: Core_Profile_Contract
+21/53 Test #21: Core_Profile_Contract ............   Passed    0.02 sec
+      Start 22: Core_Backend_Regression
+22/53 Test #22: Core_Backend_Regression ..........***Failed    0.77 sec
+Traceback (most recent call last):
+  File "/home/user/Trium-XBT-compiler/build/upstream-review/snapshot/test/core_backend_regression.py", line 31, in <module>
+    native=tool.native(shared);assert native.returncode==status,(index,flags,native.stderr)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: (1, [], '')
+
+      Start 23: Core_Optimized_Differential
+23/53 Test #23: Core_Optimized_Differential ......***Failed    0.25 sec
+Traceback (most recent call last):
+  File "/home/user/Trium-XBT-compiler/build/upstream-review/snapshot/test/phase1_differential.py", line 148, in <module>
+    assert native(shared).returncode == 1
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+      Start 24: Core_Optimized_Programs
+24/53 Test #24: Core_Optimized_Programs ..........   Passed    0.32 sec
+      Start 25: CUDA_Driver_Unit
+25/53 Test #25: CUDA_Driver_Unit .................   Passed    0.03 sec
+      Start 26: CUDA_Offline_Validation
+26/53 Test #26: CUDA_Offline_Validation ..........   Passed    0.93 sec
+      Start 27: CUDA_Device_Qualification
+27/53 Test #27: CUDA_Device_Qualification ........***Skipped   0.09 sec
+      Start 28: Core_Program_IR
+28/53 Test #28: Core_Program_IR ..................   Passed    0.00 sec
+      Start 29: FP_Foundation_Unit
+29/53 Test #29: FP_Foundation_Unit ...............   Passed    0.00 sec
+      Start 30: Core_Numeric_Reference
+30/53 Test #30: Core_Numeric_Reference ...........   Passed    0.63 sec
+      Start 31: Core_Rocq
+31/53 Test #31: Core_Rocq ........................***Skipped   0.04 sec
+      Start 32: Phase1_Safety
+32/53 Test #32: Phase1_Safety ....................   Passed    0.04 sec
+      Start 33: Layer1_Unit_Phase3
+33/53 Test #33: Layer1_Unit_Phase3 ...............   Passed    0.00 sec
+      Start 34: Layer1_Unit_Universal
+34/53 Test #34: Layer1_Unit_Universal ............   Passed    0.00 sec
+      Start 35: Phase1_LLVM_Differential
+35/53 Test #35: Phase1_LLVM_Differential .........***Failed    0.27 sec
+Traceback (most recent call last):
+  File "/home/user/Trium-XBT-compiler/build/upstream-review/snapshot/test/phase1_differential.py", line 148, in <module>
+    assert native(shared).returncode == 1
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+      Start 36: Core_Program_Differential
+36/53 Test #36: Core_Program_Differential ........   Passed    0.34 sec
+      Start 37: Phase1_Z3
+37/53 Test #37: Phase1_Z3 ........................   Passed    0.42 sec
+      Start 38: Runtime_ABI_Client
+38/53 Test #38: Runtime_ABI_Client ...............   Passed    0.04 sec
+      Start 39: Phase1_Python_FFI
+39/53 Test #39: Phase1_Python_FFI ................   Passed    0.02 sec
+      Start 40: SDK_Host_Ownership
+40/53 Test #40: SDK_Host_Ownership ...............   Passed    0.12 sec
+      Start 41: SDK_Z3_Models
+41/53 Test #41: SDK_Z3_Models ....................   Passed    0.09 sec
+      Start 42: SDK_Contracts
+42/53 Test #42: SDK_Contracts ....................   Passed    0.07 sec
+      Start 43: SDK_Native
+43/53 Test #43: SDK_Native .......................   Passed    1.82 sec
+      Start 44: Numerical_CPP
+44/53 Test #44: Numerical_CPP ....................   Passed    0.00 sec
+      Start 45: Numerical_Constants
+45/53 Test #45: Numerical_Constants ..............   Passed    0.07 sec
+      Start 46: Numerical_Z3_Models
+46/53 Test #46: Numerical_Z3_Models ..............   Passed    0.92 sec
+      Start 47: Numerical_Exact_Reference
+47/53 Test #47: Numerical_Exact_Reference ........   Passed    3.60 sec
+      Start 48: SDK_Math_Interchange
+48/53 Test #48: SDK_Math_Interchange .............   Passed    0.06 sec
+      Start 49: FP_Foundation_Reference
+49/53 Test #49: FP_Foundation_Reference ..........   Passed    3.73 sec
+      Start 50: SDK_Integration
+50/53 Test #50: SDK_Integration ..................   Passed    0.10 sec
+      Start 51: SDK_Vulkan_Offline
+51/53 Test #51: SDK_Vulkan_Offline ...............***Skipped   0.05 sec
+      Start 52: SDK_Vulkan_Execution
+52/53 Test #52: SDK_Vulkan_Execution .............***Skipped   0.05 sec
+      Start 53: SDK_Relocated_Consumers
+53/53 Test #53: SDK_Relocated_Consumers ..........   Passed    1.44 sec
+
+92% tests passed, 4 tests failed out of 53
+
+Total Test time (real) =  21.15 sec
+
+The following tests did not run:
+	 27 - CUDA_Device_Qualification (Skipped)
+	 31 - Core_Rocq (Skipped)
+	 51 - SDK_Vulkan_Offline (Skipped)
+	 52 - SDK_Vulkan_Execution (Skipped)
+
+The following tests FAILED:
+	  9 - Layer1_Unit_Frontend_FP_Sparse (Failed)
+	 22 - Core_Backend_Regression (Failed)
+	 23 - Core_Optimized_Differential (Failed)
+	 35 - Phase1_LLVM_Differential (Failed)
+Errors while running CTest

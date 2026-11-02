@@ -35,6 +35,7 @@
 #include <limits>
 #include <algorithm>
 #include <utility>
+#include <type_traits>
 #include <string>
 #include <sstream>
 #include <iomanip>
@@ -97,11 +98,32 @@ struct MemoryStats {
 // ==============================================================================
 
 /**
+ * @brief Report an out-of-range access on a checked container accessor.
+ *
+ * Public accessors used to guard themselves with assert() only, which compiles
+ * away in NDEBUG (release) builds and turns an out-of-range index into an
+ * out-of-bounds read/write. All public accessors now validate unconditionally
+ * and report a diagnosable exception instead of corrupting memory.
+ */
+[[noreturn]] inline void index_out_of_range(const char* what, size_t index, size_t extent) {
+    std::ostringstream oss;
+    oss << what << ": index " << index << " out of range [0, " << extent << ")";
+    throw std::out_of_range(oss.str());
+}
+
+/**
  * @brief Allocate raw memory aligned to a specified power-of-two boundary.
+ *
+ * Rejects invalid alignments and byte counts whose rounding to the alignment
+ * boundary would wrap size_t (which previously returned a small block for an
+ * oversized request, i.e. a silently undersized allocation).
  */
 [[nodiscard]] inline void* allocate_aligned(size_t bytes, size_t alignment = CACHE_LINE_SIZE) {
-    assert(alignment >= sizeof(void*) && (alignment & (alignment - 1)) == 0 && "Alignment must be power of two >= sizeof(void*)");
+    if (alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0)
+        throw std::invalid_argument("alignment must be a power of two >= sizeof(void*)");
     if (bytes == 0) bytes = alignment;
+    if (bytes > std::numeric_limits<size_t>::max() - (alignment - 1))
+        throw std::length_error("aligned allocation size overflows size_t");
     size_t aligned_bytes = (bytes + alignment - 1) & ~(alignment - 1);
     void* ptr = nullptr;
 #if defined(_WIN32)
@@ -235,9 +257,17 @@ public:
 
     void allocate(size_t words) {
         release();
+        // Capacity rounding and the double-rail byte count must not wrap: an
+        // unchecked wrap published a huge num_words_ backed by a tiny block and
+        // every later set_word() wrote out of bounds.
+        if (words > std::numeric_limits<size_t>::max() - 7)
+            throw std::length_error("dual-rail word count overflows size_t");
+        const size_t capacity = (words + 7) & ~static_cast<size_t>(7);
+        if (capacity > std::numeric_limits<size_t>::max() / (2 * sizeof(uint64_t)))
+            throw std::length_error("dual-rail allocation size overflows size_t");
         num_words_ = words;
         // Pad capacity to multiple of 8 words (64 bytes = 512 bits) for full AVX-512 vector line
-        capacity_words_ = (words + 7) & ~7ULL;
+        capacity_words_ = capacity;
         size_t bytes = capacity_words_ * sizeof(uint64_t);
         // Single contiguous 64-byte aligned allocation for both P and N rails eliminates partial leaks
         P_ = static_cast<uint64_t*>(allocate_aligned(2 * bytes, CACHE_LINE_SIZE));
@@ -272,22 +302,22 @@ public:
                (reinterpret_cast<uintptr_t>(N_) % CACHE_LINE_SIZE == 0);
     }
 
-    [[nodiscard]] TritWord64 get_word(size_t idx) const noexcept {
-        assert(idx < num_words_ && "Word index out of bounds");
+    [[nodiscard]] TritWord64 get_word(size_t idx) const {
+        if (idx >= num_words_) index_out_of_range("DualRailPlanes::get_word", idx, num_words_);
         return TritWord64(P_[idx], N_[idx]);
     }
 
-    void set_word(size_t idx, const TritWord64& w) noexcept {
-        assert(idx < num_words_ && "Word index out of bounds");
-        assert(w.isValid() && "Dual rail invariant violated");
+    void set_word(size_t idx, const TritWord64& w) {
+        if (idx >= num_words_) index_out_of_range("DualRailPlanes::set_word", idx, num_words_);
+        if (!w.isValid()) throw std::invalid_argument("DualRailPlanes::set_word: dual-rail invariant violated");
         P_[idx] = w.P;
         N_[idx] = w.N;
     }
 
-    [[nodiscard]] Trit get_trit(size_t trit_idx) const noexcept {
+    [[nodiscard]] Trit get_trit(size_t trit_idx) const {
         size_t word_idx = trit_idx / 64;
         size_t bit_idx = trit_idx % 64;
-        assert(word_idx < num_words_ && "Trit index out of bounds");
+        if (word_idx >= num_words_) index_out_of_range("DualRailPlanes::get_trit", trit_idx, total_trits());
         bool p = (P_[word_idx] >> bit_idx) & 1ULL;
         bool n = (N_[word_idx] >> bit_idx) & 1ULL;
         if (p) return Trit::Pos;
@@ -295,10 +325,12 @@ public:
         return Trit::Zero;
     }
 
-    void set_trit(size_t trit_idx, Trit t) noexcept {
+    void set_trit(size_t trit_idx, Trit t) {
         size_t word_idx = trit_idx / 64;
         size_t bit_idx = trit_idx % 64;
-        assert(word_idx < num_words_ && "Trit index out of bounds");
+        if (word_idx >= num_words_) index_out_of_range("DualRailPlanes::set_trit", trit_idx, total_trits());
+        if (t != Trit::Neg && t != Trit::Zero && t != Trit::Pos)
+            throw std::invalid_argument("DualRailPlanes::set_trit: value is not a trit");
         uint64_t mask = 1ULL << bit_idx;
         P_[word_idx] &= ~mask;
         N_[word_idx] &= ~mask;
@@ -404,8 +436,8 @@ public:
         return (last_byte - first_byte) + 1;
     }
 
-    [[nodiscard]] Trit get(size_t index) const noexcept {
-        assert(index < num_trits_ && "Span index out of bounds");
+    [[nodiscard]] Trit get(size_t index) const {
+        if (index >= num_trits_) index_out_of_range("Base243Span::get", index, num_trits_);
         size_t global_idx = start_trit_ + index;
         size_t byte_idx = global_idx / 5;
         size_t trit_offset = global_idx % 5;
@@ -413,8 +445,8 @@ public:
         return decoded[trit_offset];
     }
 
-    void set(size_t index, Trit t) noexcept {
-        assert(index < num_trits_ && "Span index out of bounds");
+    void set(size_t index, Trit t) {
+        if (index >= num_trits_) index_out_of_range("Base243Span::set", index, num_trits_);
         size_t global_idx = start_trit_ + index;
         size_t byte_idx = global_idx / 5;
         size_t trit_offset = global_idx % 5;
@@ -427,7 +459,7 @@ public:
      * @brief Split this block into two contiguous sub-spans at split_index with zero fragmentation.
      */
     [[nodiscard]] std::pair<Base243Span, Base243Span> split_at(size_t split_trit_index) const {
-        assert(split_trit_index <= num_trits_ && "Split index out of bounds");
+        if (split_trit_index > num_trits_) index_out_of_range("Base243Span::split_at", split_trit_index, num_trits_ + 1);
         return {
             Base243Span(data_, start_trit_, split_trit_index),
             Base243Span(data_, start_trit_ + split_trit_index, num_trits_ - split_trit_index)
@@ -438,7 +470,7 @@ public:
      * @brief Partition this block into uniform tiles of trits_per_tile.
      */
     [[nodiscard]] std::vector<Base243Span> split_tiles(size_t trits_per_tile) const {
-        assert(trits_per_tile > 0 && "Tile size must be > 0");
+        if (trits_per_tile == 0) throw std::invalid_argument("Base243Span::split_tiles: tile size must be > 0");
         std::vector<Base243Span> tiles;
         size_t count = (num_trits_ + trits_per_tile - 1) / trits_per_tile;
         tiles.reserve(count);
@@ -636,6 +668,10 @@ public:
      * noexcept the old signature carried would have turned that OOM into std::terminate.
      */
     [[nodiscard]] inline void* allocate_bytes(size_t bytes, size_t alignment = 1) {
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0)
+            throw std::invalid_argument("Base243Arena::allocate_bytes: alignment must be a power of two");
+        if (bytes > std::numeric_limits<size_t>::max() - alignment - CACHE_LINE_SIZE)
+            throw std::length_error("Base243Arena::allocate_bytes: size overflows size_t");
         uintptr_t curr = reinterpret_cast<uintptr_t>(current_ptr_);
         uintptr_t aligned = (curr + alignment - 1) & ~(alignment - 1);
         size_t padding = aligned - curr;
@@ -659,6 +695,9 @@ public:
      */
     template <typename T>
     [[nodiscard]] T* allocate(size_t count = 1, size_t alignment = alignof(T)) {
+        static_assert(std::is_object_v<T>, "Base243Arena::allocate requires an object type");
+        if (count > std::numeric_limits<size_t>::max() / sizeof(T))
+            throw std::length_error("Base243Arena::allocate: count * sizeof(T) overflows size_t");
         return static_cast<T*>(allocate_bytes(count * sizeof(T), alignment));
     }
 
@@ -668,6 +707,8 @@ public:
      * NOT noexcept: allocate_bytes can throw std::bad_alloc on chunk growth.
      */
     [[nodiscard]] Base243Block allocate_trits(size_t num_trits) {
+        if (num_trits > std::numeric_limits<size_t>::max() - 4)
+            throw std::length_error("Base243Arena::allocate_trits: trit count overflows size_t");
         size_t bytes_needed = (num_trits + 4) / 5;
         uint8_t* ptr = static_cast<uint8_t*>(allocate_bytes(bytes_needed, 1));
         // In offset-1 Base-243, Trit::Zero is 1, so all 5 trits zero = 121 (0x79)
@@ -997,7 +1038,7 @@ public:
         ++write_count_;
 
         size_t l1 = offset / L1_SPAN;
-        assert(l1 < num_l1_entries_ && "L1 index out of range");
+        if (l1 >= num_l1_entries_) throw std::out_of_range("HierarchicalZeroPage: L1 index out of range");
 
         size_t l1_offset = offset % L1_SPAN;
         size_t l2 = l1_offset / PAGE_SIZE;

@@ -61,8 +61,12 @@ inline double xbt_exp_fast(double x) noexcept {
 
 /**
  * @brief BTFP32 Native Radix-3 Exponential: adds k directly to the ternary exponent!
+ *
+ * NOT noexcept: for inputs whose exponential is not representable in the target
+ * BTFP32 format (e.g. x = 1000) from_double() reports std::domain_error. The old
+ * noexcept specification turned that diagnostic into std::terminate.
  */
-inline BTFP32 xbt_exp_btfp32(const BTFP32& x) noexcept {
+inline BTFP32 xbt_exp_btfp32(const BTFP32& x) {
     return BTFP32::from_double(xbt_exp_fast(x.to_double()));
 }
 
@@ -100,6 +104,9 @@ inline double xbt_sigmoid_fast(double x) noexcept {
  * @brief SiLU / Swish Activation (Used in Llama-3, DeepSeek, Qwen): SiLU(x) = x * sigmoid(x)
  */
 inline double xbt_silu_fast(double x) noexcept {
+    // x * sigmoid(x) is the indeterminate product -inf * 0 at x = -inf, whose
+    // limiting value is 0; handle non-finite inputs explicitly instead of NaN.
+    if (std::isinf(x)) return x > 0.0 ? x : 0.0;
     return x * xbt_sigmoid_fast(x);
 }
 
@@ -108,6 +115,8 @@ inline double xbt_silu_fast(double x) noexcept {
  * GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
  */
 inline double xbt_gelu_fast(double x) noexcept {
+    // Same indeterminate -inf * 0 limit as SiLU: GELU(+/-inf) = +/-inf / 0.
+    if (std::isinf(x)) return x > 0.0 ? x : 0.0;
     double inner = SQRT_2_PI * (x + 0.044715 * x * x * x);
     return 0.5 * x * (1.0 + xbt_tanh_fast(inner));
 }
@@ -149,10 +158,19 @@ inline void xbt_rmsnorm(const float* x, const float* weight, float* out,
         sum_sq += static_cast<double>(x[i]) * static_cast<double>(x[i]);
     }
     double mean_sq = (sum_sq / static_cast<double>(n)) + static_cast<double>(eps);
-    float inv_rms = static_cast<float>(xbt_rsqrt_householder(mean_sq));
+    if (!(mean_sq > 0.0)) {
+        // mean(x^2) + eps == 0 (all-zero input with eps = 0): the normalized values
+        // are defined as 0 rather than 0 * inf = NaN.
+        for (size_t i = 0; i < n; ++i) out[i] = 0.0f;
+        return;
+    }
+    // Keep the reciprocal in binary64: for subnormal inputs 1/sqrt(mean_sq) exceeds
+    // FLT_MAX, and narrowing it to float first turned the result into infinity.
+    const double inv_rms = xbt_rsqrt_householder(mean_sq);
 
     for (size_t i = 0; i < n; ++i) {
-        out[i] = x[i] * inv_rms * (weight ? weight[i] : 1.0f);
+        const double w = weight ? static_cast<double>(weight[i]) : 1.0;
+        out[i] = static_cast<float>(static_cast<double>(x[i]) * inv_rms * w);
     }
 }
 

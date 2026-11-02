@@ -1,0 +1,18 @@
+{
+  "harness": "llvmlite/upstream snapshot workspace compiler probes",
+  "H": 2026277576509488133,
+  "C-01": {
+    "source": "print((H+1));",
+    "upstream_native": {"exit": 0, "stdout": "2026277576509488133"},
+    "upstream_interpreter": {"exit": 1, "stderr": "integer overflow"},
+    "workspace_compiler": {"exit": 1, "stdout": ""},
+    "expected": "overflow error on every backend"
+  },
+  "C-02": {
+    "command": "bt-compiler --target=riscv64 -S program.bt",
+    "host_toolchain": "fake clang exiting 1",
+    "upstream": {"exit": 0, "artifact_contains": "li a0, 0"},
+    "workspace_compiler": {"exit": 1, "artifact": null}
+  },
+  "differential": {"cases": 2067, "unexpected": 0, "known_C01": 128}
+}

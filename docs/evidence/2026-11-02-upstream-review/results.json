@@ -1,0 +1,136 @@
+{
+  "date": "2026-11-02",
+  "branch": "arena/f3c30e8e-trium-xbt-compiler",
+  "workspace_head": "a7e456e7ae46878437ef2ccc4bc9ba5532840bbe",
+  "upstream_main": "82ae25146453e57d49869933a1e2dc0ca9e18bb7",
+  "upstream_commits_since_workspace_base": 55,
+  "comparison_before_review_documents": {
+    "upstream_files_identical_locally": 260,
+    "upstream_files_different_locally": 19,
+    "upstream_files_absent_locally": 18
+  },
+  "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "compiler_build_flags": [
+    "-std=c++20",
+    "-O0",
+    "-pthread",
+    "-ldl"
+  ],
+  "native_execution": "Existing test/compiler_test_support.py: parse/verify actual emitted LLVM using llvmlite 0.50.0, emit PIC object, link shared object with c++, execute bt_main in an isolated Python process. Not text matching.",
+  "z3": "z3-solver 5.3.3; upstream verify_z3_numerical.py PASS 312 scoped obligations",
+  "benchmark": "g++ -std=c++20 -O3 against isolated upstream snapshot; benchmark_wide_math 3; 100000 deterministic vectors per kernel; assertions enabled. Microbenchmark only.",
+  "ci": {
+    "url": "https://github.com/Ojas-Arya-OPEN-FOUNDATION/Trium-XBT-compiler/actions/runs/41415612321",
+    "overall": "failure",
+    "successful_jobs": [
+      "native-rocq",
+      "rust-client"
+    ],
+    "failed_jobs": [
+      "release",
+      "debug",
+      "sanitizers"
+    ],
+    "failure_step": "cmake --build build/ci --target check-all -j 2",
+    "limitation": "Full job logs could not be downloaded from the log storage host. Local reproduction establishes a regression, not the complete cause of every CI job failure."
+  },
+  "workspace_source_sha256": {
+    "bt_compiler.cpp": "63af1d693a0edcbe3b73bb1a9d11941fb8ae5f748ce661817a6fbe5a07ee3e59",
+    "bt_process.hpp": "2173006661e28166fd274337171ee71c6f916fc965e0a49c86e16da93a093d64",
+    "include/Ternary/IR/LLVM.hpp": "be355fbb87f05e891144d0297256f2043b489a19cf2f6502d769616cbc8b4220",
+    "ternary_llvm_codegen.hpp": "3a66d43852f9ae360054e3a9b1b8e795eccc4b10aa78250e849f92f5f9d4409e",
+    "ternary_wide.hpp": "11f4fa2532e9818dd055dc2521d999eef902ab32d8e4bca5ad784ef113241675",
+    "verify_z3_numerical.py": "2415cc80d705ebc099119861aab5d01a48c4d38c4cf84b39df444809999e6359"
+  },
+  "focused_results": [
+    {
+      "variant": "workspace",
+      "case": "ordinary",
+      "native_exit": 0,
+      "native_stdout": "12",
+      "core_exit": 0,
+      "core_stdout": "12 [core int39]",
+      "core_stderr": ""
+    },
+    {
+      "variant": "workspace",
+      "case": "addition_overflow",
+      "native_exit": 1,
+      "native_stdout": "",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "workspace",
+      "case": "subtraction_overflow",
+      "native_exit": 1,
+      "native_stdout": "",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "workspace",
+      "case": "nested_overflow",
+      "native_exit": 1,
+      "native_stdout": "",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "upstream",
+      "case": "ordinary",
+      "native_exit": 0,
+      "native_stdout": "12",
+      "core_exit": 0,
+      "core_stdout": "12 [core int39]",
+      "core_stderr": ""
+    },
+    {
+      "variant": "upstream",
+      "case": "addition_overflow",
+      "native_exit": 0,
+      "native_stdout": "2026277576509488133",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "upstream",
+      "case": "subtraction_overflow",
+      "native_exit": 0,
+      "native_stdout": "-2026277576509488133",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "upstream",
+      "case": "nested_overflow",
+      "native_exit": 0,
+      "native_stdout": "2026277576509488132",
+      "core_exit": 1,
+      "core_stdout": "",
+      "core_stderr": "Error: integer overflow: outside balanced scalar domain"
+    },
+    {
+      "variant": "workspace",
+      "case": "riscv_compiler_failure",
+      "exit": 1,
+      "stdout": "[Compiler Pipeline] Verified core scalar; core optimizations disabled. Target backend: LLVM Intermediate Representation (LLVM IR .ll)\n",
+      "stderr": "simulated backend unavailable\nError: Target cross-compilation to assembly failed for triple riscv64-unknown-linux-gnu\n",
+      "assembly": null
+    },
+    {
+      "variant": "upstream",
+      "case": "riscv_compiler_failure",
+      "exit": 0,
+      "stdout": "[Compiler Pipeline] Verified core scalar; core optimizations disabled. Target backend: LLVM Intermediate Representation (LLVM IR .ll)\n[Target Codegen] Successfully emitted assembly to: /home/user/Trium-XBT-compiler/build/upstream-review/upstream-riscv.s (Target: riscv64-unknown-linux-gnu)\n",
+      "stderr": "simulated backend unavailable\n",
+      "assembly": "\t.text\n\t.globl\tbt_main\n\t.p2align\t2\n\t.type\tbt_main,@function\nbt_main:\n\taddi\tsp, sp, -16\n\tsd\tra, 8(sp)\n\tli\ta0, 0\n\tld\tra, 8(sp)\n\taddi\tsp, sp, 16\n\tret\n"
+    }
+  ],
+  "scope": "Isolated upstream snapshot; no merge, reset, source fixes, README/license changes, push, full regression suite or physical hardware tests."
+}

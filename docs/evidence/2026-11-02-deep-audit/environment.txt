@@ -1,0 +1,6 @@
+host: Linux-6.1.158+-x86_64, Debian g++ 12.2.0
+upstream snapshot: git archive origin/main (82ae251; later 5a33d9c differs only in .github/workflows)
+build: cmake 4.4 (pip), Unix Makefiles, BT_ENABLE_MLIR=OFF, Release and Debug+ASan/UBSan
+python: system 3.11.2; temporary packages under build/deep-upstream-review/python: llvmlite 0.50.0, z3-solver 5.3.3, numpy, cmake, pyslang 12.1.0
+native compiler for SDK tests: zig cc shim invoked as 'clang' (not Apple/LLVM clang)
+not installed/run: Verilator, Icarus, Yosys, Rocq/Coq, glslang, spirv-val, Vulkan device, CUDA device, macOS, physical GPU

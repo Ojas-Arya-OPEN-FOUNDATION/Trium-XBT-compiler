@@ -217,7 +217,15 @@ bt_sdk_status bt_sdk_map(bt_sdk_handle id,const char* name,uint32_t backend,cons
     for(auto x:values)bt::math::ScalarInteger::check(x);
     bt_sdk_metrics times{};times.struct_size=sizeof(times);times.backend=backend;times.workgroup=m->context->group;times.kernel_ms=times.gpu_upload_ms=times.gpu_download_ms=-1;
     std::vector<int64_t> result;
-    if(backend==BT_SDK_CPU){std::ostringstream sink;bt::ir::Executor executor(m->program,sink,m->context->budget);result.reserve(count);auto begin=Clock::now();for(auto x:values)result.push_back(std::get<int64_t>(executor.invoke(name,{x})));times.execute_ms=std::chrono::duration<double,std::milli>(Clock::now()-begin).count();}
+    if(backend==BT_SDK_CPU){std::ostringstream sink;bt::ir::Executor executor(m->program,sink,m->context->budget);result.reserve(count);auto begin=Clock::now();uint64_t consumed=0;
+        for(auto x:values){
+            result.push_back(std::get<int64_t>(executor.invoke(name,{x})));
+            // Aggregate budget: a fresh per-element budget would let `count` elements
+            // each burn the full limit, so the total work was unbounded in practice.
+            consumed+=executor.steps_used();
+            limited(consumed<=m->context->budget,"map aggregate execution budget exceeded");
+        }
+        times.execute_ms=std::chrono::duration<double,std::milli>(Clock::now()-begin).count();}
     else if(backend==BT_SDK_NATIVE){limited(!count || count<=m->context->budget/std::max(size_t(1),work),"native aggregate work budget exceeded");auto image=native_image(m,f,times);result.reserve(count);auto begin=Clock::now();for(auto x:values){auto bits=std::bit_cast<uint64_t>(x);result.push_back(std::bit_cast<int64_t>(image->invoke(&bits)));}times.execute_ms=elapsed(begin);}
     else {auto image=vulkan_image(m,name,times);result=image->execute(values,times);}
     if(!result.empty())std::copy(result.begin(),result.end(),output);times.total_ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();if(metrics)*metrics=times;

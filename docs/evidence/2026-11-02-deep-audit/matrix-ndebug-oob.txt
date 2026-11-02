@@ -1,0 +1,51 @@
+words=1 reading out-of-range word index 64
+=================================================================
+==8780==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000410 at pc 0x557bdf1545ea bp 0x7ffeefc0e430 sp 0x7ffeefc0e428
+READ of size 8 at 0x602000000410 thread T0
+    #0 0x557bdf1545e9 in main build/deep-audit/probes2.cpp:10
+    #1 0x7f93ef845249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #2 0x7f93ef845304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #3 0x557bdf153340 in _start (/home/user/Trium-XBT-compiler/build/deep-audit/probes2-matrix+0xd340)
+
+0x602000000410 is located 1008 bytes to the right of 16-byte region [0x602000000010,0x602000000020)
+allocated by thread T0 here:
+    #0 0x7f93efab94c8 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x557bdf158207 in std::__new_allocator<bt::TritWord64>::allocate(unsigned long, void const*) /usr/include/c++/12/bits/new_allocator.h:137
+    #2 0x557bdf158207 in std::allocator<bt::TritWord64>::allocate(unsigned long) /usr/include/c++/12/bits/allocator.h:188
+    #3 0x557bdf158207 in std::allocator_traits<std::allocator<bt::TritWord64> >::allocate(std::allocator<bt::TritWord64>&, unsigned long) /usr/include/c++/12/bits/alloc_traits.h:464
+    #4 0x557bdf158207 in std::_Vector_base<bt::TritWord64, std::allocator<bt::TritWord64> >::_M_allocate(unsigned long) /usr/include/c++/12/bits/stl_vector.h:378
+    #5 0x557bdf158207 in std::vector<bt::TritWord64, std::allocator<bt::TritWord64> >::_M_fill_insert(__gnu_cxx::__normal_iterator<bt::TritWord64*, std::vector<bt::TritWord64, std::allocator<bt::TritWord64> > >, unsigned long, bt::TritWord64 const&) /usr/include/c++/12/bits/vector.tcc:575
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow build/deep-audit/probes2.cpp:10 in main
+Shadow bytes around the buggy address:
+  0x0c047fff8030: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff8040: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff8050: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff8060: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff8070: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+=>0x0c047fff8080: fa fa[fa]fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff8090: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff80a0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff80b0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff80c0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x0c047fff80d0: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==8780==ABORTING

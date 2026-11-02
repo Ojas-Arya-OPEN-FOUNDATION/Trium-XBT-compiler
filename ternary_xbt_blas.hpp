@@ -57,7 +57,9 @@ inline void xbt_gemm_encoded(const universal::BlockTernaryTensor<PlanesA>& A,
     // Parallelize across output rows M using the Kokkos thread pool
     ::Kokkos::parallel_for(::Kokkos::RangePolicy<size_t>(0, M), [&](size_t i) {
         for (size_t j = 0; j < N; ++j) {
-            float total_sum = 0.0f;
+            // Accumulate in double so a sum of large terms that cancels exactly stays
+            // exact instead of saturating float to +/-inf and producing NaN.
+            double total_sum = 0.0;
 
             for (size_t blk = 0; blk < bpr; ++blk) {
                 const size_t idx_A = i * bpr + blk;
@@ -67,7 +69,11 @@ inline void xbt_gemm_encoded(const universal::BlockTernaryTensor<PlanesA>& A,
                 const uint16_t mask_B = B_T.active_plane_mask[idx_B];
                 if (mask_A == 0 || mask_B == 0) continue; // 0-cycle block skip!
 
-                const float blk_scale = A.block_scales[idx_A] * B_T.block_scales[idx_B];
+                // Multiply the two block scales in binary64: forming the product in
+                // float underflowed genuinely representable tiny products to zero and
+                // turned large exact cancellations into inf - inf = NaN.
+                const double blk_scale = static_cast<double>(A.block_scales[idx_A]) *
+                                         static_cast<double>(B_T.block_scales[idx_B]);
                 const TritWord64* pa_words = &A.planes[idx_A * PlanesA];
                 const TritWord64* pb_words = &B_T.planes[idx_B * PlanesB];
 
@@ -89,9 +95,9 @@ inline void xbt_gemm_encoded(const universal::BlockTernaryTensor<PlanesA>& A,
                         block_weighted_int += dot * fp_detail::POW3_64[p + q];
                     }
                 }
-                total_sum += static_cast<float>(block_weighted_int) * blk_scale;
+                total_sum += static_cast<double>(block_weighted_int) * blk_scale;
             }
-            C[i * N + j] = total_sum;
+            C[i * N + j] = static_cast<float>(total_sum);
         }
     });
 }

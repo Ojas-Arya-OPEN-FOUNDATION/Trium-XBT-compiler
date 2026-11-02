@@ -967,26 +967,6 @@ int compiler_main(int argc, char** argv) {
             command.insert(command.end(), {"-S", tmp_ir_path, "-o", asm_path});
             int ret = bt::host::run_process(command);
             unlink(tmp_ir_path);
-            if (ret != 0 && triple.find("riscv") != std::string::npos) {
-                // Host Clang lacks RISC-V target (e.g. Apple Clang on macOS).
-                // Synthesize clean RISC-V 64 assembly conforming to standard RISC-V ABI.
-                std::ofstream fallback(asm_path);
-                if (fallback.is_open()) {
-                    fallback << "\t.text\n"
-                             << "\t.globl\tbt_main\n"
-                             << "\t.p2align\t2\n"
-                             << "\t.type\tbt_main,@function\n"
-                             << "bt_main:\n"
-                             << "\taddi\tsp, sp, -16\n"
-                             << "\tsd\tra, 8(sp)\n"
-                             << "\tli\ta0, 0\n"
-                             << "\tld\tra, 8(sp)\n"
-                             << "\taddi\tsp, sp, 16\n"
-                             << "\tret\n";
-                    fallback.close();
-                    ret = 0;
-                }
-            }
             if (ret != 0) {
                 std::cerr << "Error: Target cross-compilation to assembly failed for triple " << triple << "\n";
                 return 1;

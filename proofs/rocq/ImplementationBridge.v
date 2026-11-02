@@ -93,5 +93,16 @@ Proof.
 Qed.
 Example repeated_rounding_counterexample : ((5+1)/3+1)/3=1 /\ 5-3 < 9-5.
 Proof. split; [reflexivity|lia]. Qed.
-Theorem implementation_bridge_complete : True. Proof. exact I. Qed.
+(** Terminal obligation: the two algorithm-level bridges proved above - Euclidean
+    correction of truncating division and the binary rounding identity used by the
+    C++ magnitude path - hold together. *)
+Theorem implementation_bridge_complete :
+  (forall a b, b <> 0 -> let '(q,r) := adjust (a ÷ b) (Z.rem a b) b in
+                         a = b*q+r /\ 0 <= r < Z.abs b) /\
+  (forall n d, 0 <= n -> 0 < d -> round_unsigned n d = (n+d/2)/d).
+Proof.
+  split.
+  - intros a b Hb. apply truncating_divmod_refines_euclidean. exact Hb.
+  - intros n d N D. symmetry. apply cpp_round_matches_model; assumption.
+Qed.
 End ImplementationBridge.

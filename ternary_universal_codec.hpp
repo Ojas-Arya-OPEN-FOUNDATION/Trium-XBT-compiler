@@ -74,10 +74,33 @@ struct TriRadixScalar {
     inline double to_double() const noexcept {
         int64_t m = Codec::to_int64(mantissa, 39);
         if (m == 0) return 0.0;
-        double v = std::ldexp(static_cast<double>(m), exp2);
-        if (exp3 != 0) v *= std::pow(3.0, static_cast<double>(exp3));
-        if (exp5 != 0) v *= std::pow(5.0, static_cast<double>(exp5));
-        return v;
+        // Evaluate m * 2^exp2 * 3^exp3 * 5^exp5 without intermediate overflow or
+        // underflow. Scaling each factor separately (ldexp then pow) overflowed to
+        // inf/0 and produced NaN on large-but-exactly-representable values such as
+        // mantissa 1, exp2 = -2000, exp5 = 800. Here the running value is kept as
+        // mantissa * 2^scale with |mantissa| in [0.5, 1), so cancellation between
+        // factors happens before the final single scalbn.
+        double mant = static_cast<double>(m);
+        long scale = 0;
+        auto multiply_power = [&mant, &scale](double base, int exponent) {
+            if (exponent == 0 || mant == 0.0) return;
+            // Largest step keeping base^step comfortably inside double range.
+            const int step_limit = static_cast<int>(700.0 / std::log2(base));
+            while (exponent != 0) {
+                const int step = exponent > 0 ? std::min(exponent, step_limit)
+                                              : std::max(exponent, -step_limit);
+                mant *= std::pow(base, step);
+                exponent -= step;
+                int exponent_of_mantissa = 0;
+                mant = std::frexp(mant, &exponent_of_mantissa);
+                scale += exponent_of_mantissa;
+                if (mant == 0.0 || !std::isfinite(mant)) return;
+            }
+        };
+        multiply_power(2.0, exp2);
+        multiply_power(3.0, exp3);
+        multiply_power(5.0, exp5);
+        return std::scalbn(mant, static_cast<int>(std::clamp<long>(scale, -100000, 100000)));
     }
 };
 

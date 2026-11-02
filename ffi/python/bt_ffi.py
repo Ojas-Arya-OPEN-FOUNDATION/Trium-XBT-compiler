@@ -15,14 +15,20 @@ from typing import List, Tuple, Optional
 # ============================================================================
 
 def _find_and_load_library() -> ctypes.CDLL:
+    """Load the runtime library from trusted, installation-owned locations only.
+
+    The current working directory is deliberately NOT searched: importing a module
+    must never execute a library that happens to sit in whatever directory the
+    process was started from (a classic DLL/shared-library preloading hijack).
+    """
     explicit = os.environ.get("BT_RUNTIME_LIBRARY")
     if explicit:
         return ctypes.CDLL(os.path.abspath(explicit))
     lib_names = ["libbt_runtime.dylib", "libbt_runtime.so", "bt_runtime.dll"]
+    package_dir = os.path.dirname(os.path.abspath(__file__))
     search_paths = [
-        os.getcwd(),
-        os.path.dirname(os.path.abspath(__file__)),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+        package_dir,
+        os.path.normpath(os.path.join(package_dir, "..", "..")),
         "/usr/local/lib",
         "/usr/lib",
     ]
@@ -30,13 +36,13 @@ def _find_and_load_library() -> ctypes.CDLL:
     for path in search_paths:
         for name in lib_names:
             full_path = os.path.abspath(os.path.join(path, name))
-            if os.path.exists(full_path):
+            if os.path.isfile(full_path):
                 try:
                     return ctypes.CDLL(full_path)
-                except OSError as e:
+                except OSError:
                     pass
 
-    # Fallback to system linker search
+    # Fallback to the system linker search path (never the current directory).
     for name in lib_names:
         try:
             return ctypes.CDLL(name)
@@ -389,10 +395,28 @@ def csr_spmv(
     signs: List[int],
     x: List[int],
 ) -> List[int]:
-    """Executes multiplier-free SpMV: y = mat * x using T-CSR bit-packed signs."""
-    assert len(x) >= cols, "Vector x length must be >= cols"
-    assert len(row_ptr) == rows + 1, "row_ptr length must be rows + 1"
+    """Executes multiplier-free SpMV: y = mat * x using T-CSR bit-packed signs.
+
+    Buffer lengths are validated explicitly: the legacy C entry point cannot check
+    them, so a mismatched row_ptr/col_indices/signs/weight array used to read past
+    the end of the ctypes buffer. Raises ValueError instead.
+    """
+    if rows < 0 or cols < 0:
+        raise ValueError("rows and cols must be non-negative")
+    if len(row_ptr) != rows + 1:
+        raise ValueError(f"row_ptr length {len(row_ptr)} != rows + 1 ({rows + 1})")
+    if len(x) < cols:
+        raise ValueError(f"Vector x length {len(x)} < cols ({cols})")
     nnz = len(col_indices)
+    if row_ptr[0] != 0 or row_ptr[-1] != nnz:
+        raise ValueError("row_ptr must start at 0 and end at nnz")
+    if any(row_ptr[i] > row_ptr[i + 1] for i in range(len(row_ptr) - 1)):
+        raise ValueError("row_ptr must be monotonically non-decreasing")
+    required_sign_words = (nnz + 63) // 64
+    if len(signs) != required_sign_words:
+        raise ValueError(f"signs buffer holds {len(signs)} words; need {required_sign_words} for {nnz} nonzeros")
+    if any(c < 0 or c >= cols for c in col_indices):
+        raise ValueError("col_indices entry out of range")
 
     c_row_ptr = (ctypes.c_uint32 * len(row_ptr))(*row_ptr)
     c_col_indices = (ctypes.c_uint32 * len(col_indices))(*col_indices) if nnz > 0 else None
@@ -467,8 +491,12 @@ def base243_unpack(byte_val: int) -> List[int]:
 
 def xbt_sgemm(a: List[float], b: List[float], m: int, k: int, n: int, min_plane_sum_cutoff: int = 0) -> List[float]:
     """Universal XBT GEMM: C[M x N] = A[M x K] * B[K x N] on unmodified float arrays."""
-    assert len(a) >= m * k, f"Matrix A size {len(a)} < {m * k}"
-    assert len(b) >= k * n, f"Matrix B size {len(b)} < {k * n}"
+    if m < 0 or k < 0 or n < 0:
+        raise ValueError("matrix dimensions must be non-negative")
+    if len(a) < m * k:
+        raise ValueError(f"Matrix A size {len(a)} < {m * k}")
+    if len(b) < k * n:
+        raise ValueError(f"Matrix B size {len(b)} < {k * n}")
     c_a = (ctypes.c_float * (m * k))(*a[:m * k])
     c_b = (ctypes.c_float * (k * n))(*b[:k * n])
     c_c = (ctypes.c_float * (m * n))()
@@ -478,6 +506,9 @@ def xbt_sgemm(a: List[float], b: List[float], m: int, k: int, n: int, min_plane_
 def xbt_rmsnorm(x: List[float], weight: Optional[List[float]] = None, eps: float = 1e-5) -> List[float]:
     """Cubic Householder RMSNorm layer: out = (x / sqrt(mean(x^2) + eps)) * weight."""
     n = len(x)
+    if weight is not None and len(weight) != n:
+        # The C layer reads n weights; a short list would read out of bounds.
+        raise ValueError(f"weight length {len(weight)} != input length {n}")
     c_x = (ctypes.c_float * n)(*x)
     c_w = (ctypes.c_float * n)(*weight) if weight is not None else None
     c_out = (ctypes.c_float * n)()

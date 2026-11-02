@@ -238,6 +238,20 @@ if(BT_BUILD_TESTS)
     add_executable(unit_xbt_hw test/Unit/test_unit_xbt_hw.cpp)
     target_include_directories(unit_xbt_hw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # Regression coverage for the 2026-11-02 deep audit. The audit found that
+    # allocator sizes wrapped, pool exceptions escaped, and numerical edge cases
+    # returned NaN/aborted; these targets keep those repairs from regressing.
+    add_executable(unit_audit_regressions test/Unit/test_unit_audit_regressions.cpp)
+    target_include_directories(unit_audit_regressions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    find_package(Threads REQUIRED)
+    target_link_libraries(unit_audit_regressions PRIVATE Threads::Threads)
+
+    add_library(bt_hijack_fixture SHARED test/Unit/legacy_ffi_hijack.cpp)
+    set_target_properties(bt_hijack_fixture PROPERTIES
+        OUTPUT_NAME bt_runtime
+        PREFIX "lib"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ffi-hijack-fixture")
+
     # CTest Registration: Layer 1 Unit Tests
     add_test(NAME Layer1_Unit_Core COMMAND unit_core)
     add_test(NAME Layer1_Unit_Dense COMMAND unit_dense)
@@ -253,8 +267,19 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer1_Unit_C_ABI_FFI COMMAND unit_c_abi_ffi)
     add_test(NAME Layer1_Unit_BigInt_Symplectic COMMAND unit_bigint_symplectic)
     add_test(NAME Layer1_Unit_XBT_HW COMMAND unit_xbt_hw)
+    add_test(NAME Layer1_Unit_Audit_Regressions COMMAND unit_audit_regressions)
 
     # CTest Registration: Layers 2-7
+    if(TARGET ternary_clibi)
+        add_test(NAME Legacy_FFI_Hardening
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/Unit/legacy_ffi_loader.py
+                    $<TARGET_FILE:ternary_clibi> $<TARGET_FILE:bt_hijack_fixture>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/ffi/python/bt_ffi.py)
+        set_tests_properties(Legacy_FFI_Hardening PROPERTIES TIMEOUT 120)
+    endif()
+    add_test(NAME Compiler_Audit_Regressions
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/audit_regressions.py $<TARGET_FILE:bt-compiler>)
+    set_tests_properties(Compiler_Audit_Regressions PROPERTIES TIMEOUT 180)
     add_test(NAME Layer2_Regression
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Regression
     )
@@ -341,7 +366,7 @@ if(BT_BUILD_TESTS)
         if(NOT EXISTS "${BT_CXX_ABI_RUNTIME}")
             message(FATAL_ERROR "Cannot locate C++ exception runtime for sanitized Python FFI tests")
         endif()
-        set_property(TEST Phase1_Python_FFI Runtime_ABI_Client APPEND PROPERTY ENVIRONMENT
+        set_property(TEST Phase1_Python_FFI Runtime_ABI_Client Legacy_FFI_Hardening APPEND PROPERTY ENVIRONMENT
             "LD_PRELOAD=${BT_ASAN_RUNTIME}:${BT_CXX_ABI_RUNTIME}" "ASAN_OPTIONS=detect_leaks=0")
     endif()
     set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer7_Sema
@@ -354,6 +379,7 @@ if(BT_BUILD_TESTS)
             unit_mlir unit_fp_sparse unit_libbt unit_bt_opt unit_frontend_fp_sparse
             unit_c_abi_ffi unit_bigint_symplectic unit_xbt_hw unit_phase1
             unit_phase3 unit_universal unit_math_core unit_numeric_oracle unit_fp_foundation unit_ir_program unit_core_lowering
+            unit_audit_regressions bt_hijack_fixture
     )
 endif()
 

@@ -187,8 +187,22 @@ def run_test_file(test_file, root_dir):
             tool = os.environ.get(variable, os.path.join(root_dir, executable))
             if not os.path.isfile(tool) or not os.access(tool, os.X_OK):
                 return False, f"required executable is unavailable: {tool}"
-    if re.search(r'(?:;|//|#)\s*REQUIRES:\s*clang\b', content) and not shutil.which('clang'):
-        return True, 'SKIPPED (requires clang)'
+    if re.search(r'(?:;|//|#)\s*REQUIRES:\s*clang\b', content):
+        if not shutil.which('clang'):
+            return True, 'SKIPPED (requires clang)'
+        if '--target=riscv' in content:
+            try:
+                probe = subprocess.run(
+                    ['clang', '--target=riscv64', '-x', 'c', '-S', '-o', os.devnull, '-'],
+                    input='int f(void) { return 0; }',
+                    text=True,
+                    capture_output=True,
+                    timeout=5
+                )
+                if probe.returncode != 0:
+                    return True, 'SKIPPED (clang missing riscv64 target)'
+            except Exception:
+                return True, 'SKIPPED (clang missing riscv64 target)'
 
     with tempfile.TemporaryDirectory(prefix='bt_lit_') as tmpdir:
         for r in runs:

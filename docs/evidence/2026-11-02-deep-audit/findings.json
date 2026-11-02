@@ -1,0 +1,484 @@
+{
+  "audit": "2026-11-02 deep audit",
+  "upstream": "82ae25146453e57d49869933a1e2dc0ca9e18bb7",
+  "ci_only_successor": "5a33d9ce7e75e531d8be27574b3d7713a45a2eda",
+  "local_base": "a7e456e",
+  "counts": {
+    "critical": 2,
+    "high": 10,
+    "medium": 11,
+    "low": 7,
+    "total": 30,
+    "reproduced": 21,
+    "static": 9
+  },
+  "findings": [
+    {
+      "id": "C-01",
+      "title": "Native Int39 add/sub silently saturate instead of reporting overflow",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "include/Ternary/IR/LLVM.hpp:42-46,72-75",
+        "ternary_llvm_codegen.hpp:106-112,952-960"
+      ],
+      "evidence": [
+        "compiler-focused-results.json"
+      ],
+      "impact": "Compiled add/sub returns saturated values (H, -H) with exit status 0 while the documented core contract, the interpreter and the differential suites require an overflow error. Programs observe different answers depending on backend.",
+      "fix": "Delete clamp64/clamp_integer_64 and restore checked i128 arithmetic (or explicit overflow branch) for Add/Sub.",
+      "repair_state": "already-correct-in-tree; regression test added"
+    },
+    {
+      "id": "C-02",
+      "title": "Failed RISC-V cross-compilation is replaced by a fixed assembly stub and reported as success",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "bt_compiler.cpp:968-1000"
+      ],
+      "evidence": [
+        "compiler-focused-results.json"
+      ],
+      "impact": "With a host Clang that lacks the RISC-V target (or any backend failure), the driver writes `li a0,0; ret` and exits 0. The resulting object/assembly does not implement the program.",
+      "fix": "Remove the fallback: propagate the tool return code and delete/configurable behaviour must not synthesize code.",
+      "repair_state": "already-correct-in-tree; regression test added"
+    },
+    {
+      "id": "C-03",
+      "title": "Arithmetic benchmark encodes clamped values as the expected semantics",
+      "severity": "medium",
+      "status": "static",
+      "files": [
+        "test/benchmark_arithmetic.cpp:105-145"
+      ],
+      "evidence": [
+        "release-ctest.txt"
+      ],
+      "impact": "Once C-01 exists, the benchmark accepts the wrong semantics, so CI cannot distinguish a clamp regression from correct overflow reporting.",
+      "fix": "Benchmark the checked path (error) and measure the non-overflow fast path only.",
+      "repair_state": "upstream-only file; not present in this tree"
+    },
+    {
+      "id": "C-04",
+      "title": "Compiled native loops have no execution budget while the reference executor does",
+      "severity": "low",
+      "status": "static",
+      "files": [
+        "include/Ternary/IR/LLVM.hpp:178-183",
+        "include/Ternary/IR/Execute.hpp:16-21,113-121"
+      ],
+      "evidence": [
+        "release-ctest.txt"
+      ],
+      "impact": "The interpreter bounds work with ResourceLimit; emitted code has no equivalent guard, so an AOT program with a large/looping counter runs unbounded. Documented as a resource limit only for the interpreter.",
+      "fix": "Document that AOT images are unbudgeted, or emit an opt-in tick guard for loop back-edges.",
+      "repair_state": "documented limitation (CORE_SEMANTICS_V0_1.md)"
+    },
+    {
+      "id": "M-01",
+      "title": "ThreadPool caller-thread exception leaves queued tasks using a destroyed latch (stack-use-after-scope)",
+      "severity": "critical",
+      "status": "reproduced",
+      "files": [
+        "ternary_kokkos_bridge.hpp:373-409"
+      ],
+      "evidence": [
+        "asan-lasttest.log",
+        "runtime-probes.json"
+      ],
+      "impact": "If the caller-chunk callback throws, parallel_for unwinds while worker tasks still hold `&sync_latch`; ASan reports stack-use-after-scope at std::latch::count_down.",
+      "fix": "Catch the caller-chunk exception, always count down/wait for all chunks, then rethrow.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-02",
+      "title": "ThreadPool worker exception calls std::terminate",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_kokkos_bridge.hpp:400-406,470-477"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "Any exception escaping a parallel_for/parallel_reduce body in a worker terminates the process instead of reaching the caller.",
+      "fix": "Wrap worker tasks in a guard that records std::exception_ptr, counts down, and rethrows on the dispatching thread.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-03",
+      "title": "Concurrent Kokkos initialize/reinit can SIGSEGV",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_kokkos_bridge.hpp:261-322"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "Concurrent initialization from several threads races on workers/lifecycle state (double join / use of a torn vector) and crashes.",
+      "fix": "Serialize init/reinit/shutdown under one recursive lifecycle mutex; keep enqueue/shutdown races from stranding tasks.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-04",
+      "title": "DualRailPlanes capacity arithmetic wraps, publishing huge num_words with a tiny allocation",
+      "severity": "critical",
+      "status": "reproduced",
+      "files": [
+        "ternary_memory_arena.hpp:236-245"
+      ],
+      "evidence": [
+        "runtime-probes.json",
+        "asan-lasttest.log"
+      ],
+      "impact": "allocate(SIZE_MAX) computes `(words+7)&~7` and `2*bytes` with wrap-around; ASan reports a heap-buffer-overflow WRITE in set_word.",
+      "fix": "Reject word counts whose capacity rounding or double-rail byte count overflows size_t.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-05",
+      "title": "mem::allocate_aligned rounds an oversized byte count with wrap-around",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_memory_arena.hpp:102-106"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "allocate_aligned(SIZE_MAX-31) returns a 64-byte block for a request near SIZE_MAX; callers that trust the requested size write out of bounds.",
+      "fix": "Validate alignment and reject bytes > SIZE_MAX-(alignment-1).",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-06",
+      "title": "Base243Arena typed allocation multiplies count*sizeof(T) without an overflow check",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_memory_arena.hpp:658-662,550"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "allocate<T>(count) wraps to a small block for huge counts.",
+      "fix": "Check count > SIZE_MAX/sizeof(T) and reject; also validate alignment and chunk-size arithmetic.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-07",
+      "title": "Public noexcept accessors use assert-only bounds checks; NDEBUG reads/writes out of bounds",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "ternary_dense_algebra.hpp:333-341",
+        "ternary_sparse.hpp:280-289",
+        "ternary_memory_arena.hpp:275-285"
+      ],
+      "evidence": [
+        "matrix-ndebug-oob.txt",
+        "tcsr-ndebug-oob.txt"
+      ],
+      "impact": "Under NDEBUG an out-of-range index is an out-of-bounds read (or write in set) rather than a diagnosable error; get_sign(100) segfaults.",
+      "fix": "Unconditional bounds checks that report std::out_of_range; remove noexcept from checked accessors.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "M-08",
+      "title": "parallel_gemm validates shapes only with assert",
+      "severity": "low",
+      "status": "static",
+      "files": [
+        "ternary_kokkos_bridge.hpp:521-524"
+      ],
+      "evidence": [
+        "release-ctest.txt"
+      ],
+      "impact": "A dimension mismatch in a release build indexes out of bounds instead of failing the call.",
+      "fix": "Throw std::invalid_argument on shape mismatch.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "S-01",
+      "title": "Legacy Python FFI loads libbt_runtime from the current working directory",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ffi/python/bt_ffi.py:17-45"
+      ],
+      "evidence": [
+        "legacy-ffi-hijack.txt",
+        "legacy-ffi-import.log"
+      ],
+      "impact": "`import bt_ffi` executes a shared object planted in the process CWD (library preloading / code execution).",
+      "fix": "Remove os.getcwd() from the search path; only explicit env var, package-relative, system paths.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "S-02",
+      "title": "Legacy Python FFI cannot validate C buffer lengths; mismatched arrays read out of bounds",
+      "severity": "medium",
+      "status": "static",
+      "files": [
+        "ffi/python/bt_ffi.py:384-400,470-485"
+      ],
+      "evidence": [
+        "legacy-ffi-import.log"
+      ],
+      "impact": "row_ptr/signs/x/weight lengths are unchecked (some only by assert, removed under -O), so the runtime indexes past ctypes buffers.",
+      "fix": "Explicit ValueError checks for lengths, monotonicity, and index bounds.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "S-03",
+      "title": "Child processes inherit unrelated parent file descriptors on Linux",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "bt_process.hpp:49-64"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "posix_spawn close-on-exec is only requested under POSIX_SPAWN_CLOEXEC_DEFAULT (not defined by glibc); a compiler child inherits readable/writable descriptors.",
+      "fix": "Enumerate /proc/self/fd and add close actions for every descriptor > 2.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "S-04",
+      "title": "macOS SDK path selection differs between host command and native JIT",
+      "severity": "low",
+      "status": "static",
+      "files": [
+        "bt_process.hpp:87-101",
+        "lib/SDK/NativeRuntime.cpp:~90"
+      ],
+      "evidence": [
+        "environment.txt"
+      ],
+      "impact": "Driver prefers SDKROOT while the native JIT prefers a hardcoded path, so the two can compile against different SDKs.",
+      "fix": "Share one platform_toolchain_flags() helper.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-01",
+      "title": "xbt_sgemm_unmodified underflows tiny products to zero",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "ternary_xbt_blas.hpp:110-160",
+        "ternary_universal_codec.hpp:180-205"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "1x1 1e-22 * 1e-22 returns 0 instead of ~9.8e-45 because the two block scales are multiplied in float.",
+      "fix": "Multiply block scales and accumulate in binary64.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-02",
+      "title": "xbt_sgemm_unmodified returns NaN on exact cancellation of large values",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_xbt_blas.hpp:40-105"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "[1e38,1e38]\u00b7[1e38,-1e38] yields NaN instead of 0: per-row float accumulation hits inf + -inf.",
+      "fix": "Accumulate in double and convert once at the end.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-03",
+      "title": "xbt_rmsnorm overflows to infinity for subnormal input with eps = 0",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "ternary_nonlinear_engine.hpp:144-158"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "1/sqrt(mean) exceeds FLT_MAX and is narrowed to float before multiplication, giving inf; 0/0 input gives NaN.",
+      "fix": "Keep the reciprocal in double, handle mean_sq == 0 explicitly.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-04",
+      "title": "TriRadixScalar::to_double returns NaN on exact large-factor cancellation",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "ternary_universal_codec.hpp:70-84"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "2^-2000 * 5^800 is exactly representable (~1.3e-43) but ldexp/pow underflow/overflow separately and produce NaN.",
+      "fix": "Renormalize after each factor step and apply a single scalbn.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-05",
+      "title": "Activation functions return NaN for negative infinity",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "ternary_nonlinear_engine.hpp:95-114"
+      ],
+      "evidence": [
+        "activation-edges.txt"
+      ],
+      "impact": "SiLU(-inf) and GELU(-inf) evaluate -inf * 0; mathematically the limit is 0.",
+      "fix": "Special-case non-finite inputs.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "N-06",
+      "title": "xbt_exp_btfp32 is noexcept but can throw, causing std::terminate",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        "ternary_nonlinear_engine.hpp:65-67"
+      ],
+      "evidence": [
+        "runtime-probes.json"
+      ],
+      "impact": "Overflowing a BTFP32 (x = 1000) calls from_double(inf) which throws inside a noexcept function: abort instead of a catchable error.",
+      "fix": "Remove noexcept and document the domain_error.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "V-01",
+      "title": "Two named 'complete' Rocq theorems are literally True and used as terminal proof markers",
+      "severity": "medium",
+      "status": "static",
+      "files": [
+        "proofs/rocq/CoreLowering.v:65",
+        "proofs/rocq/ImplementationBridge.v:96",
+        "test/check_rocq.py:20-23"
+      ],
+      "evidence": [
+        "release-ctest.txt"
+      ],
+      "impact": "Proof checking passes while the two 'complete' obligations assert nothing; the checker only looks for the marker name.",
+      "fix": "Replace with substantive statements over the model and reject vacuous True/0=0 theorem statements in the checker.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "V-02",
+      "title": "Hardware 'co-simulation' tests only search source strings",
+      "severity": "medium",
+      "status": "static",
+      "files": [
+        "test/Unit/test_unit_xbt_hw.cpp:130-172",
+        "hw/xbt_alu_model.hpp:1-8"
+      ],
+      "evidence": [
+        "pyslang-rtl.txt"
+      ],
+      "impact": "The SystemVerilog check asserts module names exist; the C++ model is never compared against simulated RTL, and the test output claimed co-simulation.",
+      "fix": "Rename to source inventory, lint with Verilator when present, and state that co-simulation is pending.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "V-03",
+      "title": "Latest CI is failing and the failure is reproduced by the overflow regressions",
+      "severity": "high",
+      "status": "reproduced",
+      "files": [
+        ".github/workflows/core-foundation.yml"
+      ],
+      "evidence": [
+        "ci-summary.txt",
+        "release-ctest.txt"
+      ],
+      "impact": "All three compiler jobs fail at 'Build and test'; locally Core_Backend_Regression, Core_Optimized_Differential and Phase1_LLVM_Differential fail on the clamp expectations.",
+      "fix": "Repair C-01/C-02 (or revert the clamp), then rerun CI.",
+      "repair_state": "local cause fixed; CI rerun pending"
+    },
+    {
+      "id": "V-04",
+      "title": "Vulkan shader/execution tests are skipped in CI; glslang/spirv-val are not installed",
+      "severity": "medium",
+      "status": "reproduced",
+      "files": [
+        "test/SDK/vulkan.py:34-36",
+        ".github/workflows/core-foundation.yml"
+      ],
+      "evidence": [
+        "release-ctest.txt"
+      ],
+      "impact": "Both Vulkan tests return 77 in CI and locally; GPU paths are not executed by CI at all.",
+      "fix": "Install glslang-tools and spirv-tools in CI; keep device execution optional.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "V-05",
+      "title": "Arithmetic speedup and numerical claims are not reproduced exactly; benchmark scope is narrow",
+      "severity": "low",
+      "status": "reproduced",
+      "files": [
+        "test/benchmark_arithmetic.cpp",
+        "test/benchmark_wide_math.cpp"
+      ],
+      "evidence": [
+        "wide-benchmark.txt"
+      ],
+      "impact": "The wide benchmark measures 12.7x/17.1x locally vs 18.37x/40.13x recorded; microbenchmarks do not cover end-to-end compiler work.",
+      "fix": "Report ranges and hardware, separate micro from end-to-end, keep assertions on operations not timings.",
+      "repair_state": "documented"
+    },
+    {
+      "id": "A-01",
+      "title": "C ABI activation entry points do not validate null x/out for nonzero n",
+      "severity": "low",
+      "status": "static",
+      "files": [
+        "lib/Ternary/ternary_c_abi.cpp:379-389"
+      ],
+      "evidence": [
+        "sdk-api-probes.json"
+      ],
+      "impact": "xbt_rmsnorm/xbt_softmax dereference null buffers; the C ABI otherwise validates pointers.",
+      "fix": "Throw invalid_argument when n != 0 and x/out is null.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "A-02",
+      "title": "TCSR get() silently returns zero for the builder's open row until finalize()",
+      "severity": "low",
+      "status": "reproduced",
+      "files": [
+        "ternary_sparse.hpp:91-146"
+      ],
+      "evidence": [
+        "tcsr-finalize.txt"
+      ],
+      "impact": "Elements appended to the row the builder is currently filling are invisible to get() until finalize() (row_ptr[r+1] is still 0).",
+      "fix": "Treat the open row's end offset as the live nnz.",
+      "repair_state": "fixed"
+    },
+    {
+      "id": "A-03",
+      "title": "Map admission uses a static statement count, not executed loop iterations",
+      "severity": "low",
+      "status": "static",
+      "files": [
+        "lib/SDK/sdk.cpp:216-222"
+      ],
+      "evidence": [
+        "sdk-api-probes.json"
+      ],
+      "impact": "The aggregate work estimate admits batches whose loops multiply the real cost; the interpreter has a per-invocation budget but no aggregate cap.",
+      "fix": "Enforce an aggregate execution budget across the batch (implemented) and document that admission is heuristic.",
+      "repair_state": "partially fixed (cumulative batch budget)"
+    }
+  ],
+  "repair_report": "docs/AUDIT_FIXES_2026_11_02.md"
+}

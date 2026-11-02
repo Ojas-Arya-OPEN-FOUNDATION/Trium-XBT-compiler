@@ -1,0 +1,5 @@
+Local (AMD64 container, g++ 12.2, Release): arithmetic speedup 12.704x, wide speedup 17.059x
+Recorded in upstream documentation: 18.37x, 40.13x
+Exact-operation assertions: pass
+Note: timings are microbenchmarks on one machine and are not a claim about
+end-to-end compiler throughput or GPU performance.

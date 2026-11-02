@@ -1,0 +1,19 @@
+CI inspected: https://github.com/Ojas-Arya-OPEN-FOUNDATION/Trium-XBT-compiler/actions
+Run 41415612321 (main @ 82ae251): completed/failure
+Run 41419040453 (main @ 5a33d9c): completed/failure
+Jobs in both runs:
+  debug       FAILED  at "Build and test" (cmake --build build/ci --target check-all)
+  release     FAILED  at "Build and test"
+  sanitizers  FAILED  at "Build and test"
+  native-rocq PASSED
+  rust-client PASSED
+Failed job logs could not be downloaded (results-receiver EOF); only job
+metadata/annotations were available. The failure is reproduced locally by the
+overflow expectations in:
+  Core_Backend_Regression
+  Core_Optimized_Differential
+  Phase1_LLVM_Differential
+which fail with Int39 add/sub returning a clamped value instead of an error.
+Environment note: Layer1_Unit_Frontend_FP_Sparse skips/fails locally only because
+no real Clang binary exists in this container; CI installs clang, so this is not
+counted as an upstream defect.

@@ -1,0 +1,10 @@
+{
+  "probes": 13,
+  "result": "documented statuses and valid JSON in every case",
+  "new_defects": [],
+  "notes": [
+    "map dispatch has no dynamic aggregate work bound; admission uses a static statement count (A-03)",
+    "xbt_rmsnorm/xbt_softmax C entry points did not check null x/out with n>0 (A-01)",
+    "native-v1 rejects loops, so the native path cannot be driven into an unbounded loop"
+  ]
+}

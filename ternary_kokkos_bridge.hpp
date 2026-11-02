@@ -26,6 +26,7 @@
 #include <atomic>
 #include <functional>
 #include <latch>
+#include <exception>
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -185,6 +186,55 @@ public:
         : m_begin(begin), m_end(end), m_tile(tile) {}
 };
 
+// ------------------------------------------------------------------------------
+// Worker-task exception transport
+// ------------------------------------------------------------------------------
+//
+// A std::function task that throws used to escape the worker's thread function and
+// call std::terminate. Tasks now run through run_task_guarded(): the exception is
+// captured, the task's latch is ALWAYS counted down (so waiters cannot hang), and
+// the first captured exception is rethrown on the dispatching thread after the
+// barrier. The caller's own chunk is guarded the same way, so an exception there
+// no longer destroys the stack-resident latch while queued tasks still reference it.
+inline std::mutex& task_error_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline std::exception_ptr& task_error_slot() {
+    static std::exception_ptr error;
+    return error;
+}
+
+inline void record_task_error(std::exception_ptr error) noexcept {
+    try {
+        std::lock_guard<std::mutex> lock(task_error_mutex());
+        if (!task_error_slot()) task_error_slot() = error;
+    } catch (...) {
+        // Recording a diagnostic must never itself terminate a worker.
+    }
+}
+
+inline void rethrow_task_error() {
+    std::exception_ptr error;
+    {
+        std::lock_guard<std::mutex> lock(task_error_mutex());
+        error = task_error_slot();
+        task_error_slot() = nullptr;
+    }
+    if (error) std::rethrow_exception(error);
+}
+
+template <typename Fn>
+inline void run_task_guarded(Fn&& fn, std::latch* latch = nullptr) noexcept {
+    try {
+        fn();
+    } catch (...) {
+        record_task_error(std::current_exception());
+    }
+    if (latch) latch->count_down();
+}
+
 /**
  * @brief Persistent Multi-Core Worker Pool for C++20 Kokkos Execution.
  *
@@ -211,7 +261,7 @@ private:
     std::condition_variable cv_task;
     std::atomic<bool> stop_flag{false};
     std::atomic<size_t> active_threads{0};
-    std::mutex lifecycle_mutex; // serializes init()/shutdown() (no concurrent double-join)
+    std::recursive_mutex lifecycle_mutex; // serializes init()/shutdown()/reinit() (no concurrent double-join)
 
     ThreadPool() {
         size_t hw = std::thread::hardware_concurrency();
@@ -219,6 +269,7 @@ private:
     }
 
     void init(size_t threads) {
+        std::lock_guard<std::recursive_mutex> lifecycle_lock(lifecycle_mutex);
         shutdown(); // joins all workers, then drains & executes any still-queued tasks
         stop_flag.store(false, std::memory_order_release);
         active_threads.store(threads, std::memory_order_release);
@@ -240,7 +291,7 @@ private:
                         task = std::move(this->task_queue.front());
                         this->task_queue.pop();
                     }
-                    task();
+                    run_task_guarded(task); // a throwing task is reported, never std::terminate
                 }
             });
         }
@@ -259,7 +310,7 @@ private:
     }
 
     void shutdown() {
-        std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex);
+        std::lock_guard<std::recursive_mutex> lifecycle_lock(lifecycle_mutex);
 
         // A pool worker calling shutdown() would self-join its own std::thread
         // (std::system_error / deadlock). Stop everything, detach ONLY our own worker
@@ -287,7 +338,7 @@ private:
         active_threads.store(0, std::memory_order_release); // drained work runs serially
         auto remaining = drain_queue();
         for (auto& task : remaining) {
-            if (task) task();
+            if (task) run_task_guarded(task);
         }
     }
 
@@ -306,6 +357,7 @@ public:
     }
 
     void reinit(size_t threads) {
+        std::lock_guard<std::recursive_mutex> lifecycle_lock(lifecycle_mutex);
         if (threads == 0) threads = std::thread::hardware_concurrency();
         if (is_worker_thread()) {
             // Reject teardown requests originating from a pool worker: that worker cannot
@@ -328,7 +380,16 @@ public:
     void enqueue(std::function<void()> task) {
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
-            task_queue.push(std::move(task));
+            if (!stop_flag.load(std::memory_order_acquire) || s_is_pool_worker) {
+                task_queue.push(std::move(task));
+                task = nullptr;
+            }
+        }
+        if (task) {
+            // Pool is stopping (or being reinitialized): run the task inline instead
+            // of dropping it, otherwise a latch waiter would block forever.
+            run_task_guarded(task);
+            return;
         }
         cv_task.notify_one();
     }
@@ -385,28 +446,39 @@ inline void parallel_for(const RangePolicy<IndexType>& policy, const Functor& fu
     size_t num_chunks = std::min(nthreads, static_cast<size_t>(total));
     IndexType chunk_size = (total + num_chunks - 1) / num_chunks;
     std::latch sync_latch(num_chunks);
+    std::exception_ptr caller_error;
 
     for (size_t c = 0; c < num_chunks; ++c) {
         IndexType start = policy.begin() + c * chunk_size;
         IndexType finish = std::min(policy.end(), start + chunk_size);
 
         if (c == num_chunks - 1) {
-            // Run last chunk on caller thread directly to save thread dispatch overhead
-            for (IndexType i = start; i < finish; ++i) {
-                func(i);
+            // Run last chunk on caller thread directly to save thread dispatch overhead.
+            // An exception is captured, not propagated yet: the latch must outlive every
+            // queued task that references it (a direct throw here used to destroy the
+            // latch while workers still held pointers to it).
+            try {
+                for (IndexType i = start; i < finish; ++i) {
+                    func(i);
+                }
+            } catch (...) {
+                caller_error = std::current_exception();
             }
             sync_latch.count_down();
         } else {
             ThreadPool::instance().enqueue([start, finish, &func, &sync_latch]() {
-                for (IndexType i = start; i < finish; ++i) {
-                    func(i);
-                }
-                sync_latch.count_down();
+                run_task_guarded([&]() {
+                    for (IndexType i = start; i < finish; ++i) {
+                        func(i);
+                    }
+                }, &sync_latch);
             });
         }
     }
 
-    sync_latch.wait();
+    sync_latch.wait(); // all tasks completed (guarded tasks always count down)
+    if (caller_error) std::rethrow_exception(caller_error);
+    rethrow_task_error();
 }
 
 /**
@@ -454,31 +526,39 @@ inline void parallel_reduce(const RangePolicy<IndexType>& policy, const Functor&
     };
     std::vector<PaddedAccumulator> local_accumulators(num_chunks);
     std::latch sync_latch(num_chunks);
+    std::exception_ptr caller_error;
 
     for (size_t c = 0; c < num_chunks; ++c) {
         IndexType start = policy.begin() + c * chunk_size;
         IndexType finish = std::min(policy.end(), start + chunk_size);
 
         if (c == num_chunks - 1) {
-            ValueType acc{};
-            for (IndexType i = start; i < finish; ++i) {
-                func(i, acc);
-            }
-            local_accumulators[c].val = acc;
-            sync_latch.count_down();
-        } else {
-            ThreadPool::instance().enqueue([start, finish, c, &func, &local_accumulators, &sync_latch]() {
+            try {
                 ValueType acc{};
                 for (IndexType i = start; i < finish; ++i) {
                     func(i, acc);
                 }
                 local_accumulators[c].val = acc;
-                sync_latch.count_down();
+            } catch (...) {
+                caller_error = std::current_exception();
+            }
+            sync_latch.count_down();
+        } else {
+            ThreadPool::instance().enqueue([start, finish, c, &func, &local_accumulators, &sync_latch]() {
+                run_task_guarded([&]() {
+                    ValueType acc{};
+                    for (IndexType i = start; i < finish; ++i) {
+                        func(i, acc);
+                    }
+                    local_accumulators[c].val = acc;
+                }, &sync_latch);
             });
         }
     }
 
     sync_latch.wait();
+    if (caller_error) std::rethrow_exception(caller_error);
+    rethrow_task_error();
 
     for (size_t c = 0; c < num_chunks; ++c) {
         result = reducer(result, local_accumulators[c].val);
@@ -520,8 +600,9 @@ inline TernaryMatrix parallel_transpose(const TernaryMatrix& mat) {
  */
 inline void parallel_gemm(const TernaryMatrix& A, const TernaryMatrix& B,
                           DenseMatrixInt64& C, size_t num_threads = 0) {
-    assert(A.cols == B.rows && "Dimension mismatch for matrix multiplication!");
-    assert(C.rows == A.rows && C.cols == B.cols && "Output matrix dimensions mismatch!");
+    if (A.cols != B.rows) throw std::invalid_argument("parallel_gemm: inner dimensions differ");
+    if (C.rows != A.rows || C.cols != B.cols)
+        throw std::invalid_argument("parallel_gemm: output dimensions mismatch");
 
     if (num_threads > 0) {
         ::Kokkos::initialize(num_threads);
@@ -554,7 +635,7 @@ inline void parallel_reduce_csa(const std::vector<TernaryMatrix>& inputs,
                                 TernaryMatrix& out_sum,
                                 TernaryMatrix& out_carry,
                                 size_t num_threads = 0) {
-    assert(!inputs.empty() && "Input list for CSA reduction cannot be empty!");
+    if (inputs.empty()) throw std::invalid_argument("CSA reduction requires at least one input");
     const size_t M = inputs[0].rows;
     const size_t N = inputs[0].cols;
     const size_t total_words = M * inputs[0].words_per_row;
@@ -584,7 +665,7 @@ inline void parallel_reduce_csa(const std::vector<TernaryMatrix>& inputs,
  */
 inline TernaryMatrix parallel_reduce_csa(const std::vector<TernaryMatrix>& inputs,
                                          size_t num_threads = 0) {
-    assert(!inputs.empty() && "Input list for CSA reduction cannot be empty!");
+    if (inputs.empty()) throw std::invalid_argument("CSA reduction requires at least one input");
     const size_t M = inputs[0].rows;
     const size_t N = inputs[0].cols;
     const size_t total_words = M * inputs[0].words_per_row;

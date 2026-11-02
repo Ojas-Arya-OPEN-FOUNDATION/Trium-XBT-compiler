@@ -193,6 +193,13 @@ is scalar-only (the native frontend support rules apply). A 10-million-operation
 execution budget and 512-call depth limit bound runaway execution; the C++ API
 accepts a different operation budget, with zero meaning unlimited.
 
+These limits belong to the **reference interpreter and the SDK execution path**.
+AOT output produced with `--emit-llvm`, `-S` or `-c` is ordinary machine code: it
+carries no implicit operation budget, and a loop in compiled code runs until it
+finishes or the process is stopped. Services that execute untrusted AOT programs
+must impose their own timeout or resource limit (see
+`AUDIT_FIXES_2026_11_02.md`, finding C-04).
+
 All **525** baseline differential values now also check this IR route. A separate
 seeded generated-program test checks **211** whole-program outputs against native
 LLVM, the AST interpreter and an independent Python calculation, including loop

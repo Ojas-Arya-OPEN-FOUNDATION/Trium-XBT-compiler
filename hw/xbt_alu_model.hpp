@@ -1,9 +1,11 @@
 /**
  * @file hw/xbt_alu_model.hpp
- * @brief C++20 Cycle-Exact RISC-V "Xbt" Custom-0 (0x0B) ISA Emulator & RTL Co-Simulator
+ * @brief C++20 RISC-V "Xbt" Custom-0 (0x0B) instruction-set model
  *
- * Bit-accurate behavioral & RTL co-simulation model corresponding to
- * `hw/riscv_xbt_extension.sv` (IEEE 1800-2017 SystemVerilog).
+ * Behavioural model of the instruction semantics implemented by
+ * `hw/riscv_xbt_extension.sv` (IEEE 1800-2017 SystemVerilog). This is NOT an RTL
+ * co-simulation: the two are checked against independent reference arithmetic, and
+ * RTL simulation requires Verilator/Icarus (see docs/HARDWARE_GPU_QUALIFICATION.md).
  */
 
 #ifndef XBT_ALU_MODEL_HPP

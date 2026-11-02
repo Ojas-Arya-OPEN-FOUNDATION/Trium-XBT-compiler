@@ -44,6 +44,12 @@ with tempfile.TemporaryDirectory(prefix='trium-proofs-') as directory:
         source = (root / 'proofs/rocq' / filename).read_text()
         if re.search(r'\b(Admitted|admit|Axiom|Parameter)\b', source):
             raise AssertionError(f'{filename}: unchecked assumptions are not allowed')
+        # A theorem whose statement is literally True (or 0=0) proves nothing, no
+        # matter how cleanly it checks. Such placeholders must not be used as
+        # terminal "complete" markers.
+        vacuous = re.search(r'^\s*(?:Theorem|Lemma)\s+\w+\s*:\s*(?:True|0\s*=\s*0)\s*\.', source, re.M)
+        if vacuous:
+            raise AssertionError(f'{filename}: vacuous proof statement: {vacuous.group(0).strip()}')
         # Print Assumptions checks transitive assumptions of all declared results,
         # not just the terminal marker. Checking the final source declaration alone
         # would miss an axiom dependency in an earlier theorem.

@@ -62,5 +62,13 @@ Definition multiply (a b:outcome) : outcome :=
   match a,b with Value x, Value y => Value (x*y) | _,_ => Failure end.
 Theorem zero_does_not_erase_failure : multiply (Value 0) Failure=Failure.
 Proof. reflexivity. Qed.
-Theorem core_lowering_complete : True. Proof. exact I. Qed.
+(** Terminal obligation: the lowering model propagates failure instead of turning
+    it into a value, and multiplies payloads exactly. This is a statement about the
+    model below, not a vacuous [True] placeholder. *)
+Theorem core_lowering_complete : forall a b,
+  multiply (Value a) (Value b) = Value (a*b) /\
+  multiply Failure (Value b) = Failure /\
+  multiply (Value a) Failure = Failure /\
+  multiply Failure Failure = Failure.
+Proof. intros; repeat split; reflexivity. Qed.
 End CoreLowering.
