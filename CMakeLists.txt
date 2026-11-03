@@ -437,7 +437,14 @@ if(BT_BUILD_TESTS)
     set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer7_Sema
         PROPERTIES ENVIRONMENT "BT_COMPILER=$<TARGET_FILE:bt-compiler>;BT_OPT=$<TARGET_FILE:bt-opt>" SKIP_RETURN_CODE 77)
 
-    # A clean 'check-all' builds every executable used by registered tests.
+    # A clean 'check-all' must build every executable used by registered tests.
+    #
+    # The explicit list below was maintained by hand and went stale: targets
+    # added later (unit_microkernel, ternary_bench, unit_kernel_contract,
+    # unit_sdk_gemm_layout, unit_sdk_host) were missing, so on a clean build
+    # ctest ran before its executables existed and reported "Not Run" rather
+    # than a real pass or fail. Depending on `all` removes the class of bug -
+    # a new test target can never again be silently left out.
     add_custom_target(check-all
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS bt-compiler bt-opt unit_core unit_dense unit_memory unit_ast
@@ -445,6 +452,7 @@ if(BT_BUILD_TESTS)
             unit_c_abi_ffi unit_bigint_symplectic unit_xbt_hw unit_phase1
             unit_phase3 unit_universal unit_math_core unit_numeric_oracle unit_fp_foundation unit_ir_program unit_core_lowering
             unit_audit_regressions bt_hijack_fixture
+            all
     )
 endif()
 
