@@ -342,6 +342,16 @@ if(BT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/core_program_differential.py $<TARGET_FILE:bt-compiler>)
     set_tests_properties(Core_Optimized_Differential Core_Optimized_Programs PROPERTIES ENVIRONMENT "BT_TEST_CORE_OPT=1" SKIP_RETURN_CODE 77)
     add_test(NAME CUDA_Driver_Unit COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_driver_unit.py)
+    # --gpu-map compiles a named function from .bt source into a real GLSL 450
+    # compute kernel. These check the emitted kernel is SEMANTICALLY the user's
+    # program, not merely well-formed: the kernel is transliterated back to C++,
+    # run, and compared against the JIT result of the same source.
+    add_test(NAME GPU_Map_SignSelect COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt transform --inputs=-2,-1,0,1,2)
+    add_test(NAME GPU_Map_LoopAndCall COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt accumulate --inputs=0,1,4)
     add_test(NAME CUDA_Offline_Validation COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_map_test.py $<TARGET_FILE:bt-compiler>)
     add_test(NAME CUDA_Device_Qualification COMMAND ${Python3_EXECUTABLE}
