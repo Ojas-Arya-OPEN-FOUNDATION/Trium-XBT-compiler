@@ -320,6 +320,90 @@ static void test_gpu_backend() {
         if (cpu[i] != ref[i]) { require(false, "GPU CPU-oracle must match naive"); return; }
     std::printf("    -> CPU oracle matches naive (%zu elements)\n", ref.size());
 
+    // The dispatch arithmetic is pure logic - test it here, because an
+    // off-by-one in a group count or buffer size is the bug that ships
+    // silently instead of failing to compile.
+    for (bool int64 : {true, false}) {
+        blas::GpuGemmPlan pl = blas::gpu_gemm_plan(19, 23, 71, int64);
+        const std::vector<std::string> bad = blas::check_shader_contract(pl);
+        for (const auto& b : bad) std::printf("    -> CONTRACT VIOLATION: %s\n", b.c_str());
+        require(bad.empty(), "shader contract must hold for both native and portable");
+        require(pl.groups_x * pl.tile >= 19 && pl.groups_y * pl.tile >= 23,
+                "dispatch grid must cover the whole output");
+        require(pl.shared_bytes <= 16384u, "shared memory within the 16 KiB guarantee");
+        require(blas::pack_push_constants(pl).size() * 4 == pl.push_constant_bytes,
+                "push constant packing must match its declared size");
+    }
+    std::printf("    -> dispatch plan + shader contract verified (native + portable)\n");
+
+    // Emulate the shader algorithm itself and demand it equals the oracle.
+    // This validates the tiling, staging and index arithmetic IN the GLSL -
+    // everything except the GLSL grammar, which needs glslangValidator.
+    for (bool int64 : {true, false}) {
+        blas::GpuGemmPlan pl = blas::gpu_gemm_plan(op.m, op.n, op.k, int64);
+        std::vector<int64_t> emu = blas::emulate_gpu_gemm(op, pl);
+        for (size_t i = 0; i < ref.size(); ++i)
+            if (emu[i] != ref[i]) {
+                std::printf("    -> emulator mismatch at %zu: %lld vs %lld (%s)\n",
+                            i, (long long)emu[i], (long long)ref[i],
+                            int64 ? "native" : "portable");
+                require(false, "shader algorithm must match the CPU oracle");
+                return;
+            }
+    }
+    std::printf("    -> shader algorithm (emulated) matches the oracle, native + portable\n");
+
+    // Packed weights -> device. Shapes chosen to hit the padding edges:
+    // K not a multiple of 5 (so the final byte is partial) and not a multiple
+    // of 64 (so the final word is partial). A zero byte decodes as five -1
+    // trits, so an unpack bounded by the byte extent instead of by K shows up
+    // here as wrong answers, not as a crash.
+    {
+        std::mt19937_64 pg(90210);
+        const uint32_t shapes[][3] = {{19,23,71},{32,32,320},{37,29,133},{64,64,64},{40,40,7}};
+        for (auto& sh : shapes) {
+            const uint32_t m = sh[0], n = sh[1], k = sh[2];
+            Operands po2 = make_operands(m, n, k, pg);
+            std::vector<int64_t> pref = reference_gemm(po2);
+            blas::GpuPackedGemmPlan ppl = blas::gpu_gemm_plan_packed(m, n, k);
+            require(ppl.bytes_per_row == (k + 4u) / 5u, "packed row stride must be ceil(K/5)");
+            require(ppl.shared_bytes <= 16384u, "packed shared memory within the 16 KiB guarantee");
+            for (const auto& b : blas::check_packed_shader_contract(ppl))
+                std::printf("    -> PACKED CONTRACT VIOLATION: %s\n", b.c_str());
+            require(blas::check_packed_shader_contract(ppl).empty(),
+                    "packed shader contract must hold");
+
+            blas::GpuPackedOperands gpo;
+            gpo.m = m; gpo.n = n; gpo.k = k; gpo.kw = po2.kw;
+            gpo.bytes_per_row = ppl.bytes_per_row;
+            gpo.A_packed = blas::pack_weights_for_gpu(po2.Ap, po2.An, m, k,
+                                                      po2.kw, ppl.bytes_per_row);
+            gpo.Bp.assign(n * po2.kw, 0); gpo.Bn.assign(n * po2.kw, 0);
+            for (uint32_t j = 0; j < n; ++j)
+                for (size_t w = 0; w < po2.kw; ++w) {
+                    gpo.Bp[j * po2.kw + w] = po2.Bp[w * n + j];
+                    gpo.Bn[j * po2.kw + w] = po2.Bn[w * n + j];
+                }
+            std::vector<int64_t> emu = blas::emulate_gpu_gemm_packed(gpo, ppl);
+            for (size_t i = 0; i < pref.size(); ++i)
+                if (emu[i] != pref[i]) {
+                    std::printf("    -> packed-device mismatch %ux%ux%u at %zu: %lld vs %lld\n",
+                                m, n, k, i, (long long)emu[i], (long long)pref[i]);
+                    require(false, "packed-weight shader algorithm must match the reference");
+                    return;
+                }
+        }
+        // Byte savings, stated honestly: vs dual-rail and vs FP32 weights.
+        const uint32_t m = 1024, k = 1024;
+        blas::GpuPackedGemmPlan demo = blas::gpu_gemm_plan_packed(m, 1024, k);
+        const size_t packed = demo.bytes_a_packed;
+        const size_t dual   = size_t(m) * ((k + 63u) / 64u) * 2u * sizeof(uint64_t);
+        const size_t fp32   = size_t(m) * k * sizeof(float);
+        std::printf("    -> packed device path verified on 5 shapes (incl. K%%5 and K%%64 edges)\n");
+        std::printf("    -> 1024x1024 weights: %zu B packed vs %zu B dual-rail (%.2fx) vs %zu B FP32 (%.1fx)\n",
+                    packed, dual, double(dual) / double(packed), fp32, double(fp32) / double(packed));
+    }
+
     blas::GpuValidation v = blas::validate_gpu_vs_cpu(op);
     require(!v.note.empty(), "validation must report why the GPU path was not used");
     std::printf("    -> validate_gpu_vs_cpu: gpu=%d note=\"%s\"\n", (int)v.ran_on_gpu, v.note.c_str());

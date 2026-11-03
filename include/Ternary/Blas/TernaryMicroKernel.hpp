@@ -375,6 +375,18 @@ public:
         return Base243Codec::unpack5_fast(bytes_[r * bytes_per_row_ + c / 5])[c % 5];
     }
 
+    /** Bytes per row of the compressed stream. A host->device upload strides
+     *  by exactly this, so it is part of the public contract. */
+    inline size_t bytes_per_row() const noexcept { return bytes_per_row_; }
+
+    /** Raw compressed byte `b` of row `r`. Lets a caller upload the packed
+     *  stream without inflating it back to dual-rail first. */
+    inline uint8_t row_byte(size_t r, size_t b) const {
+        if (r >= rows_ || b >= bytes_per_row_)
+            throw std::out_of_range("PackedTensor::row_byte");
+        return bytes_[r * bytes_per_row_ + b];
+    }
+
     /** Materialise dual-rail words for one row (K contiguous). This is the
      *  unpack step; it happens per row-block, so the working set stays in cache. */
     inline void unpack_row(size_t r, uint64_t* P, uint64_t* N, size_t k_words) const {
