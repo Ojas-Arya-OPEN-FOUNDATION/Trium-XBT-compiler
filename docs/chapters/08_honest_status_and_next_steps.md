@@ -71,6 +71,9 @@ xychart-beta
 
 ---
 
+> [!IMPORTANT]
+> **Provenance & Measurement Note**: The cycle-normalized figures above derive from the synthetic in-memory microbenchmark harness (`bench_cycle_accurate.cpp`), where timer ticks (`cntvct_el0` on ARM64) are normalized against timer clock frequency. On ARM64 without kernel-level PMU cycle counter access (`PMCCNTR_EL0`), user-space timers record virtual timer intervals. True whole-program system benchmarks and qualification runs with exact environment hashes and platform strings are archived under `docs/evidence/`.
+
 ## 3. Demystifying GTOPS vs. FLOPS: A Fair Comparison
 
 In modern high-performance computing, marketing departments often play games with terminology. It is vital to understand the difference between **GTOPS** and **FLOPS**.
