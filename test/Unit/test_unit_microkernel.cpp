@@ -413,6 +413,89 @@ static void test_gpu_backend() {
 }
 
 // ---------------------------------------------------------------------------
+// Regression tests for the three packed-device bugs found during development.
+// Each is pinned so the specific defect cannot silently return.
+// ---------------------------------------------------------------------------
+static void test_packed_regressions() {
+    std::printf("  [Regress] packed-device defects pinned...\n");
+    std::mt19937_64 g(5150);
+
+    // (a) Padding must never leak. A zero packed byte decodes as five -1 trits
+    //     (digit 0 == trit -1), and PackedTensor::set rewrites the WHOLE byte
+    //     read-modify-write, so the unused trits of a partial final byte really
+    //     do hold -1 in the byte stream. Unpacking must be bounded by K.
+    {
+        const uint32_t m = 3, k = 7;          // 2 bytes/row -> 3 padding trits
+        const uint32_t kw = (k + 63) / 64;
+        std::vector<uint64_t> Ap(m * kw, 0), An(m * kw, 0);
+        for (uint32_t i = 0; i < m; ++i)
+            for (uint32_t t = 0; t < k; ++t) {
+                const uint64_t bit = 1ULL << t;
+                if (g() % 2) Ap[i] |= bit; else An[i] |= bit;
+            }
+        blas::PackedTensor T = blas::packed_from_dual_rail(Ap.data(), An.data(), m, k, kw);
+        for (uint32_t r = 0; r < m; ++r) {
+            uint64_t P = 0, N = 0;
+            T.unpack_row(r, &P, &N, kw);
+            if (P != Ap[r] || N != An[r]) {
+                require(false, "unpack_row must round-trip exactly"); return;
+            }
+            if ((P >> k) || (N >> k)) {
+                require(false, "padding trits must never appear in unpacked words"); return;
+            }
+        }
+        std::printf("    -> padding trits never leak (K=7, 3 pad trits)\n");
+    }
+
+    // (b) Staging must cover the slab exactly once. It was sized at 8 entries
+    //     per thread where the slab needs 52, so only 5 of 32 rows were staged
+    //     and the rest silently contributed zero.
+    {
+        blas::GpuPackedGemmPlan pl = blas::gpu_gemm_plan_packed(1024, 1024, 1024);
+        require(pl.packed_entries_per_thread > 0,
+                "packed entries per thread must divide exactly");
+        require(size_t(pl.local_x) * pl.local_y * pl.packed_entries_per_thread
+                == size_t(pl.tile) * pl.pkt,
+                "packed staging must cover TILE*PKT exactly once");
+        require(pl.packed_entries_per_thread == 52u,
+                "staging must cover all 32 rows, not just the first 5");
+        // A row count beyond what the broken staging reached must still work.
+        std::printf("    -> staging covers %zu rows x %u bytes with %u entries/thread\n",
+                    size_t(pl.tile), pl.pkt, pl.packed_entries_per_thread);
+    }
+
+    // (c) Byte grouping is GLOBAL (byte b == trits 5b..5b+4), but a word starts
+    //     at 64*w which is not a multiple of 5. Grouping from the word start
+    //     read every slot in the second and later words from the wrong byte.
+    //     All-ones operands make this exact: C must be exactly K.
+    {
+        const uint32_t m = 1, n = 1, k = 71;      // 2 words, word 1 partial
+        const uint32_t kw = (k + 63) / 64;
+        std::vector<uint64_t> Ap(kw, 0), Bp(kw, 0);
+        for (uint32_t t = 0; t < k; ++t) {
+            Ap[t / 64] |= 1ULL << (t % 64);
+            Bp[t / 64] |= 1ULL << (t % 64);
+        }
+        std::vector<uint64_t> An(kw, 0), Bn(kw, 0);
+        blas::GpuPackedGemmPlan pl = blas::gpu_gemm_plan_packed(m, n, k);
+        blas::GpuPackedOperands op;
+        op.m = m; op.n = n; op.k = k; op.kw = kw;
+        op.bytes_per_row = pl.bytes_per_row;
+        op.A_packed = blas::pack_weights_for_gpu(Ap, An, m, k, kw, pl.bytes_per_row);
+        op.Bp = Bp; op.Bn = Bn;
+        std::vector<int64_t> C = blas::emulate_gpu_gemm_packed(op, pl);
+        if (C.size() != 1 || C[0] != int64_t(k)) {
+            std::printf("    -> all-ones 1x1x71 gave %lld, expected %u\n",
+                        C.empty() ? -1LL : (long long)C[0], k);
+            require(false, "device unpack must read every word by absolute trit index");
+            return;
+        }
+        std::printf("    -> multi-word unpack correct across the 64/5 misalignment (C=%lld)\n",
+                    (long long)C[0]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Task 3: BitNet b1.58 kernel - correctness and throughput.
 // ---------------------------------------------------------------------------
 static std::vector<int64_t> bitnet_reference(const TernaryMatrix& W,
@@ -533,6 +616,7 @@ int main() {
     test_checked_mode();
     test_packed_gemm();
     test_gpu_backend();
+    test_packed_regressions();
     test_bitnet();
     test_delegation();
     benchmark();
