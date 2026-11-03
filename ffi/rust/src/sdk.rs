@@ -213,4 +213,3 @@ impl Drop for Module {fn drop(&mut self){unsafe{bt_sdk_release(self.handle,std::
   }}
  }
 }
-}

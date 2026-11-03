@@ -373,6 +373,14 @@ if(BT_BUILD_TESTS)
     add_test(NAME GPU_Map_LoopAndCall COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt accumulate --inputs=0,1,4)
+
+    # Point the gpu-map tests at a shader compiler if one was installed.
+    find_program(GLSLANG_VALIDATOR_EXECUTABLE glslangValidator
+        HINTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/bin)
+    if(GLSLANG_VALIDATOR_EXECUTABLE)
+        set_tests_properties(GPU_Map_SignSelect GPU_Map_LoopAndCall PROPERTIES
+            ENVIRONMENT "GLSLANG_VALIDATOR=${GLSLANG_VALIDATOR_EXECUTABLE}")
+    endif()
     add_test(NAME CUDA_Offline_Validation COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_map_test.py $<TARGET_FILE:bt-compiler>)
     add_test(NAME CUDA_Device_Qualification COMMAND ${Python3_EXECUTABLE}
@@ -456,7 +464,8 @@ if(BT_BUILD_SDK)
     set_target_properties(trium_sdk PROPERTIES EXPORT_NAME SDK VERSION 1.2.0 SOVERSION 1 CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
     add_library(TriumXBT::SDK ALIAS trium_sdk)
     if(BT_SDK_VULKAN)
-        find_path(BT_VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED)
+        find_path(BT_VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED
+            HINTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/include")
         target_include_directories(trium_sdk PRIVATE ${BT_VULKAN_INCLUDE_DIR})
         target_compile_definitions(trium_sdk PRIVATE BT_SDK_HAS_VULKAN=1)
     endif()
@@ -487,11 +496,17 @@ if(BT_BUILD_SDK)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/rust_ffi_abi_check.py)
         set_tests_properties(SDK_Rust_FFI_ABI PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
         # If cargo IS available, actually compile and test the Rust crate.
-        find_program(CARGO_EXECUTABLE cargo)
+        # tools/install_toolchains.sh puts one in tools/.toolchains/bin, which
+        # is searched explicitly because it is not on PATH by default.
+        find_program(CARGO_EXECUTABLE cargo
+            HINTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/bin)
         if(CARGO_EXECUTABLE)
-            add_test(NAME SDK_Rust_Build COMMAND ${CARGO_EXECUTABLE} test
-                --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/ffi/rust/Cargo.toml)
+            add_test(NAME SDK_Rust_Build COMMAND
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_rust_tests.sh ${CARGO_EXECUTABLE})
             set_tests_properties(SDK_Rust_Build PROPERTIES TIMEOUT 900)
+        else()
+            message(STATUS "cargo not found - the Rust crate will be ABI-checked only. "
+                           "Run tools/install_toolchains.sh to get a toolchain.")
         endif()
         add_test(NAME SDK_Z3_Models COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_sdk_contracts.py)
         set_tests_properties(SDK_Z3_Models PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)

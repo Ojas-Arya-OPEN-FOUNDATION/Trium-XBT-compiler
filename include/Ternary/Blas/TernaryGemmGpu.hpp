@@ -497,14 +497,24 @@ public:
  */
 inline std::vector<int64_t> ternary_gemm_cpu_reference(const GpuGemmOperands& op) {
     std::vector<int64_t> C(op.m * op.n, 0);
-    DualRailPanel A  = pack_a(op.Ap.data(), op.An.data(), op.m, op.kw, 4);
-    DualRailPanel BT{std::vector<uint64_t>(op.n * op.kw),
-                     std::vector<uint64_t>(op.n * op.kw), op.n, op.kw};
+    // pack_a pads A to a multiple of MR rows. BT must be padded to a multiple
+    // of NR rows the same way, because the loops below run i0/j0 out to the
+    // rounded-up bound and the kernel reads a whole 4x4 block each time.
+    // Sizing BT at exactly op.n rows read past the end whenever n % 4 != 0 -
+    // found by AddressSanitizer at n=23, and invisible without it because the
+    // bytes past the end usually happen to be zero.
+    constexpr int MR = 4, NR = 4;
+    const size_t mp = ((op.m + MR - 1) / MR) * MR;
+    const size_t np = ((op.n + NR - 1) / NR) * NR;
+    DualRailPanel A  = pack_a(op.Ap.data(), op.An.data(), op.m, op.kw, MR);
+    DualRailPanel BT{std::vector<uint64_t>(np * op.kw, 0),
+                     std::vector<uint64_t>(np * op.kw, 0), np, op.kw};
     for (size_t j = 0; j < op.n; ++j)
         for (size_t w = 0; w < op.kw; ++w) {
             BT.P[j * op.kw + w] = op.Bp[j * op.kw + w];
             BT.N[j * op.kw + w] = op.Bn[j * op.kw + w];
         }
+    (void)mp;  // A is already padded by pack_a; kept for symmetry with np
     for (size_t i0 = 0; i0 < ((op.m + 3) / 4) * 4; i0 += 4)
         for (size_t j0 = 0; j0 < ((op.n + 3) / 4) * 4; j0 += 4)
             MicroKernel<ScalarLane, 4, 4>::run(A, BT, i0, j0, op.kw,

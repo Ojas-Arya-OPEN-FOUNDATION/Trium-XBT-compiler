@@ -91,6 +91,30 @@ def glsl_to_cpp(glsl, entry, inputs):
     return PRELUDE + body + driver
 
 
+def find_glslang():
+    """Locate a glslangValidator binary, or None if there is not one.
+
+    Checked in order: $GLSLANG_VALIDATOR, PATH, then the npm package that
+    ships prebuilt binaries (no network needed once installed):
+        npm install glslang-validator-prebuilt-predownloaded
+    """
+    env = os.environ.get("GLSLANG_VALIDATOR")
+    if env and os.path.exists(env):
+        return env
+    import shutil
+    found = shutil.which("glslangValidator") or shutil.which("glslang")
+    if found:
+        return found
+    tail = ("node_modules/glslang-validator-prebuilt-predownloaded/bin/"
+            "glslangValidator.linux")
+    for base in (os.getcwd(), os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))):
+        cand = os.path.join(base, tail)
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("compiler")
@@ -102,6 +126,24 @@ def main():
     inputs = [int(x) for x in a.inputs.split(",") if x.strip()]
     with tempfile.TemporaryDirectory() as wd:
         truth = cpu_truth(a.compiler, a.source, a.function, inputs, wd)
+        comp = os.path.join(wd, "kernel.comp")
+        glsl = emit_glsl(a.compiler, a.source, a.function, comp)
+
+        # Syntax/semantics, when a shader compiler is available. -V puts
+        # glslangValidator in Vulkan mode; without it push_constant blocks are
+        # rejected, which looks like a shader bug and is not.
+        validator = find_glslang()
+        if validator:
+            p = subprocess.run([validator, "-V", "--target-env", "vulkan1.1", comp],
+                               capture_output=True, text=True)
+            if p.returncode != 0:
+                print("FAIL: emitted GLSL is invalid:\n" + p.stdout + p.stderr)
+                print("--- emitted GLSL ---\n" + glsl)
+                return 1
+            print("glslangValidator: kernel compiles (GLSL -> SPIR-V)")
+        else:
+            print("glslangValidator: not found, skipping syntax check")
+
         comp = os.path.join(wd, "kernel.comp")
         glsl = emit_glsl(a.compiler, a.source, a.function, comp)
         cpp = os.path.join(wd, "kernel.cpp")

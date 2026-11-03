@@ -565,7 +565,13 @@ static void test_bitnet() {
     std::printf("    -> 256x512x256 re-slicing : %.2f ms = %.2f G MAC/s  (%.2fx faster when sliced once)\n",
                 dr * 1e3, mac / dr / 1e9, dr / d);
     require(Cb.size() == Mn * Nn, "bitnet output sized correctly");
-    require(d < dr, "slicing the activations once must beat re-slicing per call");
+    // The regression this guards was 2.03x - activations were re-sliced on
+    // every call. The remaining margin is ~3%, which is inside the noise on
+    // any machine and flips when other tests run concurrently, so asserting
+    // plain `d < dr` made the suite flaky in CI. Allow 5%: far below the 2x
+    // signal, comfortably above the noise. The ratio is always printed.
+    require(d < dr * 1.05,
+            "slicing once must not be materially slower than re-slicing per call");
 }
 
 // ---------------------------------------------------------------------------
@@ -604,8 +610,22 @@ static void test_delegation() {
                 mac / dc / 1e9, mac / dh / 1e9, mac / da / 1e9);
     // Compare in-process rather than against a hard-coded constant: a
     // wall-clock threshold is flaky on a shared machine.
+    //
+    // Only ENFORCED when the build is optimized. These kernels depend on the
+    // compiler turning SWAR popcount trees into real vector code; in an
+    // unoptimized build they invert - measured on this tree at n=512:
+    //     -O2:  csa9 47.9 vs autotuned 14.8  (csa9 3.2x faster)
+    //     -O0:  csa9  1.7 vs autotuned  2.3  (csa9 slower)
+    // Asserting the ordering unconditionally therefore made the suite fail in
+    // the Debug CI leg while the code was correct. The correctness assertions
+    // above are unconditional; only the throughput ordering is gated, and the
+    // numbers are always printed so an unoptimized run still shows them.
+#ifdef NDEBUG
     require(dc < da, "delegated csa9 must beat gemm_autotuned measured here");
     require(dh < da, "delegated harley_seal must beat gemm_autotuned measured here");
+#else
+    std::printf("    (throughput ordering not enforced in an unoptimized build)\n");
+#endif
 }
 
 int main() {

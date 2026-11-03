@@ -106,8 +106,9 @@ inline void gemm_ternary(const std::vector<uint64_t>& Ap,
                          uint64_t m, uint64_t n, uint64_t k) {
     C.assign(size_t(m) * n, 0);
     char err[4096];
-    check(bt_sdk_gemm_ternary(Ap.data(), An.data(), Bp.data(), Bn.data(),
-                              C.data(), m, n, k, err, sizeof err), err);
+    // Qualified: this helper is appended after `namespace bt::sdk` closes.
+    bt::sdk::check(bt_sdk_gemm_ternary(Ap.data(), An.data(), Bp.data(), Bn.data(),
+                                       C.data(), m, n, k, err, sizeof err), err);
 }
 
 /** True if the loaded library exports the fast GEMM (API >= 1.3). An older
