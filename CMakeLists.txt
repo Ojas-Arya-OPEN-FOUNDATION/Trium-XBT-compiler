@@ -201,6 +201,19 @@ if(BT_BUILD_TESTS)
         target_compile_options(unit_microkernel PRIVATE -march=native)
     endif()
 
+    # Honest benchmark runner. `--check` verifies every kernel bit-exact
+    # against a reference and times nothing it has not verified, so CI can run
+    # it in seconds. The full sweep (256/512/1024) is opt-in and is the only
+    # place performance claims should come from.
+    add_executable(ternary_bench tools/ternary_bench.cpp tools/bench_harness.hpp)
+    target_include_directories(ternary_bench PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(ternary_bench PRIVATE -march=native)
+    endif()
+
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -266,6 +279,7 @@ if(BT_BUILD_TESTS)
     # CTest Registration: Layer 1 Unit Tests
     add_test(NAME Layer1_Unit_Core COMMAND unit_core)
     add_test(NAME Layer1_Unit_MicroKernel COMMAND unit_microkernel)
+    add_test(NAME Bench_Smoke_Check COMMAND ternary_bench --check)
     add_test(NAME Layer1_Unit_Dense COMMAND unit_dense)
     add_test(NAME Layer1_Unit_Memory COMMAND unit_memory)
     add_test(NAME Layer1_Unit_AST COMMAND unit_ast)
