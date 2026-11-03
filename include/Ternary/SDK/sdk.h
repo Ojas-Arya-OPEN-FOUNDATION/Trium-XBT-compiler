@@ -72,9 +72,26 @@ BT_SDK_API bt_sdk_status bt_sdk_dual_encode(int64_t,uint32_t,uint64_t*,uint64_t*
 BT_SDK_API bt_sdk_status bt_sdk_dual_decode(uint64_t,uint64_t,uint32_t,int64_t*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_matmul(const int64_t*,uint64_t,const int64_t*,uint64_t,int64_t*,uint64_t,uint64_t,uint64_t,uint64_t,char*,size_t);
 /* Additive API 1.3: fast ternary GEMM, C[m,n] = A[m,k] * B[k,n].
- * Operands are dual-rail word arrays: A row-major with ceil(k/64) words per
- * row; B supplied transposed with n rows of ceil(k/64) words. C is row-major
- * int64, m*n elements. Dimension limit 1e6 each. CPU-only; no handle needed.
+ * Operands are dual-rail word arrays, kw = ceil(k/64) words per row.
+ * C is row-major int64, m*n elements. CPU-only; no handle needed.
+ * Dimension limit 1e6 each.
+ *
+ * LAYOUT - the two operands are NOT stored the same way. Getting this wrong
+ * returns plausible-looking wrong numbers with status 0 whenever k > 64.
+ *
+ *   A: row-major.       Word w of row i  ->  ap[i*kw + w]     (i in [0,m))
+ *   B: transposed, then word-PLANE-major.
+ *                       Word w of B^T row j  ->  bp[w*n + j]  (j in [0,n))
+ *      i.e. all n rows' word 0 are contiguous, then all n rows' word 1, ...
+ *      NOT row-major; the planes are indexed by word first, row second.
+ *
+ *   Encoding: trit t of a row is +1 -> bit (t%64) of the P word,
+ *                                 -1 -> bit (t%64) of the N word,
+ *                                  0 -> neither;  word index = t/64.
+ *
+ * When kw == 1 (k <= 64) the two B orderings coincide, so single-word tests
+ * pass either way and do not exercise this. Any conformance test must use a
+ * k > 64 AND an n > 1.
  *
  * Exact integer arithmetic: every partial product lies in {-1,0,+1} and the
  * accumulator is int64, so there is no rounding error at any K that fits -

@@ -38,11 +38,65 @@ fn query(f:impl Fn(*mut c_char,*mut usize,*mut c_char,usize)->i32)->Result<Strin
   }
  }Err(Error{code:6,message:"metadata changed repeatedly".into()})
 }
+/// Encode ternary matrices into the dual-rail layout `gemm_ternary` expects.
+///
+/// `a`  is `m` rows of `k` trits, row-major.
+/// `bt` is `n` rows of `k` trits, i.e. B already TRANSPOSED (row j is B's
+///      column j).
+///
+/// The two operands are stored differently at the C ABI - A row-major, B
+/// word-plane-major - and the difference is invisible for k <= 64, so getting
+/// it wrong by hand yields plausible wrong numbers. Use this and the layout is
+/// correct by construction. Returns (ap, an, bp, bn).
+pub fn encode_gemm(a: &[&[i8]], bt: &[&[i8]], k: usize)
+    -> Result<(Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>), Error>
+{
+    if k == 0 { return Err(Error{code:1,message:"k must be positive".into()}); }
+    let kw = (k + 63) / 64;
+    for row in a.iter().chain(bt.iter()) {
+        if row.len() != k {
+            return Err(Error{code:1,message:"every row must have exactly k trits".into()});
+        }
+    }
+    let mut ap = vec![0u64; a.len()*kw];
+    let mut an = vec![0u64; a.len()*kw];
+    for (i, row) in a.iter().enumerate() {
+        for t in 0..k {
+            match row[t] {
+                1  => ap[i*kw + t/64] |= 1u64 << (t % 64),
+                -1 => an[i*kw + t/64] |= 1u64 << (t % 64),
+                _  => {}
+            }
+        }
+    }
+    // B: word-plane-major. Word w of B^T row j lives at index w*n + j.
+    let n = bt.len();
+    let mut bp = vec![0u64; n*kw];
+    let mut bn = vec![0u64; n*kw];
+    for (j, row) in bt.iter().enumerate() {
+        for t in 0..k {
+            match row[t] {
+                1  => bp[(t/64)*n + j] |= 1u64 << (t % 64),
+                -1 => bn[(t/64)*n + j] |= 1u64 << (t % 64),
+                _  => {}
+            }
+        }
+    }
+    Ok((ap, an, bp, bn))
+}
+
 /// Exact ternary GEMM: C[m,n] = A[m,k] * B[k,n].
-/// `ap`/`an` are A's P/N rail words, m rows of ceil(k/64). `bp`/`bn` are B
-/// transposed, n rows of ceil(k/64). Arithmetic is exact int64 - every partial
-/// product lies in {-1,0,+1}, so there is no rounding at any K that fits.
-/// Requires SDK API >= 1.3.
+///
+/// `ap`/`an` are A's P/N rail words: m rows of ceil(k/64) words, ROW-MAJOR,
+/// so word w of row i is `ap[i*kw + w]`.
+///
+/// `bp`/`bn` are B TRANSPOSED and then WORD-PLANE-MAJOR: word w of B^T row j
+/// is `bp[w*n + j]`. This is NOT row-major. The two orderings coincide only
+/// when k <= 64, so a hand-built multi-word B that looks right will silently
+/// return wrong values. Prefer `encode_gemm`, which lays both out correctly.
+///
+/// Arithmetic is exact int64 - every partial product lies in {-1,0,+1}, so
+/// there is no rounding at any K that fits. Requires SDK API >= 1.3.
 pub fn gemm_ternary(ap:&[u64],an:&[u64],bp:&[u64],bn:&[u64],m:u64,n:u64,k:u64)->Result<Vec<i64>,Error>{
  if m==0||n==0||k==0 {return Err(Error{code:1,message:"empty gemm dimension".into()});}
  let kw=((k+63)/64) as usize;
@@ -99,4 +153,64 @@ impl Drop for Module {fn drop(&mut self){unsafe{bt_sdk_release(self.handle,std::
  #[test]fn concurrent_module(){let context=Context::new().unwrap();let module=Arc::new(context.compile("func transform(x:int)->int{return x+1;}").unwrap());let workers:Vec<_>=(0..8).map(|i|{let m=module.clone();std::thread::spawn(move||assert_eq!(m.map("transform",&[i],Backend::Cpu).unwrap(),vec![i+1]))}).collect();for w in workers{w.join().unwrap();}}
  #[test]fn metadata_and_scalar(){let c=Context::new().unwrap();let m=c.compile("func f(x:float)->float{return fma(x,2.0,0.5);}").unwrap();assert!(m.info().unwrap().contains("binary64"));assert_eq!(m.invoke("f",&[Scalar::Float(1.25)],Backend::Cpu).unwrap(),Scalar::Float(3.0));c.clear_cache().unwrap();assert!(c.cache_info().unwrap().contains("generation"));}
 
+ // A = [[1,-1],[0,1]], B = [[1,0],[-1,1]] -> B^T = [[1,-1],[0,1]].
+ // C = [[1*1+(-1)(-1), 1*0+(-1)(1)], [0*1+1*(-1), 0*0+1*1]] = [[2,-1],[-1,1]].
+ #[test]fn gemm_matches_hand_computed(){
+  let a:  [&[i8];2]=[&[1,-1],&[0,1]];
+  let bt: [&[i8];2]=[&[1,-1],&[0,1]];
+  let (ap,an,bp,bn)=encode_gemm(&a,&bt,2).unwrap();
+  let c=gemm_ternary(&ap,&an,&bp,&bn,2,2,2).unwrap();
+  assert_eq!(c,vec![2,-1,-1,1]);
+ }
+
+ // A value that does not fit the rails must be rejected, not silently wrapped.
+ #[test]fn gemm_rejects_bad_inputs(){
+  let a:  [&[i8];2]=[&[1,-1],&[0,1]];
+  let bt: [&[i8];2]=[&[1,-1],&[0,1]];
+  let (ap,an,bp,bn)=encode_gemm(&a,&bt,2).unwrap();
+  let short=vec![0u64;1];
+  assert!(gemm_ternary(&short,&an,&bp,&bn,2,2,2).is_err());
+  assert!(gemm_ternary(&ap,&an,&short,&bn,2,2,2).is_err());
+  assert!(gemm_ternary(&ap,&an,&bp,&bn,0,2,2).is_err());
+  // ragged rows must be rejected by the encoder
+  let ragged:[&[i8];2]=[&[1,-1],&[1]];
+  assert!(encode_gemm(&ragged,&bt,2).is_err());
+ }
+
+ // K wider than one 64-bit word AND n > 1: the only combination that
+ // distinguishes the two B orderings. Regression guard for the layout.
+ #[test]fn gemm_multiword_k_and_multi_n(){
+  let k=70usize;
+  let a1:Vec<i8>=(0..k).map(|i| if i%3==0 {1} else if i%3==1 {-1} else {0}).collect();
+  let a2:Vec<i8>=(0..k).map(|i| if i%2==0 {-1} else {1}).collect();
+  let b1:Vec<i8>=(0..k).map(|i| if i%5==0 {1} else {0}).collect();
+  let b2:Vec<i8>=(0..k).map(|i| if i%4==0 {-1} else {1}).collect();
+  let a:[&[i8];2]=[&a1[..],&a2[..]];
+  let bt:[&[i8];2]=[&b1[..],&b2[..]];
+  let (ap,an,bp,bn)=encode_gemm(&a,&bt,k).unwrap();
+  let c=gemm_ternary(&ap,&an,&bp,&bn,2,2,k as u64).unwrap();
+  for i in 0..2 { for j in 0..2 {
+   let expect:i64=(0..k).map(|t| a[i][t] as i64 * bt[j][t] as i64).sum();
+   assert_eq!(c[i*2+j],expect,"C[{}][{}]",i,j);
+  }}
+ }
+
+ // Larger random case against a naive O(n^3) reference.
+ #[test]fn gemm_matches_naive_reference(){
+  let (m,n,k)=(5usize,4usize,100usize);
+  let mut seed=12345u64;
+  let mut next=||{seed=seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+   ((seed>>33)%3) as i8 - 1};
+  let a:Vec<Vec<i8>>=(0..m).map(|_| (0..k).map(|_| next()).collect()).collect();
+  let bt:Vec<Vec<i8>>=(0..n).map(|_| (0..k).map(|_| next()).collect()).collect();
+  let aref:Vec<&[i8]>=a.iter().map(|r| &r[..]).collect();
+  let bref:Vec<&[i8]>=bt.iter().map(|r| &r[..]).collect();
+  let (ap,an,bp,bn)=encode_gemm(&aref,&bref,k).unwrap();
+  let c=gemm_ternary(&ap,&an,&bp,&bn,m as u64,n as u64,k as u64).unwrap();
+  for i in 0..m { for j in 0..n {
+   let expect:i64=(0..k).map(|t| a[i][t] as i64 * bt[j][t] as i64).sum();
+   assert_eq!(c[i*n+j],expect,"C[{}][{}]",i,j);
+  }}
+ }
+}
 }

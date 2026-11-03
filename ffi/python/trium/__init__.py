@@ -171,9 +171,24 @@ class Context:
         a=x._record();cv=(_Float*len(coefficients))(*(v._record() for v in coefficients));out=_Float()
         _check(self.lib,'float_polynomial',C.byref(a),cv,len(coefficients),C.byref(out));return TernaryFloat._from_record(out)
     def gemm_ternary(self,ap,an,bp,bn,m,n,k):
-        """Exact ternary GEMM. ap/an are A's P/N rail words (m rows of
-        ceil(k/64)); bp/bn are B transposed (n rows of ceil(k/64)). Returns
-        m*n int64 values. Requires SDK API >= 1.3."""
+        """Exact ternary GEMM: C[m,n] = A[m,k] * B[k,n]. Returns m*n int64
+        values. Requires SDK API >= 1.3.
+
+        The two operands are NOT laid out the same way, and the difference is
+        invisible for k <= 64, where both orderings coincide. With kw =
+        ceil(k/64):
+
+          ap/an : A row-major.   word w of row i -> ap[i*kw + w]
+          bp/bn : B TRANSPOSED, then word-PLANE-major.
+                  word w of B^T row j -> bp[w*n + j]
+
+        Encoding: trit t is +1 -> bit (t % 64) of the P word,
+                             -1 -> bit (t % 64) of the N word,
+                              0 -> neither; word index = t // 64.
+
+        A row-major bp (bp[j*kw + w]) returns status 0 and WRONG numbers once
+        k > 64 and n > 1. See sdk.h and test/SDK/gemm_layout.cpp.
+        """
         if self.lib._api_version<0x10003:raise Error(4,'gemm_ternary requires SDK API 1.3 or newer')
         kw=(k+63)//64
         if m*n>1000000 or max(m,n,k)>1000000:raise ValueError('gemm dimension limit')

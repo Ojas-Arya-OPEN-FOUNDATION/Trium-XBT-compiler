@@ -453,6 +453,25 @@ if(BT_BUILD_SDK)
         add_executable(unit_sdk_host test/SDK/host.cpp)
         target_link_libraries(unit_sdk_host PRIVATE trium_sdk)
         add_test(NAME SDK_Host_Ownership COMMAND unit_sdk_host)
+        # Pins the operand layout of bt_sdk_gemm_ternary. A is row-major and B
+        # is word-plane-major; the difference is invisible for k <= 64, so this
+        # deliberately covers k > 64 with n > 1, and asserts the row-major B
+        # layout gives a DIFFERENT answer (otherwise the test is vacuous).
+        add_executable(unit_sdk_gemm_layout test/SDK/gemm_layout.cpp)
+        target_link_libraries(unit_sdk_gemm_layout PRIVATE trium_sdk)
+        add_test(NAME SDK_Gemm_Layout COMMAND unit_sdk_gemm_layout)
+        # Checks the Rust FFI binding against the real C ABI without needing a
+        # Rust compiler: symbol existence, arity vs sdk.h, #[repr(C)] layouts.
+        add_test(NAME SDK_Rust_FFI_ABI COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/rust_ffi_abi_check.py)
+        set_tests_properties(SDK_Rust_FFI_ABI PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+        # If cargo IS available, actually compile and test the Rust crate.
+        find_program(CARGO_EXECUTABLE cargo)
+        if(CARGO_EXECUTABLE)
+            add_test(NAME SDK_Rust_Build COMMAND ${CARGO_EXECUTABLE} test
+                --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/ffi/rust/Cargo.toml)
+            set_tests_properties(SDK_Rust_Build PROPERTIES TIMEOUT 900)
+        endif()
         add_test(NAME SDK_Z3_Models COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_sdk_contracts.py)
         set_tests_properties(SDK_Z3_Models PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
         add_test(NAME SDK_Contracts COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/SDK/contracts.py $<TARGET_FILE:trium_sdk>)
