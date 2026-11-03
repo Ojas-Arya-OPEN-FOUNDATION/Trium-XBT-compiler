@@ -88,15 +88,22 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBT_VULKAN_INCLUDE_DIR="$VK_HEADER_DIR"
       - run: cmake --build build/vk --target trium_sdk -v -j 2
+      # A silent success here would be a bug: there is no GPU on a hosted
+      # runner, so the Vulkan path must report it is unavailable rather than
+      # quietly falling back to CPU. Signature is
+      #   bt_sdk_status bt_sdk_devices(char* out, size_t out_cap,
+      #                                char* err, size_t err_cap)
       - name: Confirm it degrades honestly with no GPU
         run: |
           python - <<'PY'
-          import ctypes, os, sys
+          import ctypes, sys
           lib = ctypes.CDLL("build/vk/libtrium_sdk.so")
-          out, n, err = ctypes.create_string_buffer(8192), ctypes.c_size_t(), ctypes.create_string_buffer(512)
-          rc = lib.bt_sdk_devices(out, ctypes.sizeof(out), ctypes.byref(n), err, ctypes.sizeof(err))
-          print("bt_sdk_devices rc=%d err=%s" % (rc, err.value.decode()[:120]))
-          # A silent success here would be a bug: there is no GPU on the runner.
+          lib.bt_sdk_devices.restype = ctypes.c_int32
+          lib.bt_sdk_devices.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+                                         ctypes.c_char_p, ctypes.c_size_t]
+          out, err = ctypes.create_string_buffer(8192), ctypes.create_string_buffer(512)
+          rc = lib.bt_sdk_devices(out, ctypes.sizeof(out), err, ctypes.sizeof(err))
+          print("bt_sdk_devices rc=%d err=%s" % (rc, err.value.decode()[:160]))
           sys.exit(0 if rc != 0 else 1)
           PY
 
