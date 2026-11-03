@@ -360,6 +360,13 @@ if(BT_BUILD_TESTS)
     # compute kernel. These check the emitted kernel is SEMANTICALLY the user's
     # program, not merely well-formed: the kernel is transliterated back to C++,
     # run, and compared against the JIT result of the same source.
+    # Kernel contract: the seam between the GLSL backend and any device
+    # runtime. Runs with no GPU and no Vulkan SDK. Its negative controls must
+    # keep passing - a contract check that cannot fail proves nothing.
+    add_executable(unit_kernel_contract test/Unit/test_unit_kernel_contract.cpp)
+    target_include_directories(unit_kernel_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME Core_Kernel_Contract COMMAND unit_kernel_contract)
+
     add_test(NAME GPU_Map_SignSelect COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt transform --inputs=-2,-1,0,1,2)

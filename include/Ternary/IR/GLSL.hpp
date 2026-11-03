@@ -30,6 +30,7 @@
 
 #include "Program.hpp"
 
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -321,6 +322,214 @@ private:
         }
     }
 };
+
+// ---------------------------------------------------------------------------
+// Kernel contract
+// ---------------------------------------------------------------------------
+//
+// The seam between this compiler and any device runtime. A compiled kernel
+// declares the interface it needs - how many storage buffers, in which
+// directions, how many push-constant bytes, what workgroup size - and the
+// runtime allocates exactly that.
+//
+// This exists because the Vulkan runtime currently hard-codes 3 storage
+// bindings and a 4-byte push range, which is enough for the elementwise map
+// kernel and not enough for the GEMM kernel (5 bindings, 20 bytes). Hard-coded
+// layouts are why a real kernel cannot be dispatched today; making the layout
+// data rather than code is the precondition for fixing that.
+//
+// Everything here is host-side and testable without a GPU or a Vulkan SDK.
+
+/** One storage-buffer binding: an SSBO the kernel reads and/or writes. */
+struct KernelBinding {
+    unsigned     index{0};
+    std::string  name;          // block instance name in the shader
+    std::string  element;       // e.g. "int64_t", "uint8_t"
+    bool         readonly{false};
+};
+
+/** One field of the push-constant block, in declaration order. */
+struct PushField {
+    std::string type;           // e.g. "uint"
+    std::string name;
+};
+
+/**
+ * @brief What a compiled kernel requires of the runtime that launches it.
+ *
+ * `push_bytes` is the size of the whole push-constant block. Vulkan guarantees
+ * at least 128 bytes and the runtime must not request more than the device
+ * reports via maxPushConstantsSize; 20 bytes for the GEMM kernel is safe.
+ */
+struct KernelContract {
+    std::vector<KernelBinding> bindings;
+    std::vector<PushField>     push_fields;
+    std::string                entry_point{"main"};
+    std::string                kernel_function;  // the bt_* function being mapped
+    unsigned                   workgroup{64};
+    bool                       needs_int64{false};
+    bool                       needs_fp64{false};
+
+    size_t push_bytes() const {
+        static const std::map<std::string, size_t> kSize = {
+            {"uint", 4}, {"int", 4}, {"float", 4},
+            {"uint64_t", 8}, {"int64_t", 8}, {"double", 8},
+        };
+        size_t total = 0;
+        for (const auto& f : push_fields) {
+            auto it = kSize.find(f.type);
+            total += (it == kSize.end()) ? 4 : it->second;
+        }
+        return total;
+    }
+
+    /** The elementwise map kernel this emitter currently produces. */
+    static KernelContract elementwise_map(const std::string& kernel_function,
+                                          unsigned workgroup = 64) {
+        KernelContract c;
+        c.kernel_function = kernel_function;
+        c.workgroup = workgroup;
+        c.entry_point = "main";
+        c.bindings = {
+            {0, "in_data",  "int64_t", true},
+            {1, "out_data", "int64_t", false},
+        };
+        c.push_fields = {{"uint", "count"}};
+        c.needs_int64 = true;
+        return c;
+    }
+
+    /**
+     * @brief The packed ternary GEMM kernel: 5 bindings, 20 push bytes.
+     *
+     * Not yet emitted - the GLSL backend lowers scalar functions only. This
+     * is here so the runtime can be built against a shape that is known in
+     * advance, and so the 20-byte / 5-binding requirement is written down
+     * rather than rediscovered when the GEMM emitter lands.
+     */
+    static KernelContract packed_gemm(unsigned workgroup = 64) {
+        KernelContract c;
+        c.kernel_function = "bt_gemm_packed";
+        c.workgroup = workgroup;
+        c.entry_point = "main";
+        c.bindings = {
+            {0, "a_packed", "uint8_t", true},   // packed weights, base-243
+            {1, "b_packed", "uint8_t", true},
+            {2, "c_out",    "int64_t", false},
+            {3, "a_dims",   "uint",    true},
+            {4, "b_dims",   "uint",    true},
+        };
+        c.push_fields = {{"uint", "m"}, {"uint", "n"},
+                         {"uint", "k"}, {"uint", "bytes_per_row"},
+                         {"uint", "flags"}};
+        c.needs_int64 = true;
+        return c;
+    }
+};
+
+/**
+ * @brief Check emitted GLSL against the contract it claims to satisfy.
+ *
+ * This is the part of "will the runtime be able to launch this" that can be
+ * checked without a GPU: that every binding the contract declares is actually
+ * declared in the shader, with the right direction and index; that the
+ * push-constant block matches in size and field order; that the workgroup size
+ * and entry point agree.
+ *
+ * It cannot check GLSL semantics - that needs a shader compiler. Returns a
+ * list of problems; empty means consistent.
+ */
+inline std::vector<std::string> validate_against_contract(const std::string& glsl,
+                                                          const KernelContract& c) {
+    std::vector<std::string> problems;
+
+    if (c.bindings.empty())
+        problems.push_back("contract declares no bindings");
+    if (c.entry_point.empty())
+        problems.push_back("contract has no entry point");
+
+    for (const auto& b : c.bindings) {
+        // layout(binding = N) ... buffer ... Name ... ;
+        std::ostringstream pattern;
+        pattern << "binding = " << b.index;
+        const std::string needle = pattern.str();
+        const auto pos = glsl.find(needle);
+        if (pos == std::string::npos) {
+            problems.push_back("shader has no binding " + std::to_string(b.index) +
+                               " (" + b.name + ") declared in the contract");
+            continue;
+        }
+        // Inspect the declaration containing this binding index.
+        const auto eol = glsl.find(';', pos);
+        const std::string decl = glsl.substr(pos, eol == std::string::npos
+                                                       ? std::string::npos : eol - pos);
+        if (decl.find(b.name) == std::string::npos)
+            problems.push_back("binding " + std::to_string(b.index) +
+                               " is declared in the shader but not named '" + b.name + "'");
+        // Compare directions for a MISMATCH, not merely for the presence of
+        // some qualifier: a readonly shader buffer must be rejected when the
+        // contract expects to write to it, and vice versa.
+        const bool shader_readonly  = decl.find("readonly") != std::string::npos;
+        const bool shader_writeonly = decl.find("writeonly") != std::string::npos;
+        if (b.readonly && !shader_readonly)
+            problems.push_back("binding " + std::to_string(b.index) + " ('" + b.name +
+                               "') is readonly in the contract but not in the shader");
+        if (!b.readonly && shader_readonly)
+            problems.push_back("binding " + std::to_string(b.index) + " ('" + b.name +
+                               "') is writable in the contract but readonly in the shader");
+        if (!b.readonly && !shader_writeonly && !shader_readonly)
+            problems.push_back("binding " + std::to_string(b.index) + " ('" + b.name +
+                               "') is writable in the contract but the shader declares "
+                               "neither readonly nor writeonly");
+    }
+
+    // Push-constant block: size and fields.
+    const auto pc = glsl.find("layout(push_constant)");
+    if (c.push_fields.empty()) {
+        if (pc != std::string::npos)
+            problems.push_back("contract declares no push constants but the shader has a "
+                               "push_constant block");
+    } else {
+        if (pc == std::string::npos) {
+            problems.push_back("contract declares push constants but the shader has no "
+                               "push_constant block");
+        } else {
+            const auto eol = glsl.find(';', pc);
+            const std::string block = glsl.substr(pc, eol == std::string::npos
+                                                           ? std::string::npos : eol - pc);
+            for (const auto& f : c.push_fields)
+                if (block.find(f.name) == std::string::npos)
+                    problems.push_back("push-constant field '" + f.name +
+                                       "' is in the contract but not in the shader block");
+        }
+    }
+
+    // Workgroup size.
+    {
+        std::ostringstream needle;
+        needle << "local_size_x = " << c.workgroup;
+        if (glsl.find(needle.str()) == std::string::npos)
+            problems.push_back("shader does not declare local_size_x = " +
+                               std::to_string(c.workgroup));
+    }
+
+    // Entry point.
+    {
+        const std::string needle = "void " + c.entry_point + "(";
+        if (glsl.find(needle) == std::string::npos)
+            problems.push_back("shader has no entry point '" + c.entry_point + "'");
+    }
+
+    // Required extensions.
+    if (c.needs_int64 && glsl.find("GL_ARB_gpu_shader_int64") == std::string::npos)
+        problems.push_back("contract requires int64 but the shader does not enable "
+                           "GL_ARB_gpu_shader_int64");
+    if (c.needs_fp64 && glsl.find("GL_ARB_gpu_shader_fp64") == std::string::npos)
+        problems.push_back("contract requires fp64 but the shader does not enable "
+                           "GL_ARB_gpu_shader_fp64");
+
+    return problems;
+}
 
 } // namespace ir
 } // namespace bt
