@@ -190,6 +190,17 @@ if(BT_BUILD_TESTS)
     add_executable(unit_core test/Unit/test_unit_core.cpp)
     target_include_directories(unit_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # Ternary GEMM micro-kernel: ISA-dispatched, register-blocked, packed storage.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=native" BT_HAS_MARCH_NATIVE)
+    add_executable(unit_microkernel test/Unit/test_unit_microkernel.cpp)
+    target_include_directories(unit_microkernel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(unit_microkernel PRIVATE -march=native)
+    endif()
+
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -254,6 +265,7 @@ if(BT_BUILD_TESTS)
 
     # CTest Registration: Layer 1 Unit Tests
     add_test(NAME Layer1_Unit_Core COMMAND unit_core)
+    add_test(NAME Layer1_Unit_MicroKernel COMMAND unit_microkernel)
     add_test(NAME Layer1_Unit_Dense COMMAND unit_dense)
     add_test(NAME Layer1_Unit_Memory COMMAND unit_memory)
     add_test(NAME Layer1_Unit_AST COMMAND unit_ast)
