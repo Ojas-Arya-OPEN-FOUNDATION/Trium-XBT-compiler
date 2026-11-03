@@ -473,8 +473,17 @@ void dispatch_mr(const uint64_t* Ap, const uint64_t* An,
 /**
  * @brief Unified ternary GEMM: C[m,n] = A[m,k] * B[k,n], exact integer result.
  *
- * A and B are supplied as dual-rail word arrays, row-major, with
- * k_words = ceil(k/64) words per row. C is row-major int64 with stride n.
+ * Operands are dual-rail word arrays, kw = ceil(k/64) words per row, but the
+ * two are NOT stored the same way:
+ *
+ *   Ap/An : A, row-major.      word w of row i  ->  Ap[i*kw + w]
+ *   Bp/Bn : B TRANSPOSED, then word-PLANE-major.
+ *           word w of B^T row j  ->  Bp[w*n + j]
+ *
+ * The two B orderings coincide when kw == 1 (k <= 64), so a row-major B looks
+ * correct on small tests and silently returns wrong values for larger K.
+ * See test/Unit/test_unit_microkernel.cpp::make_operands for the reference
+ * encoding. C is row-major int64 with stride n.
  *
  * The result is mathematically exact: every partial product is in {-1,0,+1}
  * and the accumulator is int64, so there is no rounding error at any K that

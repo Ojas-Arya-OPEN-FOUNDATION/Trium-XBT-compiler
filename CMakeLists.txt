@@ -214,6 +214,20 @@ if(BT_BUILD_TESTS)
         target_compile_options(ternary_bench PRIVATE -march=native)
     endif()
 
+    # Tile / ISA survey. Measures the (ISA x tile) grid with the two varied
+    # INDEPENDENTLY - comparing a scalar 4x4 against an AVX-512 8x4 changes two
+    # variables at once and cannot justify either choice. Emits CSV so results
+    # from several machines can be compared. Not a CTest target: it is a
+    # measurement instrument, and its numbers are not portable. See
+    # docs/TILE_DEFAULT.md before changing any dispatch default.
+    add_executable(tile_survey tools/tile_survey.cpp)
+    target_include_directories(tile_survey PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(tile_survey PRIVATE -march=native)
+    endif()
+
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
