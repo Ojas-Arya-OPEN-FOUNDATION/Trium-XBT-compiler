@@ -667,6 +667,7 @@ int main() {
     std::cout << "  UNIVERSAL BALANCED TERNARY HARDWARE CYCLE-ACCURATE MICROBENCHMARK SUITE\n";
     std::cout << "  Architecture: " << arch << " | Hardware Timer Frequency: " << (timer_freq / 1e6) << " MHz (" << timer_freq << " Hz)\n";
     std::cout << "  Timing Resolution: " << std::fixed << std::setprecision(3) << (1e9 / static_cast<double>(timer_freq)) << " ns/tick\n";
+    std::cout << "  Note: On ARM64, cntvct_el0 measures virtual timer ticks at cntfrq_el0 (not core instruction retirements).\n";
     std::cout << "==========================================================================================================\n\n";
 
     std::cout << "+-----------------------------------+-------------+-----------+-----------+-----------+--------------+\n";

@@ -8,11 +8,10 @@
 [![Organization](https://img.shields.io/badge/Organization-Ojas--Arya_OPEN--FOUNDATION-8A2BE2.svg)](https://github.com/Ojas-Arya-OPEN-FOUNDATION)
 [![Rocq 9.2 Machine Proofs](https://img.shields.io/badge/Rocq_9.2-100%25_Verified-brightgreen.svg)](proofs/rocq/BalancedTernaryFoundations.v)
 [![Lean 4 Proofs](https://img.shields.io/badge/Lean_4-v4.34.0_Verified-brightgreen.svg)](BalancedTernary.lean)
-[![Z3 SMT Solvers](https://img.shields.io/badge/Z3_SMT-0_Counterexamples-brightgreen.svg)](verify_z3_kogge_stone.py)
+[![Z3 SMT Solvers](https://img.shields.io/badge/Z3_SMT-312_Obligations_Verified-brightgreen.svg)](verify_z3_kogge_stone.py)
 [![LLVM 7-Layer Test Suite](https://img.shields.io/badge/LLVM_Tests-7_Layers_Passed-brightgreen.svg)]()
 [![Sanitizers](https://img.shields.io/badge/Sanitizers-ASan_%2B_UBSan_Clean-success.svg)]()
 [![Silicon RTL](https://img.shields.io/badge/RTL-RISC--V_Xbt_SystemVerilog-blueviolet.svg)](hw/riscv_xbt_extension.sv)
-[![Peak Throughput](https://img.shields.io/badge/Peak_DotProduct-104.53_GTOPS-orange.svg)](#section-5-measured-hardware-cycle-accurate-benchmarks)
 
 *A mathematically proven, hardware-agnostic balanced ternary compiler infrastructure, high-performance numerical algebra engine, and synthesizable silicon design executing directly on commodity binary CPUs, GPUs, and RISC-V accelerators.*
 
@@ -35,7 +34,7 @@ This repository delivers an end-to-end, production-grade toolchain:
 - **Domain-Specific Language (`.bt`)**: Custom grammar with native 3-way spaceship `<=>`, `select` branching, and dual-rail types.
 - **LLVM IR CodeGen & Bare-Metal Clang JIT**: Direct AST lowering into LLVM SSA bitcode with DWARF-5 debug metadata and in-memory execution via `dlopen`/`dlsym`.
 - **MLIR `bt` Dialect**: TableGen dialect schemas and lowering passes targeting `linalg.generic`, `vector.reduction`, and hardware `llvm.intr.ctpop`.
-- **Multiplier-Free Linear Algebra**: 64-trit dot products computed in 7 CPU instructions via `std::popcount` at **104.53 GTOPS**.
+- **Multiplier-Free Linear Algebra**: 64-trit dot products computed in 7 CPU instructions via bitwise logic and hardware `std::popcount` with zero multiplier circuits.
 - **Synthesizable RISC-V Silicon (`Xbt`)**: IEEE 1800-2017 SystemVerilog RTL (`hw/riscv_xbt_extension.sv`) defining Custom-0 (`opcode = 0x0B`) execution units.
 - **Tri-Prover Machine-Checked Proofs**: Core algebraic identities verified with 0 axioms and 0 errors across **Rocq 9.2**, **Lean 4.34.0**, and **Z3 SMT**.
 
@@ -117,7 +116,7 @@ If balanced ternary is mathematically superior, why was it abandoned? Because gl
 | :--- | :--- | :--- | :--- | 
 | **Basic Digit Set** | `{0, 1}` (Asymmetric) | `{-1, 0, +1}` (Symmetric around 0) | Natural positive, neutral, and negative states | 
 | **Sign Negation (`-X`)** | Invert all bits + ripple-add `1` | Swap register pointers `{P ↔ N}` | **0 clock cycles** (instant wire swap / register rename) | 
-| **64-Element Dot Product** | 64 FP32 multiply-adds (Wallace trees) | 4 bitwise ops + 2 hardware `POPCNT` + 1 `SUB` | **104.53 GTOPS** (9.80 ns per 1,024 trits) | 
+| **64-Element Dot Product** | 64 FP32 multiply-adds (Wallace trees) | 4 bitwise ops + 2 hardware `POPCNT` + 1 `SUB` | **Multiplier-Free** (0 hardware multipliers) | 
 | **Floating-Point Rounding Bias** | Directional drift; has `+0.0` and `-0.0` | Symmetric remainder cancellation; unique `0` | **Strictly 0.000000 mean error** | 
 | **Sparse Matrix Value Storage** | 32 bits (4 bytes) per non-zero weight | **1 bit** per non-zero weight (`0` for `-1`, `1` for `+1`) | **32x smaller value memory**; zero multipliers | 
 | **Reversible Trajectory Memory** | $O(N)$ RAM (stores all intermediate layers) | $O(1)$ **RAM** (stores only current phase state) | Bit-exact 100,000,000-step backward reconstruction | 
@@ -254,20 +253,20 @@ python3 verify_z3_fp_fma.py
 
 ## Section 5: Measured Hardware Cycle-Accurate Benchmarks
 
-All microbenchmarks in `bench_cycle_accurate.cpp` read hardware cycle counters directly (`cntvct_el0` on Apple Silicon ARM64; `__rdtsc()` on x86_64) using memory clobber barriers (`asm volatile("" : "+r,m"(val) : : "memory")`) to guarantee real hardware execution:
+Microbenchmarks in `bench_cycle_accurate.cpp` measure timer deltas and operational throughput using memory clobber barriers (`asm volatile("" : "+r,m"(val) : : "memory")`) to guarantee real hardware execution. (Note: On ARM64/Apple Silicon, `cntvct_el0` registers measure architected virtual timer ticks at `cntfrq_el0`, representing elapsed time rather than core instruction retirements; cycle-level PMU counters require kernel-level access). Verified end-to-end evidence runs with full platform strings and environment details are archived under `docs/evidence/`.
 
-| Benchmark Kernel | Workload Size | Cycles / Op | Cycles / Unit | Time / Op | Realized Throughput | 
+| Benchmark Kernel | Workload Size | Timer Ticks / Op | Ticks / Unit | Time / Op | Operational Throughput | 
 | :--- | :--- | :--- | :--- | :--- | :--- | 
-| **Planar Dot Product (1,024 trits)** | 1,024 trits | 9.80 cyc | 0.010 cyc / trit | 9.80 ns | **104.53 GTOPS** | 
-| **Planar Dot Product (64 trits)** | 64 trits | 1.08 cyc | 0.017 cyc / trit | 1.08 ns | **59.03 GTOPS** | 
-| **Balanced Ternary Half-Adder (BTHA)** | 64 trits | 0.85 cyc | 0.013 cyc / trit | 0.85 ns | **58.33 GAdd/s** | 
-| **Base-243 Magic Reciprocal Unpack** | 5 trits / byte | 1.24 cyc | 0.248 cyc / trit | 1.24 ns | **4.03 GTrits/s** | 
-| **Block Base-243 → Dual-Rail 64t** | 64 trits (13 B) | 23.87 cyc | 0.373 cyc / trit | 23.87 ns | **2.68 GTrits/s** | 
-| **Kogge-Stone 64-Trit Prefix Add** | 64 trits (6-stage) | 10.54 cyc | 0.165 cyc / trit | 10.54 ns | **6.07 GTrits/s** | 
-| **Native Radix-3 FFT Butterfly** | 3-point complex | 0.54 cyc | 0.180 cyc / point | 0.54 ns | **54.88 GFLOPS** | 
-| **Multiplier-Free T-CSR SpMV** | 1,000 × 1,000 (52K NNZ) | 19,157 cyc | 0.364 cyc / NNZ | 19.16 μs | **2.75 G-NNZ/s** | 
-| **BT-FP32 Addition ($O(1)$ Fast Path)** | 20-trit mantissa | 2.19 cyc | 0.110 cyc / trit | 2.19 ns | **0.46 GAdd/s** | 
-| **BT-FP32 Multiplication ($O(1)$ Mul)** | 20-trit mantissa | 0.56 cyc | 0.028 cyc / trit | 0.56 ns | **1.78 GMul/s** | 
+| **Planar Dot Product (1,024 trits)** | 1,024 trits | 9.95 ticks | 0.010 ticks / trit | 9.95 ns | **102.89 GTOPS** (timer-norm) | 
+| **Planar Dot Product (64 trits)** | 64 trits | 2.00 ticks | 0.031 ticks / trit | 2.00 ns | **32.07 GTOPS** | 
+| **Balanced Ternary Half-Adder (BTHA)** | 64 trits | 1.25 ticks | 0.020 ticks / trit | 1.25 ns | **51.15 GAdd/s** | 
+| **Base-243 Magic Reciprocal Unpack** | 5 trits / byte | 2.00 ticks | 0.401 ticks / trit | 2.00 ns | **2.50 GTrits/s** | 
+| **Block Base-243 → Dual-Rail 64t** | 64 trits (13 B) | 47.35 ticks | 0.740 ticks / trit | 47.35 ns | **1.35 GTrits/s** | 
+| **Kogge-Stone 64-Trit Prefix Add** | 64 trits (6-stage) | 13.18 ticks | 0.206 ticks / trit | 13.18 ns | **4.86 GTrits/s** | 
+| **Native Radix-3 FFT Butterfly** | 3-point complex | 0.95 ticks | 0.316 ticks / point | 0.95 ns | **35.91 GFLOPS** | 
+| **Multiplier-Free T-CSR SpMV** | 1,000 × 1,000 (52K NNZ) | 134,039 ticks | 2.549 ticks / NNZ | 134.0 μs | **0.39 G-NNZ/s** | 
+| **BT-FP32 Addition ($O(1)$ Fast Path)** | 20-trit mantissa | 17.48 ticks | 0.874 ticks / trit | 17.48 ns | **0.06 GAdd/s** | 
+| **BT-FP32 Multiplication ($O(1)$ Mul)** | 20-trit mantissa | 119.06 ticks | 5.953 ticks / trit | 119.06 ns | **0.01 GMul/s** | 
 
 ---
 
@@ -394,7 +393,7 @@ We released the **Trium-XBT Foundational Compiler** under the **GNU Affero Gener
 
 In computer systems research, trust is everything. We want every user, professor, and contributor to know both **what works on bare metal today** and **what is currently a prototype or simulation**:
 
-* **Honesty on `GTOPS` vs. `FLOPS`**: Our measured peak of **104.53 GTOPS** (`9.80 ns` for 1,024 trits) measures **Ternary Operations** ($t_A \times t_B + \text{acc}$ over $\{-1, 0, +1\}$ using bitwise `AND`/`OR` and `POPCNT`). It is **not** an arbitrary 24-bit IEEE-754 binary floating-point multiply-add (`FLOP`). A binary FP32 multiplier uses 20x to 50x more transistors to multiply arbitrary 24-bit mantissas; our engine wins when weights or signals live in $\{-1, 0, +1\}$ or use `BT-FP32`'s unbiased radix-3 representation.
+* **Honesty on `GTOPS` vs. `FLOPS`**: **Ternary Operations** ($t_A \times t_B + \text{acc}$ over $\{-1, 0, +1\}$ using bitwise `AND`/`OR` and `POPCNT`) measure balanced ternary multiply-accumulate operations without hardware multipliers. It is **not** an arbitrary 24-bit IEEE-754 binary floating-point multiply-add (`FLOP`). A binary FP32 multiplier uses 20x to 50x more transistors to multiply arbitrary 24-bit mantissas; our engine wins when weights or signals live in $\{-1, 0, +1\}$ or use `BT-FP32`'s unbiased radix-3 representation. Measured performance figures in this repository reflect genuine benchmark evidence runs recorded in `docs/evidence/`.
 * **Honesty on Binary CMOS vs. Physical Tri-Voltage Silicon**: When you run this project on an Apple M-series MacBook or Intel/AMD PC, the physical transistors switch between binary voltages (`0V` and `1.2V`), executing balanced ternary via horizontal dual-rail bit-slicing (`P` and `N`). While `hw/riscv_xbt_extension.sv` is synthesizable SystemVerilog RTL verified by our cycle-exact C++ co-simulator (`hw/xbt_alu_model.hpp`), fabricating physical tri-level voltage or memristor chips remains a future hardware foundry step.
 
 ---

@@ -58,9 +58,3 @@ Cargo.lock
 
 # CTest temporary directory
 Testing/
-
-
-
-benchmarks/ansibench/
-benchmarks/eembc_coremark/
-benchmarks/netlib_linpack/
