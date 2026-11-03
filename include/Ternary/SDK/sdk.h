@@ -71,6 +71,16 @@ BT_SDK_API bt_sdk_status bt_sdk_devices(char*,size_t,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_dual_encode(int64_t,uint32_t,uint64_t*,uint64_t*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_dual_decode(uint64_t,uint64_t,uint32_t,int64_t*,char*,size_t);
 BT_SDK_API bt_sdk_status bt_sdk_matmul(const int64_t*,uint64_t,const int64_t*,uint64_t,int64_t*,uint64_t,uint64_t,uint64_t,uint64_t,char*,size_t);
+/* Additive API 1.3: fast ternary GEMM, C[m,n] = A[m,k] * B[k,n].
+ * Operands are dual-rail word arrays: A row-major with ceil(k/64) words per
+ * row; B supplied transposed with n rows of ceil(k/64) words. C is row-major
+ * int64, m*n elements. Dimension limit 1e6 each. CPU-only; no handle needed.
+ *
+ * Exact integer arithmetic: every partial product lies in {-1,0,+1} and the
+ * accumulator is int64, so there is no rounding error at any K that fits -
+ * a strict accuracy advantage over FP32/FP16 GEMM. */
+BT_SDK_API bt_sdk_status bt_sdk_gemm_ternary(const uint64_t*,const uint64_t*,
+    const uint64_t*,const uint64_t*,int64_t*,uint64_t,uint64_t,uint64_t,char*,size_t);
 #ifdef __cplusplus
 }
 #endif

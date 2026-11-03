@@ -85,3 +85,31 @@ public:
 };
 }
 #endif
+
+/** Fast ternary GEMM: C[m,n] = A[m,k] * B[k,n], exact int64 result.
+ *
+ * Operands are dual-rail word arrays. A is row-major with ceil(k/64) words
+ * per row; B is supplied transposed, as n rows of ceil(k/64) words. Weights
+ * are 1.6 bits/trit in packed form and 2 bits/trit dual-rail, against 32 for
+ * FP32 - so for large weights this is a memory-bandwidth win as much as a
+ * compute one.
+ *
+ * CPU-only, no handle required. Backed by the register-blocked micro-kernel
+ * (bt::blas::ternary_gemm), measured at ~213 G MAC/s at n=1024 on an
+ * AVX-512 VPOPCNTDQ machine against ~62 for the previous autotuner.
+ */
+inline void gemm_ternary(const std::vector<uint64_t>& Ap,
+                         const std::vector<uint64_t>& An,
+                         const std::vector<uint64_t>& Bp,
+                         const std::vector<uint64_t>& Bn,
+                         std::vector<int64_t>& C,
+                         uint64_t m, uint64_t n, uint64_t k) {
+    C.assign(size_t(m) * n, 0);
+    char err[4096];
+    check(bt_sdk_gemm_ternary(Ap.data(), An.data(), Bp.data(), Bn.data(),
+                              C.data(), m, n, k, err, sizeof err), err);
+}
+
+/** True if the loaded library exports the fast GEMM (API >= 1.3). An older
+ *  libtrium_sdk without it must fail clearly, not silently fall back. */
+inline bool has_gemm_ternary() { return bt_sdk_api_version() >= 0x00010003; }

@@ -14,6 +14,7 @@
 #include "FloatRuntime.hpp"
 #include "NumericalRuntime.hpp"
 #include "bt_process.hpp"
+#include "Ternary/Blas/TernaryMicroKernel.hpp"
 #include <list>
 namespace {
 using Clock=std::chrono::steady_clock;
@@ -129,7 +130,7 @@ using bt::sdk::detail::write_float;
 }
 extern "C" {
 uint32_t bt_sdk_abi_version(){return 1;}
-uint32_t bt_sdk_api_version(){return 0x00010002;}
+uint32_t bt_sdk_api_version(){return 0x00010003;}
 bt_sdk_status bt_sdk_info(char* output,size_t* bytes,char* err,size_t cap){return boundary(err,cap,[&]{
     std::string text="{\"schema\":1,\"abi_major\":1,\"api_major\":1,\"api_minor\":2,\"finite_float_profile\":1,\"native_profile\":\"native-v1-loopfree\",\"native_compiler_candidate\":"+json(bt::sdk::native_compiler())+",\"vulkan_built\":";
 #if defined(BT_SDK_HAS_VULKAN)
@@ -234,6 +235,12 @@ bt_sdk_status bt_sdk_devices(char* output,size_t bytes,char* err,size_t cap){ret
 bt_sdk_status bt_sdk_dual_encode(int64_t n,uint32_t width,uint64_t* p,uint64_t* negative,char* err,size_t cap){return boundary(err,cap,[&]{required(p&&negative,"null rail output");auto w=bt::math::encode_integer(n,width);*p=w.positive;*negative=w.negative;});}
 bt_sdk_status bt_sdk_dual_decode(uint64_t p,uint64_t n,uint32_t width,int64_t* output,char* err,size_t cap){return boundary(err,cap,[&]{required(output,"null scalar output");*output=bt::math::decode_integer({p,n},width);});}
 bt_sdk_status bt_sdk_matmul(const int64_t* a,uint64_t na,const int64_t* b,uint64_t nb,int64_t* output,uint64_t no,uint64_t m,uint64_t k,uint64_t n,char* err,size_t cap){return boundary(err,cap,[&]{required(na<=1000000&&nb<=1000000&&no<=1000000&&m<=1000000&&k<=1000000&&n<=1000000,"matrix storage/dimension limit");required((!na||a)&&(!nb||b)&&(!no||output),"null matrix storage");bt::math::matmul(std::span(a,size_t(na)),std::span(b,size_t(nb)),std::span(output,size_t(no)),m,k,n);});}
+bt_sdk_status bt_sdk_gemm_ternary(const uint64_t* ap,const uint64_t* an,const uint64_t* bp,const uint64_t* bn,int64_t* output,uint64_t m,uint64_t n,uint64_t k,char* err,size_t cap){return boundary(err,cap,[&]{
+  required(m&&n&&k,"empty gemm dimension");
+  required(m<=1000000&&n<=1000000&&k<=1000000,"gemm dimension limit");
+  required(ap&&an&&bp&&bn&&output,"null gemm operand");
+  required(m<=SIZE_MAX/n,"gemm output dimension overflow");
+  bt::blas::ternary_gemm(ap,an,bp,bn,output,size_t(m),size_t(n),size_t(k));});}
 bt_sdk_status bt_sdk_float_from_ratio(uint32_t width,int64_t n,int64_t d,int64_t exponent,bt_sdk_float_value* output,char* err,size_t cap){return boundary(err,cap,[&]{
     required(output,"null BTFP output");float_width(width,[&]<int W>(){auto r=bt::BTFP<W>::from_ratio(n,d,exponent);*output=write_float(r);});
 });}

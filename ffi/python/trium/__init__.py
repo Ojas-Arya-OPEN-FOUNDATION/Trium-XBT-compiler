@@ -66,6 +66,8 @@ def _library(path=None):
         signatures.update({'float_powi':[C.POINTER(_Float),C.c_int32,C.POINTER(_Float)],
           'float_reduce':[C.c_uint32,C.c_uint32,C.POINTER(_Float),C.POINTER(_Float),C.c_uint64,C.POINTER(_Float)],
           'float_polynomial':[C.POINTER(_Float),C.POINTER(_Float),C.c_uint64,C.POINTER(_Float)]})
+    if lib._api_version>=0x10003:
+        signatures.update({'gemm_ternary':[C.POINTER(h),C.POINTER(h),C.POINTER(h),C.POINTER(h),C.POINTER(C.c_int64),h,h,h]})
     for name,args in signatures.items():
         fn=getattr(lib,'bt_sdk_'+name);fn.argtypes=args+err;fn.restype=C.c_int32
     return lib
@@ -168,6 +170,18 @@ class Context:
         if len(coefficients)>17:raise Error(6,'polynomial degree exceeds 16')
         a=x._record();cv=(_Float*len(coefficients))(*(v._record() for v in coefficients));out=_Float()
         _check(self.lib,'float_polynomial',C.byref(a),cv,len(coefficients),C.byref(out));return TernaryFloat._from_record(out)
+    def gemm_ternary(self,ap,an,bp,bn,m,n,k):
+        """Exact ternary GEMM. ap/an are A's P/N rail words (m rows of
+        ceil(k/64)); bp/bn are B transposed (n rows of ceil(k/64)). Returns
+        m*n int64 values. Requires SDK API >= 1.3."""
+        if self.lib._api_version<0x10003:raise Error(4,'gemm_ternary requires SDK API 1.3 or newer')
+        kw=(k+63)//64
+        if m*n>1000000 or max(m,n,k)>1000000:raise ValueError('gemm dimension limit')
+        if len(ap)<m*kw or len(an)<m*kw or len(bp)<n*kw or len(bn)<n*kw:raise ValueError('rail storage too small for m,n,k')
+        W=C.c_uint64   # `h` is local to _library, not module scope
+        av=(W*len(ap))(*ap);anv=(W*len(an))(*an);bv=(W*len(bp))(*bp);bnv=(W*len(bn))(*bn)
+        out=(C.c_int64*(m*n))()
+        _check(self.lib,'gemm_ternary',av,anv,bv,bnv,out,m,n,k);return list(out)
     def matmul(self,a,b,m,k,n):
         if any(type(x)is not int or x<0 or x>1000000 for x in (m,k,n)) or m*k!=len(a) or k*n!=len(b) or m*n>1000000:raise ValueError('matrix shapes/storage mismatch')
         av=(C.c_int64*len(a))(*map(_integer,a));bv=(C.c_int64*len(b))(*map(_integer,b));out=(C.c_int64*(m*n))()

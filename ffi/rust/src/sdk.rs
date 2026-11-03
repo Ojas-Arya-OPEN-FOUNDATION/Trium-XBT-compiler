@@ -21,6 +21,7 @@ extern "C" {
  fn bt_sdk_release(handle:u64,error:*mut c_char,capacity:usize)->i32;
  fn bt_sdk_compile(context:u64,source:*const u8,bytes:usize,out:*mut u64,error:*mut c_char,capacity:usize)->i32;
  fn bt_sdk_map(module:u64,name:*const c_char,backend:u32,input:*const i64,count:u64,output:*mut i64,metrics:*mut std::ffi::c_void,error:*mut c_char,capacity:usize)->i32;
+ fn bt_sdk_gemm_ternary(ap:*const u64,an:*const u64,bp:*const u64,bn:*const u64,output:*mut i64,m:u64,n:u64,k:u64,error:*mut c_char,capacity:usize)->i32;
 }
 fn checked(f:impl FnOnce(*mut c_char,usize)->i32)->Result<(),Error>{
  let mut text=[0u8;4096];let code=f(text.as_mut_ptr().cast(),text.len());
@@ -37,6 +38,21 @@ fn query(f:impl Fn(*mut c_char,*mut usize,*mut c_char,usize)->i32)->Result<Strin
   }
  }Err(Error{code:6,message:"metadata changed repeatedly".into()})
 }
+/// Exact ternary GEMM: C[m,n] = A[m,k] * B[k,n].
+/// `ap`/`an` are A's P/N rail words, m rows of ceil(k/64). `bp`/`bn` are B
+/// transposed, n rows of ceil(k/64). Arithmetic is exact int64 - every partial
+/// product lies in {-1,0,+1}, so there is no rounding at any K that fits.
+/// Requires SDK API >= 1.3.
+pub fn gemm_ternary(ap:&[u64],an:&[u64],bp:&[u64],bn:&[u64],m:u64,n:u64,k:u64)->Result<Vec<i64>,Error>{
+ if m==0||n==0||k==0 {return Err(Error{code:1,message:"empty gemm dimension".into()});}
+ let kw=((k+63)/64) as usize;
+ if ap.len()<(m as usize)*kw||an.len()<(m as usize)*kw||bp.len()<(n as usize)*kw||bn.len()<(n as usize)*kw {
+  return Err(Error{code:1,message:"rail storage too small for m,n,k".into()});}
+ let mut out=vec![0i64;(m as usize)*(n as usize)];
+ checked(|e,c| unsafe{bt_sdk_gemm_ternary(ap.as_ptr(),an.as_ptr(),bp.as_ptr(),bn.as_ptr(),out.as_mut_ptr(),m,n,k,e,c)})?;
+ Ok(out)
+}
+
 #[derive(Debug,Clone,Copy,PartialEq)]
 pub enum Scalar {Void,Integer(i64),Float(f64)}
 #[repr(C)]
