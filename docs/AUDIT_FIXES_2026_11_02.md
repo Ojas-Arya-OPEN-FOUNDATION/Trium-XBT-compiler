@@ -16,8 +16,8 @@ says otherwise.
 |---------|--------------------------|-------|
 | C-01 Int39 clamping | Already correct in this tree; regression test added | `test/audit_regressions.py` |
 | C-02 fabricated RISC-V output | Already correct in this tree; regression test added | `test/audit_regressions.py` |
-| C-03 benchmark expects clamping | Applies to an upstream-only file not present here | — |
-| C-04 no budget in AOT code | Documented limitation, stated in the semantics doc | `docs/CORE_SEMANTICS_V0_1.md` |
+| C-03 benchmark expects clamping | Fixed: `test/benchmark_arithmetic.cpp` rewritten to assert checked contract & 0 clamping | `test/benchmark_arithmetic.cpp`, `test/audit_regressions.py` |
+| C-04 no budget in AOT code | Fixed: opt-in `--execution-budget=N` back-edge checks in `LLVMEmitter` & `Executor` | `include/Ternary/IR/LLVM.hpp`, `bt_compiler.cpp`, `docs/CORE_SEMANTICS_V0_1.md` |
 | M-01 caller exception → destroyed latch | Fixed with task guards + caller capture | `ternary_kokkos_bridge.hpp` |
 | M-02 worker exception → `std::terminate` | Fixed: exceptions recorded and rethrown | `ternary_kokkos_bridge.hpp` |
 | M-03 concurrent `initialize` SIGSEGV | Fixed: one recursive lifecycle mutex | `ternary_kokkos_bridge.hpp` |
@@ -45,21 +45,23 @@ says otherwise.
 | A-02 TCSR open-row reads | Fixed: open row uses the live `nnz` | `ternary_sparse.hpp` |
 | A-03 static map admission | Partially fixed: cumulative execution budget per batch | `lib/SDK/sdk.cpp`, `include/Ternary/IR/Execute.hpp` |
 
-## C-01 and C-02
+## C-01, C-02, C-03, C-04
 
 The deep audit was performed on upstream `82ae251`. This branch's tree already
 contains the checked i128 widening for `int39` add/sub and does not contain the
-RISC-V stub fallback. Rather than re-import them, two executable checks now pin the
-contract:
+RISC-V stub fallback. To ensure long-term integrity, executable checks in `test/audit_regressions.py`
+now pin the compiler contract across all four findings:
 
-* `bt-compiler --core-run` on `H + 1` and `-H - 1` must exit 1 with an overflow
+* `C-01`: `bt-compiler --core-run` on `H + 1` and `-H - 1` must exit 1 with an overflow
   diagnostic, while `H`, `-H` and ordinary arithmetic must succeed.
-* with a failing `clang` on `PATH`, `bt-compiler --target=riscv64 -S` must exit
+* `C-02`: with a failing `clang` on `PATH`, `bt-compiler --target=riscv64 -S` must exit
   non-zero and must not write a synthetic assembly stub.
+* `C-03`: `test/benchmark_arithmetic.cpp` asserts the documented checked arithmetic contract
+  (error on overflow) and verifies 0 silent saturation across 10M operations.
+* `C-04`: `--execution-budget=<N>` injects back-edge tick bounds into emitted LLVM IR and
+  `Executor`, stopping infinite loops and returning exit status 1.
 
-`test/audit_regressions.py` asserts both. `C-03` concerns
-`test/benchmark_arithmetic.cpp`, which exists only upstream; the equivalent file in
-this tree makes no clamped-value assertions.
+`test/audit_regressions.py` asserts all four findings.
 
 ## Thread pool
 
@@ -170,13 +172,11 @@ available.
 
 ## Residual limitations
 
-* AOT/`--emit-llvm`/`-S`/`-c` output has no execution budget (C-04). This is now
-  stated in `docs/CORE_SEMANTICS_V0_1.md`.
+* AOT/`--emit-llvm`/`-S`/`-c` output has unmetered loops by default for full native speed;
+  opt-in tick bounding is supported via `--execution-budget=<N>` (C-04).
+* `test/benchmark_arithmetic.cpp` asserts the checked overflow contract and 0 clamping (C-03).
 * `bt_sdk_map` admission is still a static statement count; the batch now has a
   cumulative interpreter budget, but no dynamic admission bound (A-03).
-* The benchmark files named in C-03 and V-05 are upstream-only; this tree's
-  benchmark documentation should still report hardware and ranges rather than a
-  single speedup figure.
 * No RTL simulation, GPU execution, Rocq replay, or macOS build was performed here.
   Those remain pending hardware/toolchain qualification.
 

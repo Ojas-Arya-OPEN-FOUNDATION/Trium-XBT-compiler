@@ -77,6 +77,7 @@ struct CompilerOptions {
     bool emitBitcode{false};
     bool enableLTO{false};
     bool enableRiscvXbt{false};
+    uint64_t executionBudget{0};
 };
 
 // Native scalar generation has one authoritative path through verified core IR.
@@ -88,7 +89,7 @@ static std::string generate_program(frontend::ProgramNode& ast,const CompilerOpt
         return old.generate(ast,triple,layout);
     }
     ir::Lowering lowering;
-    return ir::LLVMEmitter{}.generate(lowering.lower(ast),triple,layout,opts.optimizeCore,opts.emitDebug,opts.inputFile);
+    return ir::LLVMEmitter{}.generate(lowering.lower(ast),triple,layout,opts.optimizeCore,opts.emitDebug,opts.inputFile,opts.executionBudget);
 }
 
 // ==============================================================================
@@ -517,6 +518,7 @@ void print_help() {
               << "  --legacy-llvm       Explicit compatibility backend for aggregates/old AST lowering\n"
               << "  --core-opt          Verified core folding, dead-code pruning and safe-check elimination\n"
               << "  --cuda-map=NAME     Emit CUDA LLVM for a pure, loop-free (int)->int map\n"
+              << "  --execution-budget=<N> Maximum loop back-edge ticks (0 = unmetered default; >0 = bound)\n"
               << "  --core-run          Execute verified whole-program scalar core IR\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
               << "  --test              Run internal invariant verification suite\n"
@@ -545,6 +547,17 @@ int compiler_main(int argc, char** argv) {
         } else if (arg.rfind("--cuda-map=",0)==0) {
             opts.cudaMap=arg.substr(11);
             if(opts.cudaMap.empty()) throw std::invalid_argument("--cuda-map requires a function name");
+        } else if (arg.rfind("--execution-budget=", 0) == 0) {
+            std::string val = arg.substr(19);
+            try {
+                size_t parsed = 0;
+                opts.executionBudget = std::stoull(val, &parsed);
+                if (parsed != val.size()) throw std::invalid_argument("trailing characters");
+            } catch (const std::exception&) {
+                std::cerr << "Error: Invalid execution budget '" << val
+                          << "'. Expected a non-negative integer: --execution-budget=<N>\n";
+                return 1;
+            }
         } else if (arg == "--core-run") {
             opts.runJIT = true; opts.runCore = true;
         } else if (arg == "--kokkos") {
@@ -705,7 +718,8 @@ int compiler_main(int argc, char** argv) {
             ir::Lowering lowering;
             auto program=lowering.lower(*ast);
             if(opts.optimizeCore) program=ir::Optimizer{}.run(program);
-            ir::Executor executor(std::move(program),std::cout);
+            uint64_t budget = opts.executionBudget > 0 ? opts.executionBudget : 10000000;
+            ir::Executor executor(std::move(program),std::cout,budget);
             return static_cast<unsigned>(executor.run()) & 255u;
         }
         if (opts.runNative) {

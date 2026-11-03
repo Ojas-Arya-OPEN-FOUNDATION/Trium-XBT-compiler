@@ -14,6 +14,7 @@ class LLVMEmitter {
     size_t serial=0;
     std::string result_type, current_block;
     bool terminated=false, main=false, gpu=false, optimize=false, debug=false;
+    uint64_t loop_budget=0;
     static std::string type(Type t) { return t==Type::Void?"void":t==Type::Float64?"double":"i64"; }
     static std::string quote(const std::string& s) {
         std::ostringstream o;
@@ -172,6 +173,13 @@ class LLVMEmitter {
             }
             case StatementKind::While: {
                 auto cond=label(),bodyLabel=label(),done=label();jump(cond);block(cond);
+                if(loop_budget > 0) {
+                    auto cur=instruction("load i64, ptr @bt.core.ticks");
+                    auto nxt=instruction("add i64 "+cur+", 1");
+                    out<<"  store i64 "+nxt+", ptr @bt.core.ticks\n";
+                    auto bad=instruction("icmp ugt i64 "+nxt+", "+std::to_string(loop_budget));
+                    guard(bad);
+                }
                 auto value=expression(*s.value),cmp=compare(value,s.value->type,true);
                 out<<"  br i1 "<<cmp<<", label %"<<bodyLabel<<", label %"<<done<<"\n";
                 block(bodyLabel);statements(s.body);if(!terminated) jump(cond);block(done);break;
@@ -265,7 +273,10 @@ exit:
         out<<")"<<(entry && debug?" !dbg !4":"")<<" {\n";block("entry");
         for(auto [id,t]:slots) out<<"  %v"<<id<<" = alloca "<<type(t)<<", align 8\n";
         for(auto p:f.parameters) out<<"  store "<<type(p.type)<<" %arg"<<p.symbol<<", ptr %v"<<p.symbol<<"\n";
-        if(entry) out<<"  store i32 0, ptr @bt.core.error\n  store i32 0, ptr @bt.core.depth\n";
+        if(entry) {
+            out<<"  store i32 0, ptr @bt.core.error\n  store i32 0, ptr @bt.core.depth\n";
+            if(loop_budget > 0) out<<"  store i64 0, ptr @bt.core.ticks\n";
+        }
         statements(f.body);
         if(!terminated) out<<"  ret "<<result_type<<(result_type=="void"?"":result_type=="double"?" 0.0":" 0")<<"\n";
         block("error");out<<"  store i32 1, ptr @bt.core.error\n  ret "<<result_type<<(result_type=="void"?"":result_type=="double"?" 0.0":entry?" 1":" 0")<<"\n}\n";
@@ -284,13 +295,15 @@ exit:
     }
 public:
     std::string generate(const Program& input,const std::string& triple,const std::string& layout,
-                         bool optimized=false,bool debugInfo=false,const std::string& filename="program.bt") {
+                         bool optimized=false,bool debugInfo=false,const std::string& filename="program.bt",
+                         uint64_t budget=0) {
         verify_program(input);Program p=optimized?Optimizer{}.run(input):input;
-        out.str("");out.clear();names.clear();serial=0;gpu=false;optimize=optimized;debug=debugInfo;
+        out.str("");out.clear();names.clear();serial=0;gpu=false;optimize=optimized;debug=debugInfo;loop_budget=budget;
         out<<"; verified Trium core IR -> LLVM, ABI 1\nsource_filename = \""<<quote(filename)<<"\"\n"
            <<"target triple = \""<<quote(triple)<<"\"\ntarget datalayout = \""<<quote(layout)<<"\"\n"
-           <<"@bt.core.error = internal thread_local global i32 0\n@bt.core.depth = internal thread_local global i32 0\n"
-           <<"@bt.core.fmt.i = private constant [6 x i8] c\"%lld\\0A\\00\"\n@bt.core.fmt.f = private constant [7 x i8] c\"%.17g\\0A\\00\"\n"
+           <<"@bt.core.error = internal thread_local global i32 0\n@bt.core.depth = internal thread_local global i32 0\n";
+        if(loop_budget > 0) out<<"@bt.core.ticks = internal thread_local global i64 0\n";
+        out<<"@bt.core.fmt.i = private constant [6 x i8] c\"%lld\\0A\\00\"\n@bt.core.fmt.f = private constant [7 x i8] c\"%.17g\\0A\\00\"\n"
            <<"declare i32 @printf(ptr, ...)\ndeclare double @llvm.fma.f64(double, double, double)\ndeclare double @llvm.sqrt.f64(double)\ndeclare double @llvm.fabs.f64(double)\n"<<helpers();
         out<<"define i32 @bt_core_abi_version() { ret i32 1 }\ndefine i32 @bt_core_status() { %s = load i32, ptr @bt.core.error\n ret i32 %s }\n";
         for(size_t i=0;i<p.functions.size();++i) names.emplace(p.functions[i].name,"bt.core.fn."+std::to_string(i));
