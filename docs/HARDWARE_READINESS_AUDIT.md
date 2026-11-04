@@ -417,6 +417,7 @@ Phases 0–3 were implemented following this audit. Summary of what changed.
 | No backend interface or registry | `Backend` + `BackendRegistry` + `TargetDescription` |
 | No target description mechanism | `TargetDescription`; `--list-targets` |
 | MLIR dialect never compiled in CI | `mlir-dialect` job; 66/66 pass with `BT_ENABLE_MLIR=ON` |
+| Frontend disconnected from the `bt` dialect | `--emit-bt-dialect`; passes fire on real `.bt` source |
 | Proofs not linked to hardware | `rocq_bridge` parses Rocq definitions, checks vs RTL |
 
 ### The v1 ISA could not be a compilation target
@@ -427,11 +428,19 @@ existed in RTL but had no encoding. Four instructions were added using the two
 previously-unassigned `funct3` values (`BTFA`, `MUL`, `PACK243`, `LI5`), all
 Z3-verified. Full detail in [XBT_ISA_SPEC.md](XBT_ISA_SPEC.md).
 
+### Closed since (frontend → dialect)
+
+The two compilers are joined: `.bt` → AST → `ir::Program` → `bt` dialect →
+passes. A ternary scalar is carried as a (P, N) pair of `i64` SSA values, so an
+`Add` lowers to `bt.btha` + `bt.csa_reduce`. Three dialect ops were needed
+(`bt.const`, `bt.neg`, `bt.lane_mul`) because the dialect had no way to
+introduce a constant — which is precisely why the halves had stayed apart.
+`--emit-bt-dialect` drives it; `test/frontend_dialect_pipeline.py` asserts the
+passes fire on output that came from `.bt` source. 88 bridge checks plus the
+end-to-end pipeline test.
+
 ### Still open
 
-- **Frontend → `bt` dialect.** The two compilers are still unconnected. `bt-opt`
-  is fed only by hand-written `.mlir` files; the `.bt` frontend goes through
-  `ir::Program` directly. This remains the largest remaining structural item.
 - **Scalar multiply.** `xbt.mul` is lane-wise. The selector refuses general
   multiplication rather than emitting wrong code, but a real scalar multiply
   needs a shift-add sequence and a general shift-by-trits instruction.
