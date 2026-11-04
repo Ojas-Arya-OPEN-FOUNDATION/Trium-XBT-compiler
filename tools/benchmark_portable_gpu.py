@@ -24,7 +24,7 @@ if a.input=='numpy':
 workloads={
  'signed_map':('return select(x,x*3+1,0,x*3-1);',lambda x:3*x+(1 if x>0 else -1 if x<0 else 0)),
  'checked_polynomial':('return (x*x)+(2*x)+1;',lambda x:x*x+2*x+1),
- 'ternary_weight_dot':('return planar_dot64(x,0,85,0);',lambda x:(x&85).bit_count())}
+ 'ternary_weight_dot':('return planar_dot64(x,0,85,0);',lambda x:bin(x&85).count('1'))}
 report={'schema':1,'date_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'platform':platform.platform(),
  'library_sha256':hashlib.sha256(library.read_bytes()).hexdigest(),'count':a.count,'repeats':a.repeats,'input':a.input,'devices':[], 'runs':[],
  'qualification':'physical devices require user-run verification; software devices remain separately labeled',

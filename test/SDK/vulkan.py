@@ -26,7 +26,7 @@ def ternary(a,b,op):
  return result
 cases=[('return select(x,x*3+1,0,x*3-1);',lambda x:3*x+(1 if x>0 else -1 if x<0 else 0)),
        ('return abs(x);',abs),('return x<=>7;',lambda x:(x>7)-(x<7)),
-       ('return planar_dot64(x,0,7,0);',lambda x:(x&7).bit_count()),
+       ('return planar_dot64(x,0,7,0);',lambda x:bin(x&7).count('1')),
        ('var y=x+2;if(y>0){return y*2;}else{return -y;}',lambda x:2*(x+2) if x+2>0 else -(x+2)),
        ('return select(1,x,2026277576509488133+1,0);',lambda x:x)]
 if not all(shutil.which(os.environ.get(k,v)) for k,v in [('BT_GLSLANG','glslangValidator'),('BT_SPIRV_VAL','spirv-val')]):
