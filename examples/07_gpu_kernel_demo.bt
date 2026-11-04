@@ -1,0 +1,46 @@
+// ==============================================================================
+// Example 7: GPU / device kernel compilation demo
+// Trium-XBT Programming Language (.bt)
+// ==============================================================================
+//
+// The functions below are pure, unary and integer-valued, so they can be
+// compiled to a real GLSL 450 compute kernel:
+//
+//   bt-compiler examples/07_gpu_kernel_demo.bt                 -> prints results
+//   bt-compiler examples/07_gpu_kernel_demo.bt --gpu-map=transform  -o t.comp
+//   bt-compiler examples/07_gpu_kernel_demo.bt --gpu-map=accumulate -o a.comp
+//
+// `transform`  exercises arithmetic and the three-way sign select.
+// `accumulate` exercises a while loop and a call to another function.
+//
+// The print(...) calls are host I/O and are deliberately NOT part of any device
+// kernel; they exist so CPU and device results can be compared automatically
+// (see test/gpu_map_test.py).
+func helper(x:int)->int {
+    return x+1;
+}
+
+func transform(x:int)->int {
+    var scaled=x*3;
+    return select(x,scaled+1,0,scaled-1);
+}
+
+func accumulate(n:int)->int {
+    var total = 0;
+    var i = n;
+    while (i) {
+        total = total + helper(i);
+        i = i - 1;
+    }
+    return total;
+}
+
+print(transform(-2));
+print(transform(-1));
+print(transform(0));
+print(transform(1));
+print(transform(2));
+
+print(accumulate(0));
+print(accumulate(1));
+print(accumulate(4));

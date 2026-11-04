@@ -201,6 +201,33 @@ if(BT_BUILD_TESTS)
         target_compile_options(unit_microkernel PRIVATE -march=native)
     endif()
 
+    # Honest benchmark runner. `--check` verifies every kernel bit-exact
+    # against a reference and times nothing it has not verified, so CI can run
+    # it in seconds. The full sweep (256/512/1024) is opt-in and is the only
+    # place performance claims should come from.
+    add_executable(ternary_bench tools/ternary_bench.cpp tools/bench_harness.hpp)
+    target_include_directories(ternary_bench PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(ternary_bench PRIVATE -march=native)
+    endif()
+
+    # Tile / ISA survey. Measures the (ISA x tile) grid with the two varied
+    # INDEPENDENTLY - comparing a scalar 4x4 against an AVX-512 8x4 changes two
+    # variables at once and cannot justify either choice. Emits CSV so results
+    # from several machines can be compared. Not a CTest target: it is a
+    # measurement instrument, and its numbers are not portable. See
+    # docs/TILE_DEFAULT.md before changing any dispatch default.
+    add_executable(tile_survey tools/tile_survey.cpp)
+    target_include_directories(tile_survey PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(tile_survey PRIVATE -march=native)
+    endif()
+
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -266,6 +293,7 @@ if(BT_BUILD_TESTS)
     # CTest Registration: Layer 1 Unit Tests
     add_test(NAME Layer1_Unit_Core COMMAND unit_core)
     add_test(NAME Layer1_Unit_MicroKernel COMMAND unit_microkernel)
+    add_test(NAME Bench_Smoke_Check COMMAND ternary_bench --check)
     add_test(NAME Layer1_Unit_Dense COMMAND unit_dense)
     add_test(NAME Layer1_Unit_Memory COMMAND unit_memory)
     add_test(NAME Layer1_Unit_AST COMMAND unit_ast)
@@ -328,6 +356,31 @@ if(BT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/core_program_differential.py $<TARGET_FILE:bt-compiler>)
     set_tests_properties(Core_Optimized_Differential Core_Optimized_Programs PROPERTIES ENVIRONMENT "BT_TEST_CORE_OPT=1" SKIP_RETURN_CODE 77)
     add_test(NAME CUDA_Driver_Unit COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_driver_unit.py)
+    # --gpu-map compiles a named function from .bt source into a real GLSL 450
+    # compute kernel. These check the emitted kernel is SEMANTICALLY the user's
+    # program, not merely well-formed: the kernel is transliterated back to C++,
+    # run, and compared against the JIT result of the same source.
+    # Kernel contract: the seam between the GLSL backend and any device
+    # runtime. Runs with no GPU and no Vulkan SDK. Its negative controls must
+    # keep passing - a contract check that cannot fail proves nothing.
+    add_executable(unit_kernel_contract test/Unit/test_unit_kernel_contract.cpp)
+    target_include_directories(unit_kernel_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME Core_Kernel_Contract COMMAND unit_kernel_contract)
+
+    add_test(NAME GPU_Map_SignSelect COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt transform --inputs=-2,-1,0,1,2)
+    add_test(NAME GPU_Map_LoopAndCall COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/gpu_map_test.py $<TARGET_FILE:bt-compiler>
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/07_gpu_kernel_demo.bt accumulate --inputs=0,1,4)
+
+    # Point the gpu-map tests at a shader compiler if one was installed.
+    find_program(GLSLANG_VALIDATOR_EXECUTABLE glslangValidator
+        HINTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/bin)
+    if(GLSLANG_VALIDATOR_EXECUTABLE)
+        set_tests_properties(GPU_Map_SignSelect GPU_Map_LoopAndCall PROPERTIES
+            ENVIRONMENT "GLSLANG_VALIDATOR=${GLSLANG_VALIDATOR_EXECUTABLE}")
+    endif()
     add_test(NAME CUDA_Offline_Validation COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/cuda_map_test.py $<TARGET_FILE:bt-compiler>)
     add_test(NAME CUDA_Device_Qualification COMMAND ${Python3_EXECUTABLE}
@@ -384,7 +437,14 @@ if(BT_BUILD_TESTS)
     set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer7_Sema
         PROPERTIES ENVIRONMENT "BT_COMPILER=$<TARGET_FILE:bt-compiler>;BT_OPT=$<TARGET_FILE:bt-opt>" SKIP_RETURN_CODE 77)
 
-    # A clean 'check-all' builds every executable used by registered tests.
+    # A clean 'check-all' must build every executable used by registered tests.
+    #
+    # The explicit list below was maintained by hand and went stale: targets
+    # added later (unit_microkernel, ternary_bench, unit_kernel_contract,
+    # unit_sdk_gemm_layout, unit_sdk_host) were missing, so on a clean build
+    # ctest ran before its executables existed and reported "Not Run" rather
+    # than a real pass or fail. Depending on `all` removes the class of bug -
+    # a new test target can never again be silently left out.
     add_custom_target(check-all
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS bt-compiler bt-opt unit_core unit_dense unit_memory unit_ast
@@ -392,6 +452,7 @@ if(BT_BUILD_TESTS)
             unit_c_abi_ffi unit_bigint_symplectic unit_xbt_hw unit_phase1
             unit_phase3 unit_universal unit_math_core unit_numeric_oracle unit_fp_foundation unit_ir_program unit_core_lowering
             unit_audit_regressions bt_hijack_fixture
+            all
     )
 endif()
 
@@ -411,7 +472,8 @@ if(BT_BUILD_SDK)
     set_target_properties(trium_sdk PROPERTIES EXPORT_NAME SDK VERSION 1.2.0 SOVERSION 1 CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
     add_library(TriumXBT::SDK ALIAS trium_sdk)
     if(BT_SDK_VULKAN)
-        find_path(BT_VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED)
+        find_path(BT_VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED
+            HINTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/include")
         target_include_directories(trium_sdk PRIVATE ${BT_VULKAN_INCLUDE_DIR})
         target_compile_definitions(trium_sdk PRIVATE BT_SDK_HAS_VULKAN=1)
     endif()
@@ -429,6 +491,31 @@ if(BT_BUILD_SDK)
         add_executable(unit_sdk_host test/SDK/host.cpp)
         target_link_libraries(unit_sdk_host PRIVATE trium_sdk)
         add_test(NAME SDK_Host_Ownership COMMAND unit_sdk_host)
+        # Pins the operand layout of bt_sdk_gemm_ternary. A is row-major and B
+        # is word-plane-major; the difference is invisible for k <= 64, so this
+        # deliberately covers k > 64 with n > 1, and asserts the row-major B
+        # layout gives a DIFFERENT answer (otherwise the test is vacuous).
+        add_executable(unit_sdk_gemm_layout test/SDK/gemm_layout.cpp)
+        target_link_libraries(unit_sdk_gemm_layout PRIVATE trium_sdk)
+        add_test(NAME SDK_Gemm_Layout COMMAND unit_sdk_gemm_layout)
+        # Checks the Rust FFI binding against the real C ABI without needing a
+        # Rust compiler: symbol existence, arity vs sdk.h, #[repr(C)] layouts.
+        add_test(NAME SDK_Rust_FFI_ABI COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/rust_ffi_abi_check.py)
+        set_tests_properties(SDK_Rust_FFI_ABI PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+        # If cargo IS available, actually compile and test the Rust crate.
+        # tools/install_toolchains.sh puts one in tools/.toolchains/bin, which
+        # is searched explicitly because it is not on PATH by default.
+        find_program(CARGO_EXECUTABLE cargo
+            HINTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/.toolchains/bin)
+        if(CARGO_EXECUTABLE)
+            add_test(NAME SDK_Rust_Build COMMAND
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_rust_tests.sh ${CARGO_EXECUTABLE})
+            set_tests_properties(SDK_Rust_Build PROPERTIES TIMEOUT 900)
+        else()
+            message(STATUS "cargo not found - the Rust crate will be ABI-checked only. "
+                           "Run tools/install_toolchains.sh to get a toolchain.")
+        endif()
         add_test(NAME SDK_Z3_Models COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_sdk_contracts.py)
         set_tests_properties(SDK_Z3_Models PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
         add_test(NAME SDK_Contracts COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/SDK/contracts.py $<TARGET_FILE:trium_sdk>)

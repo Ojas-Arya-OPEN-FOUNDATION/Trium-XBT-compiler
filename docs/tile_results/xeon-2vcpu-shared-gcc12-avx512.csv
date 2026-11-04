@@ -1,0 +1,28 @@
+# machine: 2-core shared Xeon @ 2.6GHz, AVX-512 + VPOPCNTDQ, virtualised/shared
+# compiler: g++ (Debian 12.2.0-14+deb12u1) 12.2.0
+# flags: -O3 -march=native -std=c++20
+# date: 2026-11-03
+# notes: 2 vCPU shared box. Run-to-run spread 5-8%, comparable to the
+#        effect size; do not trust a single invocation.
+# tile_survey: G MAC/s, higher is better
+# detected_isa=AVX-512 + VPOPCNTDQ
+# reps=11
+machine_isa,n,m,k,isa,tile,best_gmacs,median_gmacs,status
+AVX-512 + VPOPCNTDQ,256,256,256,AVX-512 + VPOPCNTDQ,4x4,165.08,158.77,ok
+AVX-512 + VPOPCNTDQ,256,256,256,AVX-512 + VPOPCNTDQ,8x4,206.02,194.74,ok
+AVX-512 + VPOPCNTDQ,256,256,256,AVX2 (pshufb popcount),4x4,155.39,152.48,ok
+AVX-512 + VPOPCNTDQ,256,256,256,AVX2 (pshufb popcount),8x4,167.08,162.88,ok
+AVX-512 + VPOPCNTDQ,256,256,256,scalar (portable),4x4,260.46,229.87,ok
+AVX-512 + VPOPCNTDQ,256,256,256,scalar (portable),8x4,374.32,372.34,ok
+AVX-512 + VPOPCNTDQ,512,512,512,AVX-512 + VPOPCNTDQ,4x4,346.94,335.29,ok
+AVX-512 + VPOPCNTDQ,512,512,512,AVX-512 + VPOPCNTDQ,8x4,353.97,348.27,ok
+AVX-512 + VPOPCNTDQ,512,512,512,AVX2 (pshufb popcount),4x4,159.02,154.57,ok
+AVX-512 + VPOPCNTDQ,512,512,512,AVX2 (pshufb popcount),8x4,171.31,163.82,ok
+AVX-512 + VPOPCNTDQ,512,512,512,scalar (portable),4x4,327.22,315.82,ok
+AVX-512 + VPOPCNTDQ,512,512,512,scalar (portable),8x4,392.11,369.77,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,AVX-512 + VPOPCNTDQ,4x4,339.30,328.20,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,AVX-512 + VPOPCNTDQ,8x4,332.02,324.93,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,AVX2 (pshufb popcount),4x4,158.37,156.14,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,AVX2 (pshufb popcount),8x4,163.84,158.48,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,scalar (portable),4x4,404.50,390.28,ok
+AVX-512 + VPOPCNTDQ,1024,1024,1024,scalar (portable),8x4,398.75,395.12,ok

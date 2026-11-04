@@ -22,6 +22,7 @@
 #include "ternary_ir_lowering.hpp"
 #include "include/Ternary/IR/Execute.hpp"
 #include "include/Ternary/IR/LLVM.hpp"
+#include "include/Ternary/IR/GLSL.hpp"
 #include "ternary_llvm_codegen.hpp"
 #include "hw/xbt_alu_model.hpp"
 #include "bt_process.hpp"
@@ -71,6 +72,7 @@ struct CompilerOptions {
     bool legacyLLVM{false};
     bool optimizeCore{false};
     std::string cudaMap;
+    std::string gpuMap;   // --gpu-map=NAME: compile a named function to a GLSL kernel
     bool enableKokkos{false};
     size_t kokkosThreads{0};
     bool emitDebug{false};
@@ -518,6 +520,7 @@ void print_help() {
               << "  --legacy-llvm       Explicit compatibility backend for aggregates/old AST lowering\n"
               << "  --core-opt          Verified core folding, dead-code pruning and safe-check elimination\n"
               << "  --cuda-map=NAME     Emit CUDA LLVM for a pure, loop-free (int)->int map\n"
+              << "  --gpu-map=NAME      Compile a named function to a real GLSL 450 compute kernel\n"
               << "  --execution-budget=<N> Maximum loop back-edge ticks (0 = unmetered default; >0 = bound)\n"
               << "  --core-run          Execute verified whole-program scalar core IR\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
@@ -547,6 +550,9 @@ int compiler_main(int argc, char** argv) {
         } else if (arg.rfind("--cuda-map=",0)==0) {
             opts.cudaMap=arg.substr(11);
             if(opts.cudaMap.empty()) throw std::invalid_argument("--cuda-map requires a function name");
+        } else if (arg.rfind("--gpu-map=",0)==0) {
+            opts.gpuMap=arg.substr(10);
+            if(opts.gpuMap.empty()) throw std::invalid_argument("--gpu-map requires a function name");
         } else if (arg.rfind("--execution-budget=", 0) == 0) {
             std::string val = arg.substr(19);
             try {
@@ -701,6 +707,22 @@ int compiler_main(int argc, char** argv) {
         else {std::ofstream file(opts.outputFile);file<<module;if(!file) throw std::runtime_error("cannot write CUDA LLVM module");}
         return 0;
     }
+    if(!opts.gpuMap.empty()) {
+        // Real GLSL backend: lowers the SAME IR as the LLVM path and emits a
+        // compute kernel from the user's actual arithmetic.
+        if(opts.inputFile.empty() || opts.runJIT || opts.emitBitcode || opts.emitDebug || opts.enableLTO)
+            throw std::invalid_argument("--gpu-map requires a source file and plain text output");
+        std::ifstream file(opts.inputFile);
+        if(!file) throw std::runtime_error("cannot open source: "+opts.inputFile);
+        std::string text=frontend::read_source(file);
+        frontend::Parser parser(text,std::filesystem::path(opts.inputFile).parent_path().string());
+        auto ast=parser.parse_program(); ir::Lowering lowering;
+        std::string shader=ir::GLSLEmitter{}.generate(lowering.lower(*ast),opts.gpuMap);
+        if(opts.outputFile.empty()) std::cout<<shader;
+        else {std::ofstream f(opts.outputFile);f<<shader;if(!f) throw std::runtime_error("cannot write GLSL kernel");
+              std::cout<<"[Output] GLSL 450 compute kernel compiled from '"<<opts.gpuMap<<"': "<<opts.outputFile<<"\n";}
+        return 0;
+    }
     if (opts.runJIT) {
         if (opts.inputFile.empty()) {
             std::cerr << "Error: No .bt input program specified for 'run' command!\n"
@@ -803,7 +825,17 @@ int compiler_main(int argc, char** argv) {
 
     if (!opts.inputFile.empty() && !opts.emitBitcode && opts.outputMode == OutputMode::DEFAULT &&
         opts.target != TargetArch::LLVM_IR) {
-        throw std::runtime_error("this target emits kernel templates only; source compilation requires --emit-llvm, -S, -c, or run");
+        // Be exact about what these targets do. They emit a FIXED kernel
+        // template and ignore the parsed program; only --gpu-map actually
+        // compiles the user's source to a device kernel. Saying "templates
+        // only" without the fix led people to believe --emit-vulkan compiles
+        // their program.
+        throw std::runtime_error(
+            "the --emit-vulkan / --emit-metal / --emit-x86 / --emit-arm64 targets emit a "
+            "FIXED kernel template; they do NOT compile your .bt source.\n"
+            "  To compile a real function from your program to a GLSL 450 compute kernel:\n"
+            "      bt-compiler " + opts.inputFile + " --gpu-map=NAME -o kernel.comp\n"
+            "  To compile / run the whole program: use --emit-llvm, -S, -c, or run.");
     }
     if ((opts.target == TargetArch::APPLE_METAL || opts.target == TargetArch::VULKAN_SPIRV) &&
         (opts.outputMode != OutputMode::DEFAULT || opts.emitBitcode))

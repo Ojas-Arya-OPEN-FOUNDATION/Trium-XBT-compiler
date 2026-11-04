@@ -444,3 +444,13 @@ mod checked_tests {
 
 /// In-process compiler SDK (qualified separately from legacy runtime bindings).
 pub mod sdk;
+
+pub use sdk::{gemm_ternary, Context, Module, Scalar, Backend};
+pub use sdk::Error as SdkError;
+
+/// Exact ternary GEMM at the crate root: C[m,n] = A[m,k] * B[k,n].
+///
+/// `ap`/`an` are A's positive/negative rail words (m rows of ceil(k/64));
+/// `bp`/`bn` are B transposed (n rows of ceil(k/64)). Re-exported from
+/// `sdk::gemm_ternary`; see that function for the full contract.
+pub use sdk::gemm_ternary as ternary_gemm;

@@ -375,18 +375,45 @@ public:
         return Base243Codec::unpack5_fast(bytes_[r * bytes_per_row_ + c / 5])[c % 5];
     }
 
+    /** Bytes per row of the compressed stream. A host->device upload strides
+     *  by exactly this, so it is part of the public contract. */
+    inline size_t bytes_per_row() const noexcept { return bytes_per_row_; }
+
+    /** Raw compressed byte `b` of row `r`. Lets a caller upload the packed
+     *  stream without inflating it back to dual-rail first. */
+    inline uint8_t row_byte(size_t r, size_t b) const {
+        if (r >= rows_ || b >= bytes_per_row_)
+            throw std::out_of_range("PackedTensor::row_byte");
+        return bytes_[r * bytes_per_row_ + b];
+    }
+
     /** Materialise dual-rail words for one row (K contiguous). This is the
      *  unpack step; it happens per row-block, so the working set stays in cache. */
     inline void unpack_row(size_t r, uint64_t* P, uint64_t* N, size_t k_words) const {
+        const uint8_t* row = bytes_.data() + r * bytes_per_row_;
         for (size_t w = 0; w < k_words; ++w) {
-            uint64_t pp = 0, nn = 0;
             const size_t trit0 = w * 64;
-            for (int b = 0; b < 64 && trit0 + b < cols_; ++b) {
-                switch (get(r, trit0 + b)) {
-                    case Trit::Pos: pp |= (1ULL << b); break;
-                    case Trit::Neg: nn |= (1ULL << b); break;
-                    case Trit::Zero: default: break;
+            if (trit0 >= cols_) { P[w] = 0; N[w] = 0; continue; }
+            const size_t ntri = std::min<size_t>(64, cols_ - trit0);
+            uint64_t pp = 0, nn = 0;
+            // Decode each 5-trit byte ONCE and consume all five trits it
+            // yields. The original loop called get() once per trit, re-running
+            // the base-243 decode and both bounds checks five times per group;
+            // that made decompression the dominant cost of the packed GEMM.
+            // A word begins at trit 64*w, which is not a multiple of 5, so
+            // groups straddle word boundaries - `slot` tracks the offset.
+            size_t b = 0;
+            while (b < ntri) {
+                const size_t abs  = trit0 + b;
+                const size_t slot = abs % 5;
+                const std::array<Trit, 5> g = Base243Codec::unpack5_fast(row[abs / 5]);
+                const size_t lim = std::min<size_t>(5 - slot, ntri - b);
+                for (size_t s = 0; s < lim; ++s) {
+                    const uint64_t bit = 1ULL << (b + s);
+                    if      (g[slot + s] == Trit::Pos) pp |= bit;
+                    else if (g[slot + s] == Trit::Neg) nn |= bit;
                 }
+                b += lim;   // lim >= 1, so this always advances
             }
             P[w] = pp; N[w] = nn;
         }
@@ -446,8 +473,17 @@ void dispatch_mr(const uint64_t* Ap, const uint64_t* An,
 /**
  * @brief Unified ternary GEMM: C[m,n] = A[m,k] * B[k,n], exact integer result.
  *
- * A and B are supplied as dual-rail word arrays, row-major, with
- * k_words = ceil(k/64) words per row. C is row-major int64 with stride n.
+ * Operands are dual-rail word arrays, kw = ceil(k/64) words per row, but the
+ * two are NOT stored the same way:
+ *
+ *   Ap/An : A, row-major.      word w of row i  ->  Ap[i*kw + w]
+ *   Bp/Bn : B TRANSPOSED, then word-PLANE-major.
+ *           word w of B^T row j  ->  Bp[w*n + j]
+ *
+ * The two B orderings coincide when kw == 1 (k <= 64), so a row-major B looks
+ * correct on small tests and silently returns wrong values for larger K.
+ * See test/Unit/test_unit_microkernel.cpp::make_operands for the reference
+ * encoding. C is row-major int64 with stride n.
  *
  * The result is mathematically exact: every partial product is in {-1,0,+1}
  * and the accumulator is int64, so there is no rounding error at any K that
@@ -524,6 +560,122 @@ void gemm_tiled(const uint64_t* Ap, const uint64_t* An,
 }
 
 } // namespace detail
+
+
+// ===========================================================================
+// 7. GEMM straight from 1.6 bits/trit packed storage
+//    This is the path that makes the compression usable rather than merely
+//    representable: store weights packed, decompress into panels once, then
+//    run the identical tiled micro-kernel.
+// ===========================================================================
+
+/** Build a PackedTensor from dual-rail planes laid out as rows of k trits. */
+inline PackedTensor packed_from_dual_rail(const uint64_t* P, const uint64_t* N,
+                                          size_t rows, size_t k, size_t k_words) {
+    PackedTensor T(rows, k);
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t t = 0; t < k; ++t) {
+            const bool p = (P[r * k_words + t / 64] >> (t % 64)) & 1ULL;
+            const bool n = (N[r * k_words + t / 64] >> (t % 64)) & 1ULL;
+            T.set(r, t, p ? Trit::Pos : n ? Trit::Neg : Trit::Zero);
+        }
+    return T;
+}
+
+/** Unpack `count` consecutive rows into a dual-rail panel the kernel consumes. */
+inline void unpack_row_block(const PackedTensor& T, size_t r0, size_t count,
+                             uint64_t* P, uint64_t* N, size_t k_words) noexcept {
+    for (size_t i = 0; i < count; ++i)
+        T.unpack_row(r0 + i, P + i * k_words, N + i * k_words, k_words);
+}
+
+namespace detail {
+
+template <class Lane, int MR, int NR>
+void gemm_packed_tiled(const PackedTensor& A, const PackedTensor& BT,
+                       int64_t* C, size_t m, size_t n, size_t k,
+                       const GemmOptions& o, GemmStats& st) {
+    const size_t kw = (k + 63) / 64;
+    const size_t mp = ((m + MR - 1) / MR) * MR;
+    const size_t np = ((n + NR - 1) / NR) * NR;
+
+    // Decompress each operand EXACTLY ONCE into the dual-rail panels the
+    // kernel consumes, then run the ordinary tiled loop over those panels.
+    //
+    // Decompressing inside the tile loops instead - the obvious first
+    // implementation - re-decodes B m/MR times and A n/NR times over. At
+    // n=512 that measured 0.32 G MAC/s against 155 for the dual-rail path:
+    // ~500x slower, and slower than the naive O(n^3) reference it exists to
+    // accelerate. Hoisting the decompression is what makes packed storage
+    // usable at all.
+    DualRailPanel pa; pa.rows = mp; pa.k_words = kw;
+    pa.P.assign(mp * kw, 0); pa.N.assign(mp * kw, 0);
+    for (size_t i = 0; i < m; ++i)
+        unpack_row_block(A, i, 1, pa.P.data() + i * kw, pa.N.data() + i * kw, kw);
+
+    DualRailPanel pb; pb.rows = np; pb.k_words = kw;
+    pb.P.assign(np * kw, 0); pb.N.assign(np * kw, 0);
+    for (size_t j = 0; j < n; ++j)
+        unpack_row_block(BT, j, 1, pb.P.data() + j * kw, pb.N.data() + j * kw, kw);
+
+    for (size_t i0 = 0; i0 < m; i0 += MR)
+        for (size_t j0 = 0; j0 < n; j0 += NR)
+            MicroKernel<Lane, MR, NR>::run(pa, pb, i0, j0, kw, C, n, m, n);
+    (void)o; (void)st;
+}
+
+template <class Lane>
+void dispatch_mr_packed(const PackedTensor& A, const PackedTensor& BT,
+                        int64_t* C, size_t m, size_t n, size_t k,
+                        const GemmOptions& o, GemmStats& st) {
+    if (o.mr == 8) gemm_packed_tiled<Lane, 8, 4>(A, BT, C, m, n, k, o, st);
+    else           gemm_packed_tiled<Lane, 4, 4>(A, BT, C, m, n, k, o, st);
+}
+
+} // namespace detail
+
+/**
+ * @brief GEMM directly from 1.6 bits/trit packed storage.
+ *
+ * A is an M x K PackedTensor; BT is the N x K PackedTensor holding B
+ * transposed (row j of BT is column j of B). C is row-major int64, stride n.
+ *
+ * The arithmetic is the same exact integer MAC as ternary_gemm, so the two
+ * produce bit-identical results. Packed storage is a *storage and transfer*
+ * format: at 1.6 bits/trit it is ~20x smaller than FP32 weights, but it costs
+ * a decompression pass per call. Decompress once and GEMM many times if the
+ * same weights are reused.
+ */
+inline GemmStats ternary_gemm_packed(const PackedTensor& A, const PackedTensor& BT,
+                                     int64_t* C, const GemmOptions& opts = {}) {
+    if (!C) throw std::invalid_argument("ternary_gemm_packed: null output");
+    const size_t m = A.rows(), n = BT.rows(), k = A.cols();
+    if (!m || !n || !k) throw std::invalid_argument("ternary_gemm_packed: empty dimensions");
+    if (BT.cols() != k)
+        throw std::invalid_argument("ternary_gemm_packed: inner dimensions differ");
+
+    GemmOptions o = opts;
+    if (o.isa == Isa::Auto) o.isa = detect_isa();
+    GemmStats st; st.isa = o.isa; st.mr = o.mr; st.nr = o.nr;
+
+#if TERNARY_BLAS_HAVE_AVX512VPOPCNTDQ
+    if (o.isa == Isa::Avx512Vpopcnt) {
+        detail::dispatch_mr_packed<Avx512VpopcntLane>(A, BT, C, m, n, k, o, st); return st;
+    }
+#endif
+#if TERNARY_BLAS_HAVE_AVX2
+    if (o.isa == Isa::Avx2) {
+        detail::dispatch_mr_packed<Avx2Lane>(A, BT, C, m, n, k, o, st); return st;
+    }
+#endif
+#if TERNARY_BLAS_HAVE_NEON
+    if (o.isa == Isa::Neon) {
+        detail::dispatch_mr_packed<NeonLane>(A, BT, C, m, n, k, o, st); return st;
+    }
+#endif
+    detail::dispatch_mr_packed<ScalarLane>(A, BT, C, m, n, k, o, st);
+    return st;
+}
 
 } // namespace blas
 } // namespace bt

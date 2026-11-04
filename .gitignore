@@ -58,3 +58,7 @@ Cargo.lock
 
 # CTest temporary directory
 Testing/
+
+# Optional toolchains installed by tools/install_toolchains.sh, and cargo build output
+tools/.toolchains/
+ffi/rust/target/

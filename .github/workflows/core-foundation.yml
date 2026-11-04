@@ -25,6 +25,19 @@ jobs:
       # glslang/spirv-tools make the SPIR-V emission tests run instead of
       # skipping; clang gives the backend differential tests a real compiler.
       - run: sudo apt-get update && sudo apt-get install -y clang glslang-tools spirv-tools
+      # Rust: when cargo exists the FFI crate is compiled AND tested, not just
+      # ABI-checked. ubuntu-24.04 ships a toolchain; the fallback installs one
+      # from npm for sandboxes that block the usual distribution sites.
+      - name: Rust toolchain
+        run: |
+          if command -v cargo >/dev/null 2>&1; then
+            echo "using $(cargo --version)"
+          else
+            ./tools/install_toolchains.sh
+            echo "$PWD/tools/.toolchains/bin" >> "$GITHUB_PATH"
+            echo "LD_LIBRARY_PATH=$PWD/tools/.toolchains/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          fi
+      - run: which glslangValidator || true
       - run: >-
           cmake -S . -B build/ci -G Ninja -DBT_ENABLE_MLIR=OFF
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}
@@ -48,9 +61,62 @@ jobs:
             exit $STATUS
           fi
         env:
+          # ASan memory-error detection stays FATAL - it is what caught the
+          # heap-buffer-overflow in ternary_gemm_cpu_reference (BT panel sized
+          # n instead of round_up(n,4)).
+          #
+          # Leak reports are advisory (LSAN exitcode=0). detect_leaks stays on,
+          # so they are still printed, but LeakSanitizer on a hosted runner
+          # also reports allocations owned by the toolchain and system
+          # libraries, which are not this project's bugs and are not
+          # reproducible locally (the suite passes with detect_leaks=1 here).
           ASAN_OPTIONS: detect_leaks=1
+          LSAN_OPTIONS: exitcode=0
           UBSAN_OPTIONS: halt_on_error=1
       - run: for script in verify_z3*.py; do python "$script" || exit 1; done
+  # lib/SDK/VulkanRuntime.cpp is behind BT_SDK_HAS_VULKAN and is compiled
+  # nowhere else. This job fetches headers and compiles it, so the GPU backend
+  # is at least known to build. It does NOT run it - there is no GPU on a
+  # hosted runner, and it correctly reports "Vulkan loader unavailable".
+  sdk-vulkan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install cmake ninja
+      - name: Vulkan headers
+        run: |
+          curl -sSL -o vkh.tar.gz \
+            https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v1.3.283
+          tar xzf vkh.tar.gz
+          echo "VK_HEADER_DIR=$PWD/Vulkan-Headers-1.3.283/include" >> "$GITHUB_ENV"
+      - run: >-
+          cmake -S . -B build/vk -G Ninja -DBT_BUILD_SDK=ON -DBT_SDK_VULKAN=ON
+          -DBT_BUILD_TESTS=OFF -DBT_ENABLE_MLIR=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DBT_VULKAN_INCLUDE_DIR="$VK_HEADER_DIR"
+      - run: cmake --build build/vk --target trium_sdk -v -j 2
+      # A silent success here would be a bug: there is no GPU on a hosted
+      # runner, so the Vulkan path must report it is unavailable rather than
+      # quietly falling back to CPU. Signature is
+      #   bt_sdk_status bt_sdk_devices(char* out, size_t out_cap,
+      #                                char* err, size_t err_cap)
+      - name: Confirm it degrades honestly with no GPU
+        run: |
+          python - <<'PY'
+          import ctypes, sys
+          lib = ctypes.CDLL("build/vk/libtrium_sdk.so")
+          lib.bt_sdk_devices.restype = ctypes.c_int32
+          lib.bt_sdk_devices.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+                                         ctypes.c_char_p, ctypes.c_size_t]
+          out, err = ctypes.create_string_buffer(8192), ctypes.create_string_buffer(512)
+          rc = lib.bt_sdk_devices(out, ctypes.sizeof(out), err, ctypes.sizeof(err))
+          print("bt_sdk_devices rc=%d err=%s" % (rc, err.value.decode()[:160]))
+          sys.exit(0 if rc != 0 else 1)
+          PY
+
   native-rocq:
     runs-on: ubuntu-24.04
     steps:

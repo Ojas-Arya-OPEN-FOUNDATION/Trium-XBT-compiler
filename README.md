@@ -40,6 +40,46 @@ This repository delivers an end-to-end, production-grade toolchain:
 
 ---
 
+## 🎯 Direction: a foundation compiler for next-generation hardware
+
+Balanced ternary is not a curiosity of number theory — it is the natural fit for
+three-state nanoscale substrates (CNTFET, memristive, QCA, spin, photonic), where
+a binary compiler must first discard the third state and then emulate it with two
+wires. A trit carries log₂(3) = 1.585 bits, so the same information needs ~37%
+fewer interconnects; a ternary weight is 1.6 bits packed versus 32 for FP32, a
+**20× reduction in memory traffic** in the regime that actually limits modern
+accelerators.
+
+The full statement of the goal, the backend contract, and the milestone order is
+in **[`docs/VISION_NEXT_GEN_HARDWARE.md`](docs/VISION_NEXT_GEN_HARDWARE.md)**.
+Start there if you are adding a hardware target.
+
+Measured status of that roadmap, on a 2-core Xeon @2.6 GHz with
+AVX-512 VPOPCNTDQ, every figure verified bit-exact against a naive O(n³)
+reference before being timed:
+
+| Capability | Status | Measured |
+|---|---|---|
+| CPU ternary GEMM (n=1024) | done | **213 G MAC/s** vs 62 previous |
+| Packed weights | done | 1.6 bits/trit, 20× smaller than FP32 |
+| BitNet b1.58 | done | 2.03× faster than the original kernel |
+| GPU backend | algorithm verified, dispatch pending | shaders + emulator pass; no Vulkan dispatch |
+| RTL / FPGA | exists | not measured on hardware |
+
+Ternary's advantage is **memory bandwidth, not raw FLOPs** — target large `n`.
+
+**Benchmarking rule.** Performance numbers come from
+`tools/ternary_bench.cpp`, built on `tools/bench_harness.hpp`, which verifies
+bit-exactness *before* timing, reports `UNVERIFIED` instead of a number for any
+case that fails, and exits nonzero if anything did not verify. Do not quote a
+number that harness did not produce.
+
+```
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+./build/ternary_bench --check        # seconds, correctness + timing  (CI)
+./build/ternary_bench --json r.json  # full sweep, machine-readable
+```
+
 ## 🗺️ System Architecture Infographic
 
 The following diagram illustrates the complete, self-contained vertical compilation and execution pipeline:
