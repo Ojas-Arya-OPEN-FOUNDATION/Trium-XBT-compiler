@@ -127,6 +127,31 @@ jobs:
       - run: opam install -y rocq-core.9.1.1 rocq-runtime.9.1.1 rocq-stdlib.9.1.0
       - run: opam exec -- python3 test/check_rocq.py
 
+  # The MLIR `bt` dialect and its five lowering passes.
+  #
+  # This is compiled with BT_ENABLE_MLIR=ON, which no job previously did. A
+  # code path that is never compiled is not a code path: the dialect, the
+  # passes and bt-opt were all invisible to CI. With no upstream LLVM/MLIR
+  # installed the build uses the standalone C++20 fallback, which is enough to
+  # compile the dialect and run its tests.
+  mlir-dialect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with the MLIR dialect enabled
+        run: |
+          cmake -S . -B build/mlir -DBT_ENABLE_MLIR=ON \
+            -DCMAKE_BUILD_TYPE=Debug -DBT_ENABLE_ASAN=OFF
+      - name: Build
+        run: cmake --build build/mlir -j2
+      - name: Run the full suite with the dialect compiled in
+        run: ctest --test-dir build/mlir --output-on-failure
+      - name: Check bt-opt runs the lowering pipeline
+        run: |
+          ./build/mlir/bt-opt --convert-all test/Dialect/bt_opt_lowering.mlir \
+            | grep -q "lowered-by"
+          ./build/mlir/bt-opt --show-dialects
+
   # Formal verification of the Xbt instruction set.
   #
   # Every instruction is proved equivalent to balanced-ternary arithmetic,

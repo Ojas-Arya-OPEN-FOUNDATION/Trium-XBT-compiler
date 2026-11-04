@@ -3,6 +3,7 @@
 import argparse, sys, time
 from .xbt_isa import (build_isa, verify_pack_unpack_roundtrip,
                       verify_li5)
+from .rocq_bridge import check_rocq_matches_rtl
 from .engine import (verify_exhaustive, verify_symbolic,
                       VerificationReport, ProofResult)
 
@@ -70,6 +71,21 @@ def main() -> int:
     report.results.append(ProofResult(
         "LI5", "roundtrip", not lerr,
         "exhaustive over 256 bytes x 8 chunks" if not lerr else f"{len(lerr)} errors: {lerr[0]}"))
+
+    # Rocq <-> RTL: the gate networks the theorems are stated about must be
+    # the ones the RTL actually implements.
+    if not args.quiet:
+        print("\n  Rocq <-> RTL gate-level bridge")
+    bridge_errs = check_rocq_matches_rtl(verbose=not args.quiet)
+    if not args.quiet:
+        for e in bridge_errs[:10]:
+            print(f"    [FAIL] {e}")
+        if not bridge_errs:
+            print("    [PASS] Rocq btha/rail_mul definitions match the RTL model")
+    report.results.append(ProofResult(
+        "Rocq/RTL bridge", "bridge", not bridge_errs,
+        "gate definitions agree on all rail combinations" if not bridge_errs
+        else f"{len(bridge_errs)} discrepancies: {bridge_errs[0]}"))
 
     n = len(report.results)
     f = len(report.failures)
