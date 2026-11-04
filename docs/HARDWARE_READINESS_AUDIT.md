@@ -3,7 +3,10 @@
 **Date:** 2026-11-04
 **Scope:** every file in the repository, read directly. No claims here are inferred
 from documentation alone; each is backed by the file and line evidence listed.
-**Status:** analysis only. No code in this change.
+**Status:** the analysis below is as originally written. Phases 0–3 have since
+been implemented; see the completion note at the end for what changed and what
+is still open. The findings are left in place because the reasoning behind the
+roadmap is still the reasoning behind the code.
 
 This answers three questions:
 
@@ -396,3 +399,47 @@ engineering. The fastest path to "any kind of hardware" is not to write more
 backends — it is to connect the frontend to the MLIR dialect that already exists,
 put a target-description layer under it, and pin the whole thing down with
 conformance vectors. Phases 0–2 are weeks of work and unlock everything after.
+
+---
+
+## 9. Completion note (added 2026-11-04)
+
+Phases 0–3 were implemented following this audit. Summary of what changed.
+
+### Closed
+
+| Gap (as found) | Now |
+|---|---|
+| `--target=riscv64-xbt` threw "not implemented" | Lowers core IR to encoded custom-0 instructions and executes them |
+| No verification of the ISA | 17/17 Z3 proofs, exhaustive + symbolic |
+| CSAMAC used the wrong accumulator operand | Fixed; regression pinned by 34,412 vectors |
+| No conformance vectors | 34,412 generated from the proved spec; 56,420 C++ checks |
+| No backend interface or registry | `Backend` + `BackendRegistry` + `TargetDescription` |
+| No target description mechanism | `TargetDescription`; `--list-targets` |
+| MLIR dialect never compiled in CI | `mlir-dialect` job; 66/66 pass with `BT_ENABLE_MLIR=ON` |
+| Proofs not linked to hardware | `rocq_bridge` parses Rocq definitions, checks vs RTL |
+
+### The v1 ISA could not be a compilation target
+
+Found by writing the selector, not by inspection: no way to materialise a
+constant into a ternary register, and the full adder and per-lane multiplier
+existed in RTL but had no encoding. Four instructions were added using the two
+previously-unassigned `funct3` values (`BTFA`, `MUL`, `PACK243`, `LI5`), all
+Z3-verified. Full detail in [XBT_ISA_SPEC.md](XBT_ISA_SPEC.md).
+
+### Still open
+
+- **Frontend → `bt` dialect.** The two compilers are still unconnected. `bt-opt`
+  is fed only by hand-written `.mlir` files; the `.bt` frontend goes through
+  `ir::Program` directly. This remains the largest remaining structural item.
+- **Scalar multiply.** `xbt.mul` is lane-wise. The selector refuses general
+  multiplication rather than emitting wrong code, but a real scalar multiply
+  needs a shift-add sequence and a general shift-by-trits instruction.
+- **Translation validation.** Each lowering is tested end to end, but no pass
+  proves its output equivalent to its input.
+- **The IR is still scalar-only.** No vector or tensor type. Adding one is the
+  prerequisite for expressing accelerators generically.
+- **Nothing has run on real hardware.** The Vulkan path compiles and degrades
+  honestly (`rc=4`); GLSL is validated, not executed; no FPGA bring-up.
+- **RTL is not simulated.** `hw/riscv_xbt_extension.sv` has no CI job that
+  simulates it; the bridge verifies the C++ model, not the SystemVerilog.
