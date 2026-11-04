@@ -34,8 +34,8 @@ from typing import Any
 from .z3core import (
     TRITS, trit_add, trit_add3, trit_neg, trit_mul,
     word_value, encode_word, balanced_range,
+    WIDTH,
 )
-from .xbt_isa import WIDTH
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "vectors"

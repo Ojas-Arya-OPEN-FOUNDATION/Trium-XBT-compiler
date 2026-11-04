@@ -34,6 +34,7 @@
 #include "bt_process.hpp"
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <vector>
 #include <string>

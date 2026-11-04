@@ -485,8 +485,8 @@ public:
                     }
                     case XbtGroup2::MUL: {
                         // Per-lane ternary product via the AOI22 network.
-                        TritWord64 p(rs1_t.P & rs2_t.P | rs1_t.N & rs2_t.N,
-                                     rs1_t.P & rs2_t.N | rs1_t.N & rs2_t.P);
+                        TritWord64 p((rs1_t.P & rs2_t.P) | (rs1_t.N & rs2_t.N),
+                                     (rs1_t.P & rs2_t.N) | (rs1_t.N & rs2_t.P));
                         treg[d.rd] = p;
                         break;
                     }

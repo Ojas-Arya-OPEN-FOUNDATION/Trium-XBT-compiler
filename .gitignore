@@ -50,7 +50,9 @@ bin_sanitizer/
 
 # Rust build artifacts
 target/
-**/target/
+ffi/rust/target/
+!include/Ternary/Target/
+!include/Ternary/Target/**
 Cargo.lock
 
 # Python distribution metadata
