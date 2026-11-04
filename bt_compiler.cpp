@@ -25,6 +25,12 @@
 #include "include/Ternary/IR/GLSL.hpp"
 #include "ternary_llvm_codegen.hpp"
 #include "hw/xbt_alu_model.hpp"
+#if defined(BT_HAS_MLIR) || defined(BT_HAS_STANDALONE_MLIR)
+#include "include/Ternary/MLIR/CoreToBtDialect.hpp"
+#endif
+#include "include/Ternary/Target/Backend.hpp"
+#include "include/Ternary/Target/XbtBackend.hpp"
+#include "include/Ternary/Target/XbtInstructionSelector.hpp"
 #include "bt_process.hpp"
 #include <iostream>
 #include <fstream>
@@ -79,10 +85,14 @@ struct CompilerOptions {
     bool emitBitcode{false};
     bool enableLTO{false};
     bool enableRiscvXbt{false};
+    bool emitBtDialect{false};
     uint64_t executionBudget{0};
 };
 
 // Native scalar generation has one authoritative path through verified core IR.
+// Backends register themselves. The driver never sees this list.
+static bt::target::StaticBackend<bt::target::XbtBackend> xbt_backend_registration;
+
 static std::string generate_program(frontend::ProgramNode& ast,const CompilerOptions& opts,
                                     const std::string& triple,const std::string& layout) {
     if(opts.legacyLLVM) {
@@ -525,6 +535,8 @@ void print_help() {
               << "  --core-run          Execute verified whole-program scalar core IR\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
               << "  --test              Run internal invariant verification suite\n"
+              << "  --emit-bt-dialect   Lower to the MLIR bt dialect (.mlir)\n"
+              << "  --list-targets      List registered backends and their capabilities\n"
               << "  --help              Display this help menu\n";
 }
 
@@ -595,6 +607,29 @@ int compiler_main(int argc, char** argv) {
             }
         } else if (arg == "--test") {
             opts.runSelfTest = true;
+        } else if (arg == "--emit-bt-dialect") {
+            opts.emitBtDialect = true;
+        } else if (arg == "--list-targets") {
+            // Backends register themselves; the driver just asks the registry.
+            auto& reg = bt::target::BackendRegistry::instance();
+            std::cout << "Registered backends:\n";
+            if (reg.empty()) {
+                std::cout << "  (none)\n";
+            } else {
+                for (auto* b : reg.all()) {
+                    std::cout << "  " << b->summary() << "\n";
+                    const auto& t = b->target();
+                    std::cout << "    matches: ";
+                    for (const auto& m : b->matches()) std::cout << m << " ";
+                    std::cout << "\n    native layouts: ";
+                    for (auto l : t.native_layouts)
+                        std::cout << bt::target::layout_name(l) << " ";
+                    std::cout << "\n    scalar multiply: "
+                              << (t.has_scalar_mul ? "yes" : "no (lane-wise only)")
+                              << "\n";
+                }
+            }
+            return 0;
         } else if (arg == "-g" || arg == "--debug") {
             opts.emitDebug = true;
         } else if (arg == "--emit-llvm-bc") {
@@ -659,9 +694,9 @@ int compiler_main(int argc, char** argv) {
                     opts.target = TargetArch::ARM64_NEON;
                 } else if (t.find("x86") != std::string::npos) {
                     opts.target = TargetArch::X86_AVX512;
-                } else if (t.find("riscv") != std::string::npos) {
+                } else if (t.find("riscv") != std::string::npos || t == "xbt" || t == "riscv-xbt") {
                     opts.target = TargetArch::LLVM_IR;
-                    if (t.find("xbt") != std::string::npos) {
+                    if (t.find("xbt") != std::string::npos || t == "xbt") {
                         opts.enableRiscvXbt = true;
                     }
                 } else {
@@ -823,7 +858,10 @@ int compiler_main(int argc, char** argv) {
         }
     }
 
-    if (!opts.inputFile.empty() && !opts.emitBitcode && opts.outputMode == OutputMode::DEFAULT &&
+    // --emit-bt-dialect and the Xbt target both compile the user's source, so
+    // they are exempt from the template-only warning below.
+    if (!opts.inputFile.empty() && !opts.emitBitcode && !opts.emitBtDialect &&
+        !opts.enableRiscvXbt && opts.outputMode == OutputMode::DEFAULT &&
         opts.target != TargetArch::LLVM_IR) {
         // Be exact about what these targets do. They emit a FIXED kernel
         // template and ignore the parsed program; only --gpu-map actually
@@ -934,6 +972,151 @@ int compiler_main(int argc, char** argv) {
         return 0;
     }
 
+    // ------------------------------------------------------------------
+    // Lower .bt source into the MLIR `bt` dialect.
+    //
+    // This is the connection the readiness audit recorded as missing: the
+    // frontend and the dialect were two unconnected compilers, so the five
+    // lowering passes were reachable only from hand-written .mlir files.
+    // With this, real programs flow through the dialect:
+    //
+    //     .bt -> AST -> ir::Program -> bt dialect -> passes -> target
+    // ------------------------------------------------------------------
+    if (opts.emitBtDialect) {
+#if !defined(BT_HAS_MLIR) && !defined(BT_HAS_STANDALONE_MLIR)
+        std::cerr << "Error: --emit-bt-dialect requires a build with "
+                     "-DBT_ENABLE_MLIR=ON\n";
+        return 1;
+#else
+        if (opts.inputFile.empty()) {
+            std::cerr << "Error: --emit-bt-dialect requires an input .bt file!\n";
+            return 1;
+        }
+        std::ifstream f(opts.inputFile);
+        if (!f.is_open()) {
+            std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+        std::string src = frontend::read_source(f);
+        std::shared_ptr<frontend::ProgramNode> prog;
+        try {
+            frontend::Parser parser(src, std::filesystem::path(opts.inputFile).parent_path().string());
+            prog = parser.parse_program();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Failed to parse " << opts.inputFile << ": " << e.what() << "\n";
+            return 1;
+        }
+        if (!prog) {
+            std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+
+        ir::Lowering lowering;
+        ir::Program program = lowering.lower(*prog);
+
+        auto stem = std::filesystem::path(opts.inputFile).stem().string();
+        std::string modname = stem.empty() ? "bt_module" : stem;
+        for (auto& c : modname)
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) c = '_';
+
+        auto result = bt::mlir::bridge::lower_program_to_bt_dialect(program, modname);
+
+        if (!result.complete()) {
+            std::cerr << "Error: bt dialect lowering incomplete for "
+                      << result.unsupported.size() << " function(s):\n";
+            for (const auto& u : result.unsupported) std::cerr << "  " << u << "\n";
+            return 1;
+        }
+
+        std::string text = result.to_string();
+        if (opts.outputFile.empty()) {
+            std::cout << text;
+        } else {
+            std::ofstream o(opts.outputFile);
+            if (!o.is_open()) {
+                std::cerr << "Error: Could not write output: " << opts.outputFile << "\n";
+                return 1;
+            }
+            o << text;
+            o.close();
+            std::cout << "[Dialect] Emitted bt dialect MLIR: " << opts.outputFile
+                      << " (" << result.ops << " ops, " << result.functions
+                      << " function(s))\n";
+        }
+        return 0;
+#endif
+    }
+
+    // ------------------------------------------------------------------
+    // Native ternary target: lower the core IR to real Xbt machine code.
+    //
+    // This used to throw "instruction selection is not implemented". The Xbt
+    // extension is now an actual compilation target: the same backend-neutral
+    // core IR every other backend consumes is lowered to encoded custom-0
+    // instructions, and every one of those instructions is proved correct
+    // against balanced-ternary arithmetic in verification/verify_isa.py.
+    // ------------------------------------------------------------------
+    if (opts.enableRiscvXbt) {
+        if (opts.inputFile.empty()) {
+            std::cerr << "Error: --target=riscv64-xbt requires an input .bt file!\n";
+            return 1;
+        }
+        std::ifstream f(opts.inputFile);
+        if (!f.is_open()) {
+            std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+        std::string src = frontend::read_source(f);
+        std::shared_ptr<frontend::ProgramNode> prog;
+        try {
+            frontend::Parser parser(src, std::filesystem::path(opts.inputFile).parent_path().string());
+            prog = parser.parse_program();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Failed to parse " << opts.inputFile << ": " << e.what() << "\n";
+            return 1;
+        }
+        if (!prog) {
+            std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+
+        ir::Lowering lowering;
+        ir::Program program = lowering.lower(*prog);
+
+        // Ask the registry, not a hardcoded switch.
+        auto* backend = bt::target::BackendRegistry::instance().find("xbt");
+        if (!backend) {
+            std::cerr << "Error: the Xbt backend is not registered\n";
+            return 1;
+        }
+        auto result = backend->lower(program);
+
+        if (!result.unsupported.empty()) {
+            // Refuse to emit a partially-lowered program silently: name what
+            // could not be lowered so the gap is visible rather than hidden.
+            std::cerr << "Error: Xbt instruction selection incomplete for "
+                      << result.unsupported.size() << " function(s):\n";
+            for (const auto& u : result.unsupported) std::cerr << "  " << u << "\n";
+            return 1;
+        }
+
+        if (opts.outputFile.empty()) {
+            std::cout << result.output;
+        } else {
+            std::ofstream o(opts.outputFile);
+            if (!o.is_open()) {
+                std::cerr << "Error: Could not write output: " << opts.outputFile << "\n";
+                return 1;
+            }
+            o << result.output;
+            o.close();
+            std::cout << "[Target Codegen] Emitted Xbt assembly: " << opts.outputFile
+                      << " (" << program.functions.size() << " function(s), target "
+                      << backend->target().name << ")\n";
+        }
+        return 0;
+    }
+
     // Cross-Compilation Pipeline for standalone Assembly (-S) or Object (-c) files
     if (opts.outputMode == OutputMode::ASM || opts.outputMode == OutputMode::OBJ) {
         std::string triple = opts.targetTriple;
@@ -978,9 +1161,6 @@ int compiler_main(int argc, char** argv) {
             llvm_ir = CodeEmitter::emit_llvm_ir();
         }
 
-        if (opts.enableRiscvXbt) {
-            throw std::runtime_error("RISC-V Xbt instruction selection is not implemented; refusing stub output");
-        }
         // Ordinary RISC-V uses Clang's real LLVM backend, just like ARM/x86.
         // Host Clang cross-compilation for aarch64 and x86_64
         bt::host::TemporaryDirectory temporary;

@@ -342,4 +342,80 @@ def BT_UnpackBase243Op : BT_Op<"unpack_base243", [Pure]> {
   let assemblyFormat = "$byte attr-dict `:` type($byte) `->` `(` type($t0) `,` type($t1) `,` type($t2) `,` type($t3) `,` type($t4) `)`";
 }
 
+//===----------------------------------------------------------------------===//
+// Scalar ops needed to lower .bt source through the dialect
+//===----------------------------------------------------------------------===//
+//
+// The dialect was built for the tensor/ALU path (matmul, gemm, planar_dot,
+// btha, csa_reduce), which had no way to introduce a ternary constant and no
+// unary or lane-wise ops. Without these three, scalar core IR cannot be
+// lowered through the dialect at all, which is why the frontend and the
+// dialect stayed disconnected. They mirror xbt.li5 / xbt.neg / xbt.mul.
+
+def BT_ConstOp : BT_Op<"const", [Pure, ConstantLike]> {
+  let summary = "Materialise a constant balanced ternary dual-rail word";
+
+  let description = [{
+    Introduces a ternary constant as a (P, N) dual-rail pair. The integer
+    value is carried as an attribute; `P` and `N` are the encoded rails, also
+    carried as attributes so the emitted text is self-describing.
+
+    Example:
+    ```mlir
+    %cp, %cn = bt.const {value = 3, P = 2, N = 0} : (i64, i64)
+    ```
+  }];
+
+  let arguments = (ins
+    I64Attr:$value,
+    I64Attr:$P,
+    I64Attr:$N
+  );
+
+  let results = (outs I64:$resultP, I64:$resultN);
+
+  let assemblyFormat = "attr-dict `:` `(` type($resultP) `,` type($resultN) `)`";
+}
+
+def BT_NegOp : BT_Op<"neg", [Pure]> {
+  let summary = "Zero-gate balanced ternary negation (rail swap)";
+
+  let description = [{
+    Negates a dual-rail word by exchanging its rails:
+
+    $$P_{out} = N_{in}$$
+    $$N_{out} = P_{in}$$
+
+    This costs no gates -- it is a wire permutation. It satisfies
+    `neg (neg x) = x` and is verified exhaustively in
+    `verification/verify_isa.py`.
+  }];
+
+  let arguments = (ins I64:$operandP, I64:$operandN);
+  let results = (outs I64:$resultP, I64:$resultN);
+
+  let assemblyFormat = "`(` $operandP `,` $operandN `)` attr-dict `:` `(` type($operandP) `,` type($operandN) `)` `->` `(` type($resultP) `,` type($resultN) `)`";
+}
+
+def BT_LaneMulOp : BT_Op<"lane_mul", [Pure, Commutative]> {
+  let summary = "Lane-wise balanced ternary multiplication";
+
+  let description = [{
+    Computes the per-lane ternary product of two dual-rail words via the
+    AOI22 compound gate network:
+
+    $$P_{out} = (P_A \land P_B) \lor (N_A \land N_B)$$
+    $$N_{out} = (P_A \land N_B) \lor (N_A \land P_B)$$
+
+    This is NOT scalar multiplication: no carry crosses a lane boundary, so
+    any product needing more than one trit is wrong. Lowering refuses
+    multi-trit operands rather than emitting incorrect code.
+  }];
+
+  let arguments = (ins I64:$lhsP, I64:$lhsN, I64:$rhsP, I64:$rhsN);
+  let results = (outs I64:$resultP, I64:$resultN);
+
+  let assemblyFormat = "`(` $lhsP `,` $lhsN `,` $rhsP `,` $rhsN `)` attr-dict `:` `(` type($lhsP) `,` type($lhsN) `,` type($rhsP) `,` type($rhsN) `)` `->` `(` type($resultP) `,` type($resultN) `)`";
+}
+
 #endif // BT_OPS_TD

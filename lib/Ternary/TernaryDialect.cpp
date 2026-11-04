@@ -35,6 +35,17 @@ void TernaryDialect::initialize() {
     g_registered_ops.insert(Select3Op::kOpName);
     g_registered_ops.insert("bt.pack_base243");
 
+    // ---- scalar ops needed to compile .bt source through the dialect ----
+    //
+    // The dialect was built for the tensor/ALU path (matmul, gemm, planar_dot,
+    // btha, csa_reduce). Lowering scalar core IR through it additionally needs
+    // a way to materialise a constant, a negation and a lane-wise product --
+    // the same three gaps the Xbt v2 extension had to close. These mirror
+    // xbt.li5 / xbt.neg / xbt.mul exactly.
+    g_registered_ops.insert(ConstOp::kOpName);        // bt.const
+    g_registered_ops.insert(NegOp::kOpName);          // bt.neg
+    g_registered_ops.insert(LaneMulOp::kOpName);      // bt.lane_mul
+
     g_ternary_dialect_registered = true;
 }
 

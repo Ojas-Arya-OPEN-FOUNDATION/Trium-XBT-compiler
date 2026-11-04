@@ -36,8 +36,25 @@ enum class XbtFunct3 : uint8_t {
     DOT64     = 0b010, // 1-cycle 64-trit Planar Dot Product -> Scalar Register
     UNPACK243 = 0b011, // 1-cycle Division-Free Base-243 Byte -> Dual-Rail Unpack
     NEG       = 0b100, // 0-gate Wire-Swapped Ternary Negation
-    CSAMAC    = 0b101  // 1-cycle Fused Carry-Save MAC (rs1 * rs2 accumulated into rd, funct7)
+    CSAMAC    = 0b101, // 1-cycle Fused Carry-Save MAC (rs1 * rs2 accumulated into rd, funct7)
+    // ---- v2 extension (see docs/XBT_ISA_SPEC.md) ----
+    // The v1 set cannot be a compilation target: it has no way to materialise
+    // a constant into a ternary register, and the full adder and the per-lane
+    // multiplier exist in RTL but are unreachable. These four close exactly
+    // that gap. All are Z3-verified in verification/verify_isa.py.
+    GROUP2    = 0b110, // R-type group; funct7 selects the operation
+    LI5       = 0b111  // I-type: load a 5-trit constant at a trit offset
 };
+
+// Extended opcodes for XbtFunct3::GROUP2 (carried in funct7).
+enum class XbtGroup2 : uint8_t {
+    BTFA    = 0x00, // rd = sum(rs1, rs2, rd); carry -> last_carry
+    MUL     = 0x01, // rd[i] = rs1[i] * rs2[i]   (per-lane, AOI22 product network)
+    PACK243 = 0x02  // x[rd] = base-243 byte built from rs1[4:0]
+};
+
+// Base-243: 5 trits per byte, digit d = trit + 1, so byte = value + 121.
+static constexpr int XBT_BASE243_BIAS = 121;
 
 struct DecodedXbtInsn {
     uint8_t opcode{0};
@@ -48,7 +65,8 @@ struct DecodedXbtInsn {
     uint8_t funct7{0};
 
     constexpr bool is_valid_xbt() const noexcept {
-        return opcode == OPCODE_XBT_CUSTOM0 && funct3 <= 0b101;
+        // funct3 <= 0b101 is the v1 set; 0b110/0b111 are the v2 extension.
+        return opcode == OPCODE_XBT_CUSTOM0 && funct3 <= 0b111;
     }
 };
 
@@ -78,6 +96,25 @@ constexpr inline DecodedXbtInsn decode_xbt_r(uint32_t insn) noexcept {
     d.rs2    = static_cast<uint8_t>((insn >> 20) & 0x1FU);
     d.funct7 = static_cast<uint8_t>((insn >> 25) & 0x7FU);
     return d;
+}
+
+/**
+ * @brief Encodes a 32-bit RISC-V I-type instruction for the Xbt extension.
+ * Layout: [31:20]=imm | [19:15]=rs1 | [14:12]=funct3 | [11:7]=rd | [6:0]=0x0B
+ * For LI5: imm[7:0] is a base-243 byte and imm[10:8] is a trit shift.
+ */
+constexpr inline uint32_t encode_xbt_i(uint16_t imm, uint8_t rs1,
+                                       uint8_t funct3, uint8_t rd) noexcept {
+    return ((static_cast<uint32_t>(imm)    & 0xFFFU) << 20) |
+           ((static_cast<uint32_t>(rs1)    & 0x1FU)  << 15) |
+           ((static_cast<uint32_t>(funct3) & 0x07U)  << 12) |
+           ((static_cast<uint32_t>(rd)     & 0x1FU)  << 7)  |
+           (static_cast<uint32_t>(OPCODE_XBT_CUSTOM0) & 0x7FU);
+}
+
+/** @brief Extracts the I-type immediate field (imm[11:0]). */
+constexpr inline uint16_t xbt_i_immediate(uint32_t insn) noexcept {
+    return static_cast<uint16_t>((insn >> 20) & 0xFFFU);
 }
 
 /**
@@ -242,6 +279,19 @@ inline int64_t rtl_aoi22_planar_dot64(const TritWord64& a, const TritWord64& b,
            static_cast<int64_t>(TritWord64::popcount64(prod_n));
 }
 
+/**
+ * @brief Shifts a dual-rail trit word left by whole trits (multiply by 3**n).
+ *
+ * Trit i moves to trit i+n; the low n trits become zero. This is the shift
+ * used by the LI5 immediate field, and it is exact: no carry is generated
+ * because no two trits ever land on the same position.
+ */
+inline TritWord64 shift_trits_left(const TritWord64& w, unsigned n) noexcept {
+    if (n == 0) return w;
+    if (n >= 64) return TritWord64(0, 0);
+    return TritWord64(w.P << n, w.N << n);
+}
+
 // ==============================================================================
 // 3. Cycle-Accurate RISC-V "Xbt" Coprocessor & Register File
 // ==============================================================================
@@ -395,13 +445,24 @@ public:
                 break;
             }
             case XbtFunct3::CSAMAC: {
-                // Fused Carry-Save MAC
+                // Fused Carry-Save MAC.
+                //
+                // Contract (see the XbtFunct3::CSAMAC documentation above):
+                //   "rs1 * rs2 accumulated into rd", i.e. per lane
+                //       rd_out == rd + (rs1 * rs2)
+                // so the accumulator operand is the DESTINATION register.
+                //
+                // The accumulator was previously taken from rs1, which computed
+                // rs1 + rs1*rs2 and silently ignored rd. Z3 verification
+                // (verification/verify_isa.py) caught the divergence; the
+                // behaviour below now matches the documented contract.
+                const TritWord64& acc_t = treg[d.rd];
                 uint64_t prod_p = (rs1_t.P & rs2_t.P) | (rs1_t.N & rs2_t.N);
                 uint64_t prod_n = (rs1_t.P & rs2_t.N) | (rs1_t.N & rs2_t.P);
-                uint64_t sp = ((prod_p ^ rs1_t.P) & ~(prod_n | rs1_t.N)) | (prod_n & rs1_t.N);
-                uint64_t sn = ((prod_n ^ rs1_t.N) & ~(prod_p | rs1_t.P)) | (prod_p & rs1_t.P);
-                uint64_t cp = prod_p & rs1_t.P;
-                uint64_t cn = prod_n & rs1_t.N;
+                uint64_t sp = ((prod_p ^ acc_t.P) & ~(prod_n | acc_t.N)) | (prod_n & acc_t.N);
+                uint64_t sn = ((prod_n ^ acc_t.N) & ~(prod_p | acc_t.P)) | (prod_p & acc_t.P);
+                uint64_t cp = prod_p & acc_t.P;
+                uint64_t cn = prod_n & acc_t.N;
                 treg[d.rd] = TritWord64(sp, sn);
                 last_carry = TritWord64(cp, cn);
                 if (d.funct7 > 0 && d.funct7 < 32) {
@@ -411,6 +472,72 @@ public:
                 instructions_retired += 1;
                 break;
             }
+
+            // ---- v2 extension ------------------------------------------
+            case XbtFunct3::GROUP2: {
+                switch (static_cast<XbtGroup2>(d.funct7)) {
+                    case XbtGroup2::BTFA: {
+                        // rd = sum(rs1, rs2, rd); carry is latched.
+                        AdderOutput fa = BTFA(rs1_t, rs2_t, treg[d.rd]);
+                        treg[d.rd] = fa.Sum;
+                        last_carry = fa.Carry;
+                        break;
+                    }
+                    case XbtGroup2::MUL: {
+                        // Per-lane ternary product via the AOI22 network.
+                        TritWord64 p(rs1_t.P & rs2_t.P | rs1_t.N & rs2_t.N,
+                                     rs1_t.P & rs2_t.N | rs1_t.N & rs2_t.P);
+                        treg[d.rd] = p;
+                        break;
+                    }
+                    case XbtGroup2::PACK243: {
+                        // 5 trits -> base-243 byte. Inverse of UNPACK243.
+                        int byte_val = XBT_BASE243_BIAS;
+                        int place = 1;
+                        for (int k = 0; k < 5; ++k) {
+                            int t = 0;
+                            if ((rs1_t.P >> k) & 1ULL)      t = 1;
+                            else if ((rs1_t.N >> k) & 1ULL) t = -1;
+                            byte_val += t * place;
+                            place *= 3;
+                        }
+                        if (d.rd != 0) xreg[d.rd] = byte_val;
+                        break;
+                    }
+                    default:
+                        throw std::invalid_argument(
+                            "RiscvXbtCoprocessor::execute: Unsupported Xbt group-2 opcode");
+                }
+                cycles += 1;
+                instructions_retired += 1;
+                break;
+            }
+
+            case XbtFunct3::LI5: {
+                // I-type: rd = (imm[7:0] - 121) * 3**(5 * imm[10:8])
+                //
+                // imm[7:0]  is a base-243 byte carrying 5 trits.
+                // imm[10:8] is a CHUNK INDEX, not a raw trit shift: the shift
+                // is 5 trits per step. Eight chunks cover 40 trits, which is
+                // exactly the width of an int39 scalar plus one.
+                const uint16_t imm = xbt_i_immediate(insn);
+                const uint8_t  byte_field = static_cast<uint8_t>(imm & 0xFFU);
+                const unsigned chunk = static_cast<unsigned>((imm >> 8) & 0x7U);
+                const unsigned shamt = 5u * chunk;
+
+                if (byte_field >= 243U) {
+                    // Out-of-range base-243 byte: decode to zero rather than
+                    // producing an invalid dual-rail word.
+                    treg[d.rd] = TritWord64(0, 0);
+                } else {
+                    treg[d.rd] = shift_trits_left(
+                        rtl_base243_decoder(byte_field), shamt);
+                }
+                cycles += 1;
+                instructions_retired += 1;
+                break;
+            }
+
             default:
                 throw std::invalid_argument("RiscvXbtCoprocessor::execute: Unsupported Xbt funct3");
         }

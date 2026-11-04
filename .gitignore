@@ -62,3 +62,9 @@ Testing/
 # Optional toolchains installed by tools/install_toolchains.sh, and cargo build output
 tools/.toolchains/
 ffi/rust/target/
+
+# Generated conformance vectors (regenerate with:
+#   python3 -m verification.gen_vectors)
+# These are derived from the verified specification, so they are build
+# artifacts, not sources. Roughly 11 MB.
+verification/vectors/
