@@ -25,6 +25,7 @@
 #include "include/Ternary/IR/GLSL.hpp"
 #include "ternary_llvm_codegen.hpp"
 #include "hw/xbt_alu_model.hpp"
+#include "include/Ternary/Target/XbtInstructionSelector.hpp"
 #include "bt_process.hpp"
 #include <iostream>
 #include <fstream>
@@ -934,6 +935,69 @@ int compiler_main(int argc, char** argv) {
         return 0;
     }
 
+    // ------------------------------------------------------------------
+    // Native ternary target: lower the core IR to real Xbt machine code.
+    //
+    // This used to throw "instruction selection is not implemented". The Xbt
+    // extension is now an actual compilation target: the same backend-neutral
+    // core IR every other backend consumes is lowered to encoded custom-0
+    // instructions, and every one of those instructions is proved correct
+    // against balanced-ternary arithmetic in verification/verify_isa.py.
+    // ------------------------------------------------------------------
+    if (opts.enableRiscvXbt) {
+        if (opts.inputFile.empty()) {
+            std::cerr << "Error: --target=riscv64-xbt requires an input .bt file!\n";
+            return 1;
+        }
+        std::ifstream f(opts.inputFile);
+        if (!f.is_open()) {
+            std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+        std::string src = frontend::read_source(f);
+        std::shared_ptr<frontend::ProgramNode> prog;
+        try {
+            frontend::Parser parser(src, std::filesystem::path(opts.inputFile).parent_path().string());
+            prog = parser.parse_program();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Failed to parse " << opts.inputFile << ": " << e.what() << "\n";
+            return 1;
+        }
+        if (!prog) {
+            std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+
+        ir::Lowering lowering;
+        ir::Program program = lowering.lower(*prog);
+        auto result = bt::target::xbt::lower_program_to_assembly(program);
+
+        if (!result.complete()) {
+            // Refuse to emit a partially-lowered program silently: name what
+            // could not be lowered so the gap is visible rather than hidden.
+            std::cerr << "Error: Xbt instruction selection incomplete for "
+                      << result.unlowered.size() << " function(s):\n";
+            for (const auto& u : result.unlowered) std::cerr << "  " << u << "\n";
+            return 1;
+        }
+
+        if (opts.outputFile.empty()) {
+            std::cout << result.assembly;
+        } else {
+            std::ofstream o(opts.outputFile);
+            if (!o.is_open()) {
+                std::cerr << "Error: Could not write output: " << opts.outputFile << "\n";
+                return 1;
+            }
+            o << result.assembly;
+            o.close();
+            std::cout << "[Target Codegen] Emitted Xbt assembly: " << opts.outputFile
+                      << " (" << result.instructions << " instructions, "
+                      << result.functions << " function(s))\n";
+        }
+        return 0;
+    }
+
     // Cross-Compilation Pipeline for standalone Assembly (-S) or Object (-c) files
     if (opts.outputMode == OutputMode::ASM || opts.outputMode == OutputMode::OBJ) {
         std::string triple = opts.targetTriple;
@@ -978,9 +1042,6 @@ int compiler_main(int argc, char** argv) {
             llvm_ir = CodeEmitter::emit_llvm_ir();
         }
 
-        if (opts.enableRiscvXbt) {
-            throw std::runtime_error("RISC-V Xbt instruction selection is not implemented; refusing stub output");
-        }
         // Ordinary RISC-V uses Clang's real LLVM backend, just like ARM/x86.
         // Host Clang cross-compilation for aarch64 and x86_64
         bt::host::TemporaryDirectory temporary;

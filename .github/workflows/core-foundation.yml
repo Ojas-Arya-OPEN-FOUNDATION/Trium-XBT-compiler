@@ -127,6 +127,35 @@ jobs:
       - run: opam install -y rocq-core.9.1.1 rocq-runtime.9.1.1 rocq-stdlib.9.1.0
       - run: opam exec -- python3 test/check_rocq.py
 
+  # Formal verification of the Xbt instruction set.
+  #
+  # Every instruction is proved equivalent to balanced-ternary arithmetic,
+  # then conformance vectors are generated from that specification and run
+  # against the hardware model. This is the job that catches a semantic
+  # divergence between the mathematics, the specification and the RTL.
+  xbt-verification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Z3
+        run: pip3 install --break-system-packages z3-solver
+      - name: Prove the Xbt instruction set against ternary arithmetic
+        run: python3 -m verification.verify_isa
+      - name: Generate conformance vectors from the proved specification
+        run: python3 -m verification.gen_vectors
+      - name: Configure and build the hardware conformance and selector tests
+        run: |
+          cmake -S . -B build/xbt -G Ninja \
+            -DBT_ENABLE_MLIR=OFF -DCMAKE_BUILD_TYPE=Debug -DBT_ENABLE_ASAN=OFF
+          cmake --build build/xbt --target unit_xbt_conformance unit_xbt_selector -j2
+      - name: Run the hardware conformance suite
+        run: ./build/xbt/unit_xbt_conformance
+      - name: Run the instruction selection suite
+        run: ./build/xbt/unit_xbt_selector
+
   rust-client:
     runs-on: ubuntu-24.04
     steps:
