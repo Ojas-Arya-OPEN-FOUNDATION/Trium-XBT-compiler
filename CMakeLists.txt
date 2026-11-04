@@ -76,6 +76,13 @@ if(BT_ENABLE_MLIR)
     endif()
 endif()
 
+# In the standalone fallback the bt dialect and its passes are still built --
+# they are the C++20 implementation in ternary_mlir_lowering.hpp, not stubs.
+# Mark that so the frontend can lower through the dialect either way.
+if(BT_ENABLE_MLIR AND NOT BT_HAS_MLIR)
+    add_definitions(-DBT_HAS_STANDALONE_MLIR=1)
+endif()
+
 # ==============================================================================
 # Include Paths
 # ==============================================================================
@@ -308,6 +315,14 @@ if(BT_BUILD_TESTS)
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # Frontend -> bt MLIR dialect bridge. Only meaningful when the dialect is
+    # compiled in (BT_ENABLE_MLIR), since it links the dialect registry.
+    if(BT_ENABLE_MLIR)
+        add_executable(unit_bt_dialect_bridge test/Unit/test_bt_dialect_bridge.cpp)
+        target_include_directories(unit_bt_dialect_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(unit_bt_dialect_bridge PRIVATE TernaryDialect)
+    endif()
+
     # Regression coverage for the 2026-11-02 deep audit. The audit found that
     # allocator sizes wrapped, pool exceptions escaped, and numerical edge cases
     # returned NaN/aborted; these targets keep those repairs from regressing.
@@ -342,6 +357,9 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer1_Unit_XBT_Conformance COMMAND unit_xbt_conformance)
     add_test(NAME Layer1_Unit_XBT_Selector COMMAND unit_xbt_selector)
     add_test(NAME Layer1_Unit_Backend_Registry COMMAND unit_backend_registry)
+    if(BT_ENABLE_MLIR)
+        add_test(NAME Layer1_Unit_BT_Dialect_Bridge COMMAND unit_bt_dialect_bridge)
+    endif()
     add_test(NAME Layer1_Unit_Audit_Regressions COMMAND unit_audit_regressions)
 
     # CTest Registration: Layers 2-7
@@ -371,6 +389,9 @@ if(BT_BUILD_TESTS)
     )
     add_test(NAME Layer6_Dialect
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Dialect
+    )
+    add_test(NAME Layer6_Frontend_Dialect_Pipeline
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/frontend_dialect_pipeline.py
     )
     add_test(NAME Layer7_Sema
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/lit_runner.py ${CMAKE_CURRENT_SOURCE_DIR}/test/Sema
@@ -469,7 +490,7 @@ if(BT_BUILD_TESTS)
         set_property(TEST Phase1_Python_FFI Runtime_ABI_Client Legacy_FFI_Hardening APPEND PROPERTY ENVIRONMENT
             "LD_PRELOAD=${BT_ASAN_RUNTIME}:${BT_CXX_ABI_RUNTIME}" "ASAN_OPTIONS=detect_leaks=0")
     endif()
-    set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer7_Sema
+    set_tests_properties(Layer2_Regression Layer3_WholeProgram Layer5_CodeGen Layer6_Dialect Layer6_Frontend_Dialect_Pipeline Layer7_Sema
         PROPERTIES ENVIRONMENT "BT_COMPILER=$<TARGET_FILE:bt-compiler>;BT_OPT=$<TARGET_FILE:bt-opt>" SKIP_RETURN_CODE 77)
 
     # A clean 'check-all' must build every executable used by registered tests.

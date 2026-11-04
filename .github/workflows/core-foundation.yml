@@ -151,6 +151,12 @@ jobs:
           ./build/mlir/bt-opt --convert-all test/Dialect/bt_opt_lowering.mlir \
             | grep -q "lowered-by"
           ./build/mlir/bt-opt --show-dialects
+      - name: Check .bt source reaches the dialect and the passes
+        run: |
+          printf 'func add_const(x:int)->int {\n    return x + 3;\n}\n' > /tmp/pipe.bt
+          ./build/mlir/bt-compiler --emit-bt-dialect /tmp/pipe.bt -o /tmp/pipe.mlir
+          grep -q "bt.btha" /tmp/pipe.mlir
+          ./build/mlir/bt-opt --convert-all /tmp/pipe.mlir | grep -q "ConvertBTHAPass"
 
   # Formal verification of the Xbt instruction set.
   #

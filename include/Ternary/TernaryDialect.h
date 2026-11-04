@@ -173,6 +173,70 @@ struct CSAAccumOp {
     std::string result;
 };
 
+/**
+ * @brief Materialise a constant dual-rail word.
+ *
+ * The dialect had no way to introduce a ternary constant, so scalar core IR
+ * could not be lowered through it at all. Mirrors `xbt.li5` at the IR level:
+ * the value is carried as an attribute and the result is a (P, N) rail pair.
+ */
+struct ConstOp {
+    static constexpr const char* kOpName = "bt.const";
+    int64_t value{0};
+    std::string resultP;
+    std::string resultN;
+
+    /** Encode an integer into its dual-rail (P, N) representation. */
+    static std::pair<uint64_t, uint64_t> encode(int64_t v) {
+        uint64_t P = 0, N = 0;
+        int64_t x = v;
+        bool negative = x < 0;
+        uint64_t mag = negative ? static_cast<uint64_t>(-x)
+                                : static_cast<uint64_t>(x);
+        for (int i = 0; i < 40 && mag != 0; ++i) {
+            unsigned r = static_cast<unsigned>(mag % 3);
+            if (r == 1)      P |= (1ULL << i);
+            else if (r == 2) N |= (1ULL << i), mag += 1;   // -1 with carry
+            mag /= 3;
+        }
+        if (negative) std::swap(P, N);
+        return {P, N};
+    }
+};
+
+/**
+ * @brief Rail-swap negation: zero gates, just exchange P and N.
+ * Mirrors `xbt.neg`.
+ */
+struct NegOp {
+    static constexpr const char* kOpName = "bt.neg";
+    std::string operandP;
+    std::string operandN;
+    std::string resultP;
+    std::string resultN;
+
+    static std::pair<uint64_t, uint64_t> execute(uint64_t p, uint64_t n) {
+        return {n, p};
+    }
+};
+
+/**
+ * @brief Lane-wise ternary product.
+ *
+ * NOT scalar multiplication: no carry crosses a lane, exactly as with
+ * `xbt.mul`. Lowering refuses it for anything but single-trit operands.
+ */
+struct LaneMulOp {
+    static constexpr const char* kOpName = "bt.lane_mul";
+    std::string lhsP, lhsN, rhsP, rhsN;
+    std::string resultP, resultN;
+
+    static std::pair<uint64_t, uint64_t> execute(uint64_t ap, uint64_t an,
+                                                 uint64_t bp, uint64_t bn) {
+        return {(ap & bp) | (an & bn), (ap & bn) | (an & bp)};
+    }
+};
+
 struct Select3Op {
     static constexpr const char* kOpName = "bt.select3";
     std::string cond;

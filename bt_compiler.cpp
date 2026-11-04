@@ -25,6 +25,9 @@
 #include "include/Ternary/IR/GLSL.hpp"
 #include "ternary_llvm_codegen.hpp"
 #include "hw/xbt_alu_model.hpp"
+#if defined(BT_HAS_MLIR) || defined(BT_HAS_STANDALONE_MLIR)
+#include "include/Ternary/MLIR/CoreToBtDialect.hpp"
+#endif
 #include "include/Ternary/Target/Backend.hpp"
 #include "include/Ternary/Target/XbtBackend.hpp"
 #include "include/Ternary/Target/XbtInstructionSelector.hpp"
@@ -82,6 +85,7 @@ struct CompilerOptions {
     bool emitBitcode{false};
     bool enableLTO{false};
     bool enableRiscvXbt{false};
+    bool emitBtDialect{false};
     uint64_t executionBudget{0};
 };
 
@@ -531,6 +535,7 @@ void print_help() {
               << "  --core-run          Execute verified whole-program scalar core IR\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
               << "  --test              Run internal invariant verification suite\n"
+              << "  --emit-bt-dialect   Lower to the MLIR bt dialect (.mlir)\n"
               << "  --list-targets      List registered backends and their capabilities\n"
               << "  --help              Display this help menu\n";
 }
@@ -602,6 +607,8 @@ int compiler_main(int argc, char** argv) {
             }
         } else if (arg == "--test") {
             opts.runSelfTest = true;
+        } else if (arg == "--emit-bt-dialect") {
+            opts.emitBtDialect = true;
         } else if (arg == "--list-targets") {
             // Backends register themselves; the driver just asks the registry.
             auto& reg = bt::target::BackendRegistry::instance();
@@ -851,7 +858,10 @@ int compiler_main(int argc, char** argv) {
         }
     }
 
-    if (!opts.inputFile.empty() && !opts.emitBitcode && opts.outputMode == OutputMode::DEFAULT &&
+    // --emit-bt-dialect and the Xbt target both compile the user's source, so
+    // they are exempt from the template-only warning below.
+    if (!opts.inputFile.empty() && !opts.emitBitcode && !opts.emitBtDialect &&
+        !opts.enableRiscvXbt && opts.outputMode == OutputMode::DEFAULT &&
         opts.target != TargetArch::LLVM_IR) {
         // Be exact about what these targets do. They emit a FIXED kernel
         // template and ignore the parsed program; only --gpu-map actually
@@ -960,6 +970,81 @@ int compiler_main(int argc, char** argv) {
         }
         std::cout << "[Target Codegen] Successfully emitted LLVM bitcode: " << out_bc << " (Target: " << triple << ")\n";
         return 0;
+    }
+
+    // ------------------------------------------------------------------
+    // Lower .bt source into the MLIR `bt` dialect.
+    //
+    // This is the connection the readiness audit recorded as missing: the
+    // frontend and the dialect were two unconnected compilers, so the five
+    // lowering passes were reachable only from hand-written .mlir files.
+    // With this, real programs flow through the dialect:
+    //
+    //     .bt -> AST -> ir::Program -> bt dialect -> passes -> target
+    // ------------------------------------------------------------------
+    if (opts.emitBtDialect) {
+#if !defined(BT_HAS_MLIR) && !defined(BT_HAS_STANDALONE_MLIR)
+        std::cerr << "Error: --emit-bt-dialect requires a build with "
+                     "-DBT_ENABLE_MLIR=ON\n";
+        return 1;
+#else
+        if (opts.inputFile.empty()) {
+            std::cerr << "Error: --emit-bt-dialect requires an input .bt file!\n";
+            return 1;
+        }
+        std::ifstream f(opts.inputFile);
+        if (!f.is_open()) {
+            std::cerr << "Error: Could not open input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+        std::string src = frontend::read_source(f);
+        std::shared_ptr<frontend::ProgramNode> prog;
+        try {
+            frontend::Parser parser(src, std::filesystem::path(opts.inputFile).parent_path().string());
+            prog = parser.parse_program();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Failed to parse " << opts.inputFile << ": " << e.what() << "\n";
+            return 1;
+        }
+        if (!prog) {
+            std::cerr << "Error: Failed to parse input file: " << opts.inputFile << "\n";
+            return 1;
+        }
+
+        ir::Lowering lowering;
+        ir::Program program = lowering.lower(*prog);
+
+        auto stem = std::filesystem::path(opts.inputFile).stem().string();
+        std::string modname = stem.empty() ? "bt_module" : stem;
+        for (auto& c : modname)
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) c = '_';
+
+        auto result = bt::mlir::bridge::lower_program_to_bt_dialect(program, modname);
+
+        if (!result.complete()) {
+            std::cerr << "Error: bt dialect lowering incomplete for "
+                      << result.unsupported.size() << " function(s):\n";
+            for (const auto& u : result.unsupported) std::cerr << "  " << u << "\n";
+            return 1;
+        }
+
+        std::string text = result.to_string();
+        if (opts.outputFile.empty()) {
+            std::cout << text;
+        } else {
+            std::ofstream o(opts.outputFile);
+            if (!o.is_open()) {
+                std::cerr << "Error: Could not write output: " << opts.outputFile << "\n";
+                return 1;
+            }
+            o << text;
+            o.close();
+            std::cout << "[Dialect] Emitted bt dialect MLIR: " << opts.outputFile
+                      << " (" << result.ops << " ops, " << result.functions
+                      << " function(s))\n";
+        }
+        return 0;
+#endif
     }
 
     // ------------------------------------------------------------------
