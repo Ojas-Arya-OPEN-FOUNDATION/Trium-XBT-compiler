@@ -47,13 +47,15 @@
 #    define TERNARY_HAVE_MICROKERNEL 1
 #  endif
 #endif
-#if defined(__has_include)
-#  if __has_include(<immintrin.h>)
-#    include <immintrin.h>
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86))
+#  if defined(__has_include)
+#    if __has_include(<immintrin.h>)
+#      include <immintrin.h>
+#    endif
 #  endif
-#endif
-#if defined(__AVX2__)
-#  define TERNARY_HAVE_SIMD_SLICE 1
+#  if defined(__AVX2__)
+#    define TERNARY_HAVE_SIMD_SLICE 1
+#  endif
 #endif
 
 

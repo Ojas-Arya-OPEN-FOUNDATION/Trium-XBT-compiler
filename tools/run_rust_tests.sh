@@ -22,12 +22,12 @@ fi
 
 # Locate the built SDK libraries: anywhere under build/ by default.
 SEARCH_DIRS=()
-while IFS= read -r d; do SEARCH_DIRS+=("$d"); done < <(
-    # -type l as well: CMake writes libtrium_sdk.so as a symlink to the
-    # versioned .so.1, and -type f alone silently finds nothing.
+while IFS= read -r f; do
+    [ -n "$f" ] && SEARCH_DIRS+=("$(dirname "$f")")
+done < <(
     find "$ROOT" \( -type f -o -type l \) \
          \( -name 'libtrium_sdk.so' -o -name 'libtrium_sdk.dylib' -o -name 'libtrium_sdk.so.*' \) \
-         -not -path '*/.git/*' 2>/dev/null | xargs -r -n1 dirname | sort -u)
+         -not -path '*/.git/*' 2>/dev/null)
 
 if [ "${#SEARCH_DIRS[@]}" -eq 0 ]; then
     echo "SKIP: libtrium_sdk not built yet - build the sdk target first"
@@ -67,7 +67,8 @@ echo "==> rustc driver libs: ${EXTRA_LIBS:-none}"
 
 export LD_LIBRARY_PATH="$LIBDIR:$RUSTLIB${EXTRA_LIBS:+:$EXTRA_LIBS}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export DYLD_LIBRARY_PATH="$LIBDIR:$RUSTLIB${EXTRA_LIBS:+:$EXTRA_LIBS}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-export RUSTFLAGS="${RUSTFLAGS:-} -L $LIBDIR -L $RUSTLIB"
+export BT_LIB_DIR="$LIBDIR"
+export BT_RUNTIME_DIR="$RUSTLIB"
 
 cd "$ROOT/ffi/rust"
 exec "$CARGO" test --offline
