@@ -25,6 +25,8 @@
 #include "include/Ternary/IR/GLSL.hpp"
 #include "ternary_llvm_codegen.hpp"
 #include "hw/xbt_alu_model.hpp"
+#include "include/Ternary/Target/Backend.hpp"
+#include "include/Ternary/Target/XbtBackend.hpp"
 #include "include/Ternary/Target/XbtInstructionSelector.hpp"
 #include "bt_process.hpp"
 #include <iostream>
@@ -84,6 +86,9 @@ struct CompilerOptions {
 };
 
 // Native scalar generation has one authoritative path through verified core IR.
+// Backends register themselves. The driver never sees this list.
+static bt::target::StaticBackend<bt::target::XbtBackend> xbt_backend_registration;
+
 static std::string generate_program(frontend::ProgramNode& ast,const CompilerOptions& opts,
                                     const std::string& triple,const std::string& layout) {
     if(opts.legacyLLVM) {
@@ -526,6 +531,7 @@ void print_help() {
               << "  --core-run          Execute verified whole-program scalar core IR\n"
               << "  --native            Execute program via Native LLVM JIT (Bare-Metal Machine Speed)\n"
               << "  --test              Run internal invariant verification suite\n"
+              << "  --list-targets      List registered backends and their capabilities\n"
               << "  --help              Display this help menu\n";
 }
 
@@ -596,6 +602,27 @@ int compiler_main(int argc, char** argv) {
             }
         } else if (arg == "--test") {
             opts.runSelfTest = true;
+        } else if (arg == "--list-targets") {
+            // Backends register themselves; the driver just asks the registry.
+            auto& reg = bt::target::BackendRegistry::instance();
+            std::cout << "Registered backends:\n";
+            if (reg.empty()) {
+                std::cout << "  (none)\n";
+            } else {
+                for (auto* b : reg.all()) {
+                    std::cout << "  " << b->summary() << "\n";
+                    const auto& t = b->target();
+                    std::cout << "    matches: ";
+                    for (const auto& m : b->matches()) std::cout << m << " ";
+                    std::cout << "\n    native layouts: ";
+                    for (auto l : t.native_layouts)
+                        std::cout << bt::target::layout_name(l) << " ";
+                    std::cout << "\n    scalar multiply: "
+                              << (t.has_scalar_mul ? "yes" : "no (lane-wise only)")
+                              << "\n";
+                }
+            }
+            return 0;
         } else if (arg == "-g" || arg == "--debug") {
             opts.emitDebug = true;
         } else if (arg == "--emit-llvm-bc") {
@@ -970,30 +997,37 @@ int compiler_main(int argc, char** argv) {
 
         ir::Lowering lowering;
         ir::Program program = lowering.lower(*prog);
-        auto result = bt::target::xbt::lower_program_to_assembly(program);
 
-        if (!result.complete()) {
+        // Ask the registry, not a hardcoded switch.
+        auto* backend = bt::target::BackendRegistry::instance().find("xbt");
+        if (!backend) {
+            std::cerr << "Error: the Xbt backend is not registered\n";
+            return 1;
+        }
+        auto result = backend->lower(program);
+
+        if (!result.unsupported.empty()) {
             // Refuse to emit a partially-lowered program silently: name what
             // could not be lowered so the gap is visible rather than hidden.
             std::cerr << "Error: Xbt instruction selection incomplete for "
-                      << result.unlowered.size() << " function(s):\n";
-            for (const auto& u : result.unlowered) std::cerr << "  " << u << "\n";
+                      << result.unsupported.size() << " function(s):\n";
+            for (const auto& u : result.unsupported) std::cerr << "  " << u << "\n";
             return 1;
         }
 
         if (opts.outputFile.empty()) {
-            std::cout << result.assembly;
+            std::cout << result.output;
         } else {
             std::ofstream o(opts.outputFile);
             if (!o.is_open()) {
                 std::cerr << "Error: Could not write output: " << opts.outputFile << "\n";
                 return 1;
             }
-            o << result.assembly;
+            o << result.output;
             o.close();
             std::cout << "[Target Codegen] Emitted Xbt assembly: " << opts.outputFile
-                      << " (" << result.instructions << " instructions, "
-                      << result.functions << " function(s))\n";
+                      << " (" << program.functions.size() << " function(s), target "
+                      << backend->target().name << ")\n";
         }
         return 0;
     }

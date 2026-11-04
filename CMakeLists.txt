@@ -304,6 +304,10 @@ if(BT_BUILD_TESTS)
     add_executable(unit_xbt_selector test/Unit/test_xbt_selector.cpp)
     target_include_directories(unit_xbt_selector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # Retargeting seam: target descriptions + backend registry.
+    add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
+    target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
     # Regression coverage for the 2026-11-02 deep audit. The audit found that
     # allocator sizes wrapped, pool exceptions escaped, and numerical edge cases
     # returned NaN/aborted; these targets keep those repairs from regressing.
@@ -337,6 +341,7 @@ if(BT_BUILD_TESTS)
     add_test(NAME Layer1_Unit_XBT_HW COMMAND unit_xbt_hw)
     add_test(NAME Layer1_Unit_XBT_Conformance COMMAND unit_xbt_conformance)
     add_test(NAME Layer1_Unit_XBT_Selector COMMAND unit_xbt_selector)
+    add_test(NAME Layer1_Unit_Backend_Registry COMMAND unit_backend_registry)
     add_test(NAME Layer1_Unit_Audit_Regressions COMMAND unit_audit_regressions)
 
     # CTest Registration: Layers 2-7
