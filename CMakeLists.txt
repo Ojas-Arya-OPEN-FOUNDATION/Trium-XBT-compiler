@@ -508,7 +508,8 @@ if(BT_BUILD_TESTS)
             unit_c_abi_ffi unit_bigint_symplectic unit_xbt_hw unit_phase1
             unit_phase3 unit_universal unit_math_core unit_numeric_oracle unit_fp_foundation unit_ir_program unit_core_lowering
             unit_audit_regressions bt_hijack_fixture
-            all
+            unit_microkernel ternary_bench unit_kernel_contract
+            unit_xbt_conformance unit_xbt_selector unit_backend_registry
     )
 endif()
 

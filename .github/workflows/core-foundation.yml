@@ -42,13 +42,15 @@ jobs:
           cmake -S . -B build/ci -G Ninja -DBT_ENABLE_MLIR=OFF
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}
           -DBT_ENABLE_ASAN=${{ matrix.config.asan }}
-      - name: Build and test
+      - name: Build
+        run: cmake --build build/ci -v -j 2
+      - name: Test
         run: |
           set +e
-          cmake --build build/ci --target check-all -v -j 2
+          ctest --test-dir build/ci --output-on-failure
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
-            echo "### Check-All Failed (Status $STATUS)" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Tests Failed (Status $STATUS)" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             ctest --test-dir build/ci --rerun-failed --output-on-failure >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
