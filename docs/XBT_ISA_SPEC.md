@@ -93,7 +93,36 @@ The v2 extension closes exactly these three gaps and nothing more.
 | `0b110` | `0x00` | `xbt.btfa rd, rs1, rs2` | `rd = sum(rs1, rs2, rd)`; carry latched |
 | `0b110` | `0x01` | `xbt.mul rd, rs1, rs2` | `rd[i] = rs1[i] · rs2[i]` (**lane-wise**) |
 | `0b110` | `0x02` | `xbt.pack243 rd, rs1` | `x[rd]` = base-243 byte from `rs1[4:0]` |
+| `0b110` | `0x03` | `xbt.sign rd, rc` | `rd = sign(value(rc)) ∈ {−1, 0, +1}` |
+| `0b110` | `0x04` | `xbt.cmovz rd, rc, ra` | `if sign(rc) == 0: rd = ra` |
+| `0b110` | `0x05` | `xbt.cmovp rd, rc, ra` | `if sign(rc) > 0: rd = ra` |
+| `0b110` | `0x06` | `xbt.cmovn rd, rc, ra` | `if sign(rc) < 0: rd = ra` |
 | `0b111` | — | `xbt.li5 rd, byte, chunk` | `rd = (byte − 121) · 3^(5·chunk)` |
+
+#### 3.x SIGN and the conditional moves
+
+`SIGN` is a priority encoder over the trit word: `rd` receives the **most
+significant non-zero trit** of `rc`, or zero if `rc` is zero.
+
+Correctness rests on the balanced-ternary dominance lemma — the magnitude of
+any block of lower trits is strictly less than the next trit's weight:
+
+    Σ_{i<j} 3^i = (3^j − 1) / 2 < 3^j
+
+so no combination of trits below `j` can change the sign established by trit
+`j`. Verified exhaustively for every trit word up to 10 trits and symbolically
+in Z3 at the full 64-trit width.
+
+The three conditional moves test the **sign** of `rc` (not its value) and leave
+`rd` untouched when the test fails. Together with `SIGN` they make every
+comparison and every three-way select branch-free.
+
+> **Note on `CMOV` and eager evaluation.** The core `SignSelect` node carries
+> three *thunks* and the interpreter evaluates exactly one of them. A
+> conditional-move lowering necessarily evaluates all three arms. The selector
+> therefore only applies the cmov rule when every arm is provably
+> **pure** (`ir::verify(...) == ir::Effect::Pure`); a `SignSelect` with an
+> impure arm is refused rather than miscompiled.
 
 ### 4.1 LI5 immediate field
 
@@ -152,7 +181,38 @@ IR to encoded custom-0 instructions. Supported:
 | `Negate` | `neg` |
 | `Mul` (both operands single-trit) | `mul` |
 | `Mul` (otherwise) | **refused** |
-| everything else (float, comparison, control flow) | **refused** |
+| `IntCast` (integral) | move (value-preserving) |
+| `Equal`, `NotEqual`, `Less`, `Greater`, `LessEqual`, `GreaterEqual` | `sign(a−b)` + one cmov per true sign |
+| `Spaceship` (`<=>`) | `sign(a−b)` |
+| `SignSelect` (all arms pure) | `cmovz` / `cmovn` over `sign(cond)` |
+| `SignSelect` (any arm impure) | **refused** |
+| float, control flow | **refused** |
+
+Every relational op is lowered with one uniform shape, which is why the six
+rules are generated from a single `comparison_rule` factory rather than
+written out six times:
+
+    d  <- (-1)                       // the FALSE value, always
+    tv <- (+1)                       // the TRUE value, always
+    cmov<mode> d, sign(a-b), tv      // one per sign where the predicate is TRUE
+
+Seeding with the *false* value and moving in the *true* value is essential.
+An earlier revision seeded with whichever value was in the majority and moved
+in the other; that is only correct when the seed happens to be the false
+value, and it silently inverted `!=`. The uniform shape costs at most one
+extra `cmov` and removes the trap.
+
+| Relational op | Signs where the predicate is true |
+|---|---|
+| `>` | positive |
+| `==` | zero |
+| `<` | negative |
+| `!=` | positive, negative |
+| `>=` | positive, zero |
+| `<=` | negative, zero |
+
+Recall that core comparisons yield **1 when true and −1 when false** (never
+zero), while `<=>` yields −1, 0 or +1.
 
 Incomplete lowering is reported by name, never emitted silently.
 

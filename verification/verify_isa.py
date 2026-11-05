@@ -2,7 +2,7 @@
 """Verify the RISC-V Xbt instruction set against balanced-ternary mathematics."""
 import argparse, sys, time
 from .xbt_isa import (build_isa, verify_pack_unpack_roundtrip,
-                      verify_li5)
+                      verify_li5, verify_sign, verify_cmov)
 from .rocq_bridge import check_rocq_matches_rtl
 from .engine import (verify_exhaustive, verify_symbolic,
                       VerificationReport, ProofResult)
@@ -71,6 +71,34 @@ def main() -> int:
     report.results.append(ProofResult(
         "LI5", "roundtrip", not lerr,
         "exhaustive over 256 bytes x 8 chunks" if not lerr else f"{len(lerr)} errors: {lerr[0]}"))
+
+    # SIGN: exhaustive on narrow widths + symbolic on the full width.
+    if not args.quiet:
+        print("\n  SIGN sign extraction (exhaustive <=10 trits + symbolic 64 trits)")
+    se = verify_sign(64, 10)
+    if not args.quiet:
+        for e in se[:5]:
+            print(f"    [FAIL] {e}")
+        if not se:
+            print("    [PASS] priority encoder agrees with sign(value) on every "
+                  "trit word up to 10 trits and symbolically at 64 trits")
+    report.results.append(ProofResult(
+        "SIGN", "mixed", not se,
+        "exhaustive + symbolic agree" if not se else f"{len(se)} errors: {se[0]}"))
+
+    # CMOV: the three conditional moves the 3-way select is built from.
+    if not args.quiet:
+        print("\n  CMOV conditional moves (exhaustive over sign of condition)")
+    ce = verify_cmov(64)
+    if not args.quiet:
+        for e in ce[:5]:
+            print(f"    [FAIL] {e}")
+        if not ce:
+            print("    [PASS] cmovz / cmovp / cmovn take the source exactly "
+                  "when the condition sign matches")
+    report.results.append(ProofResult(
+        "CMOV", "exhaustive", not ce,
+        "all three modes correct" if not ce else f"{len(ce)} errors: {ce[0]}"))
 
     # Rocq <-> RTL: the gate networks the theorems are stated about must be
     # the ones the RTL actually implements.
