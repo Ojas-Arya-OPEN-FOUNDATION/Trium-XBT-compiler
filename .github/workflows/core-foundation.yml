@@ -93,7 +93,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install cmake ninja
+      - run: python -m pip install cmake ninja z3-solver
       - name: Vulkan headers
         run: |
           curl -sSL -o vkh.tar.gz \
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install cmake ninja
+      - run: python -m pip install cmake ninja z3-solver
       - name: Configure with the MLIR dialect enabled
         run: |
           cmake -S . -B build/mlir -G Ninja -DBT_ENABLE_MLIR=ON \
