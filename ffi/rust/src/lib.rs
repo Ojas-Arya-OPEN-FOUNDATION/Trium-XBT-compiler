@@ -445,7 +445,7 @@ mod checked_tests {
 /// In-process compiler SDK (qualified separately from legacy runtime bindings).
 pub mod sdk;
 
-pub use sdk::{gemm_ternary, Context, Module, Scalar, Backend};
+pub use sdk::{encode_gemm, gemm_ternary, pack_matrix_a, pack_matrix_b, Context, Module, Scalar, Backend};
 pub use sdk::Error as SdkError;
 
 /// Exact ternary GEMM at the crate root: C[m,n] = A[m,k] * B[k,n].

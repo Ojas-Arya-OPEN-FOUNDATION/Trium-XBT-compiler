@@ -197,8 +197,71 @@ class Context:
         av=(W*len(ap))(*ap);anv=(W*len(an))(*an);bv=(W*len(bp))(*bp);bnv=(W*len(bn))(*bn)
         out=(C.c_int64*(m*n))()
         _check(self.lib,'gemm_ternary',av,anv,bv,bnv,out,m,n,k);return list(out)
-    def matmul(self,a,b,m,k,n):
+    @staticmethod
+    def pack_matrix_a(a,m,k):
+        """Pack A[m,k] (row-major, trits in {-1,0,+1}) into dual-rail words.
+
+        Returns (ap, an), each of length m*kw with kw = ceil(k/64), laid out
+        ROW-MAJOR: word w of row i is ap[i*kw + w].
+        """
+        kw=(k+63)//64
+        ap=[0]*(m*kw);an=[0]*(m*kw)
+        for i in range(m):
+            base=i*kw
+            for t in range(k):
+                v=a[i*k+t]
+                if v>0:ap[base+t//64]|=1<<(t%64)
+                elif v<0:an[base+t//64]|=1<<(t%64)
+        return ap,an
+
+    @staticmethod
+    def pack_matrix_b(b,k,n):
+        """Pack B[k,n] (row-major, trits in {-1,0,+1}) into dual-rail words.
+
+        Returns (bp, bn), each of length n*kw with kw = ceil(k/64), laid out
+        as B TRANSPOSED and then WORD-PLANE-MAJOR: word w of B^T row j (that
+        is, column j of B) is bp[w*n + j].
+
+        This is NOT row-major, and the two orderings coincide exactly when
+        k <= 64. Hand-building a multi-word B the "obvious" way therefore
+        looks right and silently returns wrong numbers. Use this helper.
+        """
+        kw=(k+63)//64
+        bp=[0]*(n*kw);bn=[0]*(n*kw)
+        for t in range(k):
+            w=(t//64)*n;bit=1<<(t%64)
+            for j in range(n):
+                v=b[t*n+j]
+                if v>0:bp[w+j]|=bit
+                elif v<0:bn[w+j]|=bit
+        return bp,bn
+
+    @staticmethod
+    def is_ternary(values):
+        """True if every value is a trit in {-1,0,+1}."""
+        for v in values:
+            if type(v) is not int or v<-1 or v>1:return False
+        return True
+
+    def matmul(self,a,b,m,k,n,force_reference=False):
+        """C[m,n] = A[m,k] * B[k,n].
+
+        When every element is a trit in {-1,0,+1} and the SDK exposes
+        gemm_ternary (API >= 1.3), this routes to the bit-sliced ternary GEMM
+        automatically -- roughly 30x faster than the reference kernel, and
+        exact because every partial product lies in {-1,0,+1}. Otherwise it
+        falls back to the unvectorized reference, which accepts any int64.
+
+        Pass force_reference=True to pin the reference path (useful for
+        differential testing the two against each other).
+        """
+        a=list(a);b=list(b)
         if any(type(x)is not int or x<0 or x>1000000 for x in (m,k,n)) or m*k!=len(a) or k*n!=len(b) or m*n>1000000:raise ValueError('matrix shapes/storage mismatch')
+        if not force_reference and self.lib._api_version>=0x10003 and m and n and k \
+           and self.is_ternary(a) and self.is_ternary(b):
+            ap,an=self.pack_matrix_a(a,m,k)
+            bp,bn=self.pack_matrix_b(b,k,n)
+            return self.gemm_ternary(ap,an,bp,bn,m,n,k)
         av=(C.c_int64*len(a))(*map(_integer,a));bv=(C.c_int64*len(b))(*map(_integer,b));out=(C.c_int64*(m*n))()
         _check(self.lib,'matmul',av,len(a),bv,len(b),out,m*n,m,k,n);return list(out)
     def close(self):

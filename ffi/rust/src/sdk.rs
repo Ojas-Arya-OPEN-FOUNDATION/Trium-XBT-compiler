@@ -85,6 +85,57 @@ pub fn encode_gemm(a: &[&[i8]], bt: &[&[i8]], k: usize)
     Ok((ap, an, bp, bn))
 }
 
+/// Pack A[m,k] -- `m` rows of `k` trits, row-major -- into dual-rail words.
+///
+/// Word w of row i is `ap[i*kw + w]`, with kw = ceil(k/64).
+pub fn pack_matrix_a(a:&[&[i8]])->Result<(Vec<u64>,Vec<u64>),Error>{
+    if a.is_empty(){return Err(Error{code:1,message:"a must have at least one row".into()});}
+    let k=a[0].len();
+    if k==0{return Err(Error{code:1,message:"k must be positive".into()});}
+    for row in a.iter(){if row.len()!=k{return Err(Error{code:1,message:"every row of a must have exactly k trits".into()});}}
+    let kw=(k+63)/64;
+    let mut ap=vec![0u64;a.len()*kw];
+    let mut an=vec![0u64;a.len()*kw];
+    for (i,row) in a.iter().enumerate(){
+        for t in 0..k{
+            match row[t]{
+                1  => ap[i*kw + t/64] |= 1u64 << (t%64),
+                -1 => an[i*kw + t/64] |= 1u64 << (t%64),
+                _  => {}
+            }
+        }
+    }
+    Ok((ap,an))
+}
+
+/// Pack B[k,n] -- `k` rows of `n` trits, row-major -- into dual-rail words.
+///
+/// The result is B TRANSPOSED and then WORD-PLANE-MAJOR: word w of B^T row j
+/// (that is, column j of B) is `bp[w*n + j]`. This is NOT row-major, and the
+/// two orderings coincide only when k <= 64 -- so a hand-packed multi-word B
+/// that looks right will silently return wrong values. Prefer this helper, or
+/// `encode_gemm` to pack both operands at once.
+pub fn pack_matrix_b(b:&[&[i8]])->Result<(Vec<u64>,Vec<u64>),Error>{
+    if b.is_empty(){return Err(Error{code:1,message:"b must have at least one row".into()});}
+    let n=b[0].len();
+    let k=b.len();
+    if n==0||k==0{return Err(Error{code:1,message:"b dimensions must be positive".into()});}
+    for row in b.iter(){if row.len()!=n{return Err(Error{code:1,message:"every row of b must have exactly n trits".into()});}}
+    let kw=(k+63)/64;
+    let mut bp=vec![0u64;n*kw];
+    let mut bn=vec![0u64;n*kw];
+    for (t,row) in b.iter().enumerate(){
+        for j in 0..n{
+            match row[j]{
+                1  => bp[(t/64)*n + j] |= 1u64 << (t%64),
+                -1 => bn[(t/64)*n + j] |= 1u64 << (t%64),
+                _  => {}
+            }
+        }
+    }
+    Ok((bp,bn))
+}
+
 /// Exact ternary GEMM: C[m,n] = A[m,k] * B[k,n].
 ///
 /// `ap`/`an` are A's P/N rail words: m rows of ceil(k/64) words, ROW-MAJOR,
@@ -211,5 +262,53 @@ impl Drop for Module {fn drop(&mut self){unsafe{bt_sdk_release(self.handle,std::
    let expect:i64=(0..k).map(|t| a[i][t] as i64 * bt[j][t] as i64).sum();
    assert_eq!(c[i*n+j],expect,"C[{}][{}]",i,j);
   }}
+ }
+
+ // pack_matrix_a / pack_matrix_b must agree with encode_gemm, and must be
+ // correct at k > 64 -- the regime where B's word-plane-major ordering stops
+ // coinciding with row-major. B is given ROW-MAJOR here (k rows of n), which
+ // is the shape a caller actually holds; encode_gemm wants B^T.
+ #[test]fn pack_helpers_match_encode_gemm(){
+  for &k in &[1usize,7,63,64,65,70,128,130,200] {
+   let (m,n)=(3usize,4usize);
+   let mut seed=k as u64*7919+13;
+   let mut next=||{seed=seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    ((seed>>33)%3) as i8 - 1};
+   let a:Vec<Vec<i8>>=(0..m).map(|_| (0..k).map(|_| next()).collect()).collect();
+   // b is B row-major: k rows of n.
+   let b:Vec<Vec<i8>>=(0..k).map(|_| (0..n).map(|_| next()).collect()).collect();
+   let aref:Vec<&[i8]>=a.iter().map(|r| &r[..]).collect();
+   let bref:Vec<&[i8]>=b.iter().map(|r| &r[..]).collect();
+
+   let (ap,an)=pack_matrix_a(&aref).unwrap();
+   let (bp,bn)=pack_matrix_b(&bref).unwrap();
+
+   // Cross-check against encode_gemm, which needs B^T.
+   let btransposed:Vec<Vec<i8>>=(0..n).map(|j| (0..k).map(|t| b[t][j]).collect()).collect();
+   let btref:Vec<&[i8]>=btransposed.iter().map(|r| &r[..]).collect();
+   let (eap,ean,ebp,ebn)=encode_gemm(&aref,&btref,k).unwrap();
+   assert_eq!(ap,eap,"A positive rail at k={}",k);
+   assert_eq!(an,ean,"A negative rail at k={}",k);
+   assert_eq!(bp,ebp,"B positive rail at k={}",k);
+   assert_eq!(bn,ebn,"B negative rail at k={}",k);
+
+   // And against a naive O(n^3) reference over the row-major B.
+   let c=gemm_ternary(&ap,&an,&bp,&bn,m as u64,n as u64,k as u64).unwrap();
+   for i in 0..m { for j in 0..n {
+    let expect:i64=(0..k).map(|t| a[i][t] as i64 * b[t][j] as i64).sum();
+    assert_eq!(c[i*n+j],expect,"C[{}][{}] at k={}",i,j,k);
+   }}
+  }
+ }
+
+ #[test]fn pack_helpers_reject_ragged_input(){
+  let a:Vec<Vec<i8>>=vec![vec![1,-1],vec![1]];
+  let aref:Vec<&[i8]>=a.iter().map(|r| &r[..]).collect();
+  assert!(pack_matrix_a(&aref).is_err());
+  let b:Vec<Vec<i8>>=vec![vec![1,0],vec![1]];
+  let bref:Vec<&[i8]>=b.iter().map(|r| &r[..]).collect();
+  assert!(pack_matrix_b(&bref).is_err());
+  assert!(pack_matrix_a(&[]).is_err());
+  assert!(pack_matrix_b(&[]).is_err());
  }
 }
