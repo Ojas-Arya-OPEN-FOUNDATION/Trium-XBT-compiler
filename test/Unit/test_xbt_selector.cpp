@@ -88,7 +88,7 @@ int64_t word_value(const TritWord64& w) {
         bool nn = (w.N >> i) & 1ULL;
         if (pp) v += p;
         else if (nn) v -= p;
-        p *= 3;
+        if (i < 39) p *= 3;
     }
     return v;
 }
