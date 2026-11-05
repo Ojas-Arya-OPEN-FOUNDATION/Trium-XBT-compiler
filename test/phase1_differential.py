@@ -156,7 +156,13 @@ with tempfile.TemporaryDirectory(prefix='bt-differential-') as temp:
     strange = str(work/f'out$(touch {marker}).s')
     run([compiler,str(source),'--target=x86_64','-S','-o',strange])
     assert not marker.exists()
-    for options in [['--target=riscv64-xbt','-S'],['--target=riscv64-xbt','-c'],['--emit-metal'],['--emit-vulkan'],['--not-a-real-option']]:
+
+    # riscv64-xbt is now a fully implemented target: it succeeds and emits Xbt instructions.
+    r_xbt = run([compiler, str(source), '--target=riscv64-xbt', '-S'])
+    assert r_xbt.returncode == 0, (r_xbt.stderr, r_xbt.stdout)
+    assert 'target riscv64-xbt' in r_xbt.stdout or 'xbt.' in r_xbt.stdout
+
+    for options in [['--emit-metal'],['--emit-vulkan'],['--not-a-real-option']]:
         result = run([compiler,str(source),*options])
         assert result.returncode != 0, options
 print(f'PASS: {len(expected)} native/AST/core-IR/Python oracle values, negative cases, overflow propagation and driver safety')

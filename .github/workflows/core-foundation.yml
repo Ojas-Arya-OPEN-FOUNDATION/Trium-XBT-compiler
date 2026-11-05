@@ -50,14 +50,16 @@ jobs:
           ctest --test-dir build/ci --output-on-failure
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
+            echo "::error title=CTest Failure::CTest failed with exit code $STATUS"
             echo "### Tests Failed (Status $STATUS)" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            ctest --test-dir build/ci --rerun-failed --output-on-failure >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            ctest --test-dir build/ci --rerun-failed --output-on-failure | tee -a "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             if [ -f build/ci/Testing/Temporary/LastTest.log ]; then
+              echo "=== LastTest.log ==="
               echo "### Last Test Log" >> "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"
-              cat build/ci/Testing/Temporary/LastTest.log | grep -A 30 -B 5 -E "FAIL|FAILED|Error|error" >> "$GITHUB_STEP_SUMMARY" 2>&1 || tail -n 100 build/ci/Testing/Temporary/LastTest.log >> "$GITHUB_STEP_SUMMARY" 2>&1
+              cat build/ci/Testing/Temporary/LastTest.log | grep -A 30 -B 5 -E "FAIL|FAILED|Error|error" | head -n 100 | tee -a "$GITHUB_STEP_SUMMARY" || tail -n 100 build/ci/Testing/Temporary/LastTest.log | tee -a "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"
             fi
             exit $STATUS
