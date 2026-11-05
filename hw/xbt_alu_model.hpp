@@ -50,7 +50,13 @@ enum class XbtFunct3 : uint8_t {
 enum class XbtGroup2 : uint8_t {
     BTFA    = 0x00, // rd = sum(rs1, rs2, rd); carry -> last_carry
     MUL     = 0x01, // rd[i] = rs1[i] * rs2[i]   (per-lane, AOI22 product network)
-    PACK243 = 0x02  // x[rd] = base-243 byte built from rs1[4:0]
+    PACK243 = 0x02, // x[rd] = base-243 byte built from rs1[4:0]
+    // ---- comparison / selection (see docs/XBT_ISA_SPEC.md) ----
+    SIGN    = 0x03, // rd = sign(rs1) in {-1,0,+1}: the most significant
+                    //      NON-ZERO trit, 0 for an all-zero word.
+    CMOVZ   = 0x04, // if sign(rs1) == 0 then rd = rs2   (conditional move)
+    CMOVP   = 0x05, // if sign(rs1) >  0 then rd = rs2
+    CMOVN   = 0x06  // if sign(rs1) <  0 then rd = rs2
 };
 
 // Base-243: 5 trits per byte, digit d = trit + 1, so byte = value + 121.
@@ -280,6 +286,32 @@ inline int64_t rtl_aoi22_planar_dot64(const TritWord64& a, const TritWord64& b,
 }
 
 /**
+ * @brief Sign of a balanced ternary word: -1, 0 or +1.
+ *
+ * The sign is the value of the most significant NON-ZERO trit -- the lower
+ * trits can never outweigh the leading one, since
+ * sum_{i<j} 3**i = (3**j - 1)/2 < 3**j.
+ *
+ * This is the primitive every comparison and the 3-way select are built
+ * from; without it the ISA cannot compare at all. Verified exhaustively for
+ * narrow widths and symbolically at 64 trits in verification/verify_isa.py.
+ */
+inline int8_t ternary_word_sign(const TritWord64& w) noexcept {
+    for (int i = 63; i >= 0; --i) {
+        if ((w.P >> i) & 1ULL) return 1;
+        if ((w.N >> i) & 1ULL) return -1;
+    }
+    return 0;
+}
+
+/** @brief Encodes a small integer in {-1,0,+1} as a dual-rail word. */
+inline TritWord64 ternary_word_from_sign(int8_t s) noexcept {
+    return (s > 0) ? TritWord64(1ULL, 0ULL)
+         : (s < 0) ? TritWord64(0ULL, 1ULL)
+                   : TritWord64(0ULL, 0ULL);
+}
+
+/**
  * @brief Shifts a dual-rail trit word left by whole trits (multiply by 3**n).
  *
  * Trit i moves to trit i+n; the low n trits become zero. This is the shift
@@ -488,6 +520,25 @@ public:
                         TritWord64 p((rs1_t.P & rs2_t.P) | (rs1_t.N & rs2_t.N),
                                      (rs1_t.P & rs2_t.N) | (rs1_t.N & rs2_t.P));
                         treg[d.rd] = p;
+                        break;
+                    }
+                    case XbtGroup2::SIGN: {
+                        // rd = sign(rs1), in {-1, 0, +1}.
+                        treg[d.rd] = ternary_word_from_sign(
+                            ternary_word_sign(rs1_t));
+                        break;
+                    }
+                    case XbtGroup2::CMOVZ:
+                    case XbtGroup2::CMOVP:
+                    case XbtGroup2::CMOVN: {
+                        // Conditional move on the sign of rs1. rd keeps its
+                        // old value when the test fails, so the three modes
+                        // compose into a 3-way select with no branch.
+                        const int8_t s = ternary_word_sign(rs1_t);
+                        const bool take =
+                            (d.funct7 == static_cast<uint8_t>(XbtGroup2::CMOVZ)) ? (s == 0) :
+                            (d.funct7 == static_cast<uint8_t>(XbtGroup2::CMOVP)) ? (s >  0) : (s <  0);
+                        if (take) treg[d.rd] = rs2_t;
                         break;
                     }
                     case XbtGroup2::PACK243: {

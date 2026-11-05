@@ -114,3 +114,100 @@ inline void gemm_ternary(const std::vector<uint64_t>& Ap,
 /** True if the loaded library exports the fast GEMM (API >= 1.3). An older
  *  libtrium_sdk without it must fail clearly, not silently fall back. */
 inline bool has_gemm_ternary() { return bt_sdk_api_version() >= 0x00010003; }
+
+// ---------------------------------------------------------------------------
+// Operand packing and ternary-aware matmul
+// ---------------------------------------------------------------------------
+//
+// `bt_sdk_matmul` is the unvectorized O(n^3) reference: it accepts any int64
+// and performs __int128 overflow checks, which makes it the honest contract to
+// fall back to. `gemm_ternary` is ~30x faster but only understands trits, and
+// its two operands are laid out *differently* from each other.
+//
+// Getting B's layout wrong is the trap documented in test/SDK/gemm_layout.cpp:
+// A is row-major, B is transposed and then WORD-PLANE-MAJOR. At k <= 64 both
+// orderings coincide, so a wrongly-packed multi-word B returns status 0 and
+// silently wrong numbers. These helpers exist so no caller has to know that.
+
+struct DualRail {
+    std::vector<uint64_t> p;   ///< positive-rail words
+    std::vector<uint64_t> n;   ///< negative-rail words
+};
+
+/** Pack A[m,k], row-major, into dual-rail words. Word w of row i is p[i*kw+w]. */
+inline DualRail pack_matrix_a(const int64_t* a, uint64_t m, uint64_t k) {
+    const uint64_t kw = (k + 63) / 64;
+    DualRail out{std::vector<uint64_t>(size_t(m) * kw, 0),
+                 std::vector<uint64_t>(size_t(m) * kw, 0)};
+    for (uint64_t i = 0; i < m; ++i)
+        for (uint64_t t = 0; t < k; ++t) {
+            const int64_t v = a[size_t(i) * k + t];
+            const uint64_t w = size_t(i) * kw + t / 64;
+            if (v > 0)      out.p[w] |= (uint64_t{1} << (t % 64));
+            else if (v < 0) out.n[w] |= (uint64_t{1} << (t % 64));
+        }
+    return out;
+}
+
+/** Pack B[k,n], row-major, into dual-rail words.
+ *
+ *  The result is B TRANSPOSED and then WORD-PLANE-MAJOR: word w of B^T row j
+ *  -- that is, column j of B -- is p[w*n + j]. This is NOT row-major, and the
+ *  difference is invisible at k <= 64. Use this helper rather than hand-
+ *  packing; see test/SDK/gemm_layout.cpp for the case that catches it.
+ */
+inline DualRail pack_matrix_b(const int64_t* b, uint64_t k, uint64_t n) {
+    const uint64_t kw = (k + 63) / 64;
+    DualRail out{std::vector<uint64_t>(size_t(n) * kw, 0),
+                 std::vector<uint64_t>(size_t(n) * kw, 0)};
+    for (uint64_t t = 0; t < k; ++t)
+        for (uint64_t j = 0; j < n; ++j) {
+            const int64_t v = b[size_t(t) * n + j];
+            const uint64_t idx = size_t(t / 64) * n + j;
+            if (v > 0)      out.p[idx] |= (uint64_t{1} << (t % 64));
+            else if (v < 0) out.n[idx] |= (uint64_t{1} << (t % 64));
+        }
+    return out;
+}
+
+/** True if every element is a trit in {-1,0,+1}. */
+inline bool is_ternary(const int64_t* v, uint64_t count) {
+    for (uint64_t i = 0; i < count; ++i)
+        if (v[i] < -1 || v[i] > 1) return false;
+    return true;
+}
+
+/** True if the GEMM fast path applies to this pair of operands. */
+inline bool can_use_ternary_gemm(const int64_t* a, const int64_t* b,
+                                 uint64_t m, uint64_t n, uint64_t k) {
+    return m && n && k && has_gemm_ternary() &&
+           is_ternary(a, size_t(m) * k) && is_ternary(b, size_t(k) * n);
+}
+
+/** C[m,n] = A[m,k] * B[k,n], routing to the fast ternary GEMM when it can.
+ *
+ *  When every element is a trit and the library exports the fast kernel, this
+ *  packs the operands correctly and calls gemm_ternary: roughly 30x faster
+ *  than the reference and still exact, because every partial product lies in
+ *  {-1,0,+1} so no rounding occurs at any K that fits in int64. Otherwise it
+ *  falls back to bt_sdk_matmul, which accepts arbitrary int64.
+ *
+ *  Pass force_reference=true to pin the reference path; that is what the
+ *  differential tests use to check the two against each other.
+ */
+inline void matmul(const int64_t* a, uint64_t na,
+                   const int64_t* b, uint64_t nb,
+                   std::vector<int64_t>& C,
+                   uint64_t m, uint64_t n, uint64_t k,
+                   bool force_reference = false) {
+    if (!force_reference && can_use_ternary_gemm(a, b, m, n, k)) {
+        const DualRail A = pack_matrix_a(a, m, k);
+        const DualRail B = pack_matrix_b(b, k, n);
+        gemm_ternary(A.p, A.n, B.p, B.n, C, m, n, k);
+        return;
+    }
+    C.assign(size_t(m) * n, 0);
+    char err[4096];
+    bt::sdk::check(bt_sdk_matmul(a, na, b, nb, C.data(), C.size(),
+                                 m, k, n, err, sizeof err), err);
+}

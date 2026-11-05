@@ -433,20 +433,25 @@ def _verify_ksadd(isa, op, timeout_ms: int, t0: float) -> ProofResult:
         # sum digit of lane i
         s_digit = z3.If(t >= 2, t - 3, z3.If(t <= -2, t + 3, t))
 
-    conj = []
+    failed_lane = None
     for i in range(W):
         a = _trit_of(_bit(ap, i), _bit(an, i))
         b = _trit_of(_bit(bp, i), _bit(bn, i))
         t = a + b + c[i]
         s_digit = z3.If(t >= 2, t - 3, z3.If(t <= -2, t + 3, t))
         gs = _trit_of(_bit(sp, i), _bit(sn, i))
-        conj.append(gs == s_digit)
-    # carry out
-    P = 3 ** W
-    conj.append(z3.IntVal(P) * cout == z3.IntVal(P) * c[W])
+        r, _ = _prove([valid], gs == s_digit, min(timeout_ms, 5000))
+        if r != "proved":
+            failed_lane = (i, r)
+            break
 
-    res, model = _prove([valid], z3.And(*conj), timeout_ms)
+    if failed_lane is None:
+        r, _ = _prove([valid], cout == c[W], min(timeout_ms, 5000))
+        if r != "proved":
+            failed_lane = ("cout", r)
+
+    res = "proved" if failed_lane is None else failed_lane[1]
     detail = ("Kogge-Stone carry network matches ripple-carry reference on all "
-              f"{W} lanes" if res == "proved" else f"solver: {res}")
+              f"{W} lanes" if res == "proved" else f"lane {failed_lane[0]}: solver {failed_lane[1]}")
     return ProofResult(op.name, "symbolic", res == "proved", detail,
                        time.time() - t0)

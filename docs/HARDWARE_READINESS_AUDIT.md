@@ -439,6 +439,31 @@ introduce a constant — which is precisely why the halves had stayed apart.
 passes fire on output that came from `.bt` source. 88 bridge checks plus the
 end-to-end pipeline test.
 
+### Closed since (GEMM operand layout and the matmul fast path)
+
+Two traps in the ternary GEMM API, both of which fail *silently*, which is
+what made them worth fixing properly.
+
+**`matmul` was always the slow path.** `Context.matmul` is the unvectorized
+O(n³) reference with `__int128` overflow checks (~23.6 ms); `gemm_ternary` is
+the bit-sliced kernel (~0.72 ms). Nothing connected them, so calling the
+obvious entry point cost ~30x more than necessary. `matmul` now inspects its
+input and routes to `gemm_ternary` when every element is a trit and the
+library exports it; otherwise it falls back to the reference, which accepts
+any int64. `force_reference=True` pins the old path for differential testing.
+
+**A and B are not laid out the same way, and the difference is invisible.**
+A is row-major; B is transposed and then word-plane-major (`bp[w*n + j]`). At
+k ≤ 64 the two orderings coincide, so a hand-packed multi-word B returns
+status 0 and *wrong numbers*. Only shapes with k > 64 **and** n > 1 can catch
+it. `pack_matrix_a` / `pack_matrix_b` now exist in Python, C++
+(`bt::sdk`) and Rust (`trium::pack_matrix_*`, re-exported alongside the
+previously-unexported `encode_gemm`), so no caller has to know the rule.
+
+Both are pinned by tests that include a negative control: the test asserts the
+naive row-major B *is* detected as wrong at k > 64. Without that, the cases
+would be vacuous.
+
 ### Still open
 
 - **Scalar multiply.** `xbt.mul` is lane-wise. The selector refuses general

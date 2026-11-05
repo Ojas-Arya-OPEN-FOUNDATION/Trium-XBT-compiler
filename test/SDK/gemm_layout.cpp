@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Ternary/SDK/sdk.h"
+#include "Ternary/SDK/SDK.hpp"
 
 namespace {
 
@@ -162,6 +163,62 @@ int main() {
         check(bt_sdk_gemm_ternary(ap.data(), an.data(), bp.data(), bn.data(),
                                   C.data(), 2, 2, 2, err, sizeof err) == 0,
               "well-formed 2x2x2 should succeed");
+    }
+
+    // ---- SDK.hpp packing helpers and the ternary-aware matmul -------------
+    // The helpers must agree with the hand-rolled layout above, and the
+    // auto-routing matmul must agree with the plain reference.
+    std::printf("\n  SDK.hpp pack_matrix_a / pack_matrix_b / matmul\n");
+    for (const Case& c : cases) {
+        const int kw = KW(c.k);
+        std::mt19937 rng(static_cast<unsigned>(c.m * 31 + c.n * 131 + c.k * 7));
+        std::uniform_int_distribution<int> trit(-1, 1);
+
+        std::vector<int64_t> A(static_cast<size_t>(c.m) * c.k);
+        std::vector<int64_t> B(static_cast<size_t>(c.k) * c.n);
+        for (auto& v : A) v = trit(rng);
+        for (auto& v : B) v = trit(rng);
+
+        // Naive O(n^3) reference over int64.
+        std::vector<int64_t> want(static_cast<size_t>(c.m) * c.n, 0);
+        for (int i = 0; i < c.m; ++i)
+            for (int j = 0; j < c.n; ++j) {
+                int64_t s = 0;
+                for (int t = 0; t < c.k; ++t)
+                    s += A[size_t(i) * c.k + t] * B[size_t(t) * c.n + j];
+                want[size_t(i) * c.n + j] = s;
+            }
+
+        const auto Ar = pack_matrix_a(A.data(), c.m, c.k);
+        const auto Br = pack_matrix_b(B.data(), c.k, c.n);
+        check(Ar.p.size() == static_cast<size_t>(c.m) * kw, "pack A word count");
+        check(Br.p.size() == static_cast<size_t>(c.n) * kw, "pack B word count");
+
+        std::vector<int64_t> got, ref;
+        if (has_gemm_ternary()) {
+            gemm_ternary(Ar.p, Ar.n, Br.p, Br.n, got, c.m, c.n, c.k);
+            check(got == want, "pack helpers match the reference");
+            matmul(A.data(), A.size(), B.data(), B.size(), ref,
+                            c.m, c.n, c.k, /*force_reference=*/true);
+            check(ref == want, "reference matmul correct");
+            check(got == ref, "auto-routed matmul matches the reference");
+        } else {
+            matmul(A.data(), A.size(), B.data(), B.size(), got, c.m, c.n, c.k);
+            check(got == want, "matmul falls back correctly without the fast gemm");
+        }
+    }
+
+    // Non-ternary data must never take the ternary path.
+    {
+        std::vector<int64_t> A{2, 3, 4, 5}, B{6, 7, 8, 9};
+        check(!is_ternary(A.data(), A.size()), "is_ternary rejects 2");
+        std::vector<int64_t> T{-1, 0, 1, -1};
+        check(is_ternary(T.data(), T.size()), "is_ternary accepts trits");
+        std::vector<int64_t> C;
+        matmul(A.data(), A.size(), B.data(), B.size(), C, 2, 2, 2);
+        // [2 3; 4 5] * [6 7; 8 9] = [36 41; 64 73]
+        const std::vector<int64_t> expect{36, 41, 64, 73};
+        check(C == expect, "non-ternary matmul uses the reference and is correct");
     }
 
     if (failures) {

@@ -32,7 +32,6 @@ from typing import Callable, Iterable, Sequence
 # Trit level -- the mathematics
 # --------------------------------------------------------------------------
 
-WIDTH: int = 64
 TRITS: tuple[int, ...] = (-1, 0, 1)
 
 

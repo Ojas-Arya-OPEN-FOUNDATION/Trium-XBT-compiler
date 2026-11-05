@@ -386,7 +386,196 @@ def build_isa(width: int = WIDTH) -> VerifiedISA:
         exhaustive=False, symbolic=False,
     ))
 
+    # ---- SIGN (proposed, funct3=0b110 funct7=0x03) -----------------------
+    def sign_impl(ap, an):
+        """
+        Sign of a balanced ternary word: the value of the most significant
+        NON-ZERO trit. An all-zero word gives zero.
+
+        This is a priority encoder over the rails, most significant first --
+        the same structure as a count-leading-zeros circuit.
+        """
+        P, N = 0, 0     # result: only trit 0 can be set
+        for i in range(W - 1, -1, -1):
+            p = (ap >> i) & 1
+            n = (an >> i) & 1
+            if p or n:
+                if p:
+                    P = 1
+                else:
+                    N = 1
+                break
+        return {"word": (P, N)}
+
+    def sign_spec(trits):
+        v = sum(t * 3 ** i for i, t in enumerate(trits))
+        return {"sign": (v > 0) - (v < 0)}
+
+    isa.add(Operation(
+        name="SIGN", mnemonic="xbt.sign", funct3=0b110,
+        operands=[Operand("rs1", "trit_word", W), Operand("rd", "trit_word", W)],
+        spec=sign_spec, impl=sign_impl,
+        doc="PROPOSED (funct3=0b110, funct7=0x03). Sign of a ternary word, "
+            "in {-1,0,+1}. This is the primitive every comparison and the "
+            "3-way select are built from; without it the ISA cannot compare.",
+        exhaustive=False, symbolic=False,
+    ))
+
+    # ---- CMOV (proposed, funct3=0b110 funct7=0x04/0x05/0x06) -------------
+    # Three conditional moves on the sign of a condition word. Together they
+    # implement a 3-way select with no control flow.
+    isa.add(Operation(
+        name="CMOV", mnemonic="xbt.cmov", funct3=0b110,
+        operands=[Operand("rc", "trit_word", W), Operand("ra", "trit_word", W),
+                  Operand("rd", "trit_word", W)],
+        spec=None,
+        impl=_cmov_impl_for("z", W),
+        doc="PROPOSED (funct3=0b110, funct7=0x04/0x05/0x06). Conditional move "
+            "on the sign of a ternary condition: cmovz / cmovp / cmovn. "
+            "These three build a 3-way select without any branch.",
+        exhaustive=False, symbolic=False,
+    ))
+
     return isa
+
+
+def _sign_of(P, N, W):
+    """Sign of a concrete dual-rail word, as -1 / 0 / +1."""
+    for i in range(W - 1, -1, -1):
+        p = (P >> i) & 1
+        n = (N >> i) & 1
+        if p or n:
+            return 1 if p else -1
+    return 0
+
+
+def _cmov_impl_for(mode, W):
+    """Conditional move: mode 'z' (==0), 'p' (>0) or 'n' (<0)."""
+    def f(cond_p, cond_n, src_p, src_n, dst_p, dst_n):
+        s = _sign_of(cond_p, cond_n, W)
+        take = (s == 0) if mode == "z" else ((s > 0) if mode == "p" else (s < 0))
+        return {"word": (src_p, src_n) if take else (dst_p, dst_n)}
+    return f
+
+
+def sign_spec_value(trits):
+    v = sum(t * 3 ** i for i, t in enumerate(trits))
+    return (v > 0) - (v < 0)
+
+
+def verify_sign(width: int = 64, exhaustive_width: int = 10):
+    """
+    Verify SIGN two independent ways.
+
+    1. Exhaustively over EVERY trit word up to `exhaustive_width` trits -- a
+       complete check for narrow words, which is exactly where sign bugs hide.
+    2. Symbolically in Z3 over the full width, proving the priority encoder
+       agrees with the sign of the value for all valid dual-rail words.
+    """
+    import itertools
+    import z3
+
+    isa = build_isa(width)
+    sign = next(o for o in isa if o.name == "SIGN")
+    errors = []
+
+    # 1. Exhaustive over narrow widths.
+    for w in range(1, exhaustive_width + 1):
+        for trits in itertools.product((-1, 0, 1), repeat=w):
+            P = N = 0
+            for i, t in enumerate(trits):
+                if t == 1:
+                    P |= 1 << i
+                elif t == -1:
+                    N |= 1 << i
+            gp, gn = sign.impl(P, N)["word"]
+            got = 1 if gp & 1 else (-1 if gn & 1 else 0)
+            exp = sign_spec_value(list(trits))
+            if got != exp:
+                errors.append(
+                    f"sign width={w} trits={list(trits)}: expected {exp}, got {got}")
+            if gp & gn:
+                errors.append(f"sign produced invalid rails for {list(trits)}")
+
+    # 2. Symbolic over the full width.
+    ap = z3.BitVec("ap", width)
+    an = z3.BitVec("an", width)
+    valid = ap & an == 0
+
+    def z3_sign(P, N):
+        # Fold LSB -> MSB so that a nonzero trit in a HIGHER position
+        # overwrites the result of every lower one. Folding MSB-first would
+        # let a low trit overwrite the high one and report the wrong sign.
+        acc = z3.IntVal(0)
+        for i in range(0, width):
+            p = z3.Extract(i, i, P) == 1
+            n = z3.Extract(i, i, N) == 1
+            acc = z3.If(p, z3.IntVal(1), z3.If(n, z3.IntVal(-1), acc))
+        return acc
+
+    def z3_value(P, N):
+        return z3.Sum([
+            z3.If(z3.Extract(i, i, P) == 1, z3.IntVal(3 ** i),
+                  z3.If(z3.Extract(i, i, N) == 1, z3.IntVal(-(3 ** i)),
+                        z3.IntVal(0)))
+            for i in range(width)
+        ])
+
+    s = z3_sign(ap, an)
+    v = z3_value(ap, an)
+
+    solver = z3.Solver()
+    solver.set("timeout", 300_000)
+    solver.add(valid)
+    solver.add(z3.Not(z3.And(
+        z3.Or(s == 1, s == 0, s == -1),
+        z3.Implies(v > 0, s == 1),
+        z3.Implies(v == 0, s == 0),
+        z3.Implies(v < 0, s == -1),
+    )))
+    r = solver.check()
+    if r != z3.unsat:
+        errors.append(f"symbolic sign proof: {r}")
+
+    return errors
+
+
+def verify_cmov(width: int = 64):
+    """
+    Verify the three conditional moves. The control depends only on the SIGN
+    of the condition, so covering every sign against several data patterns is
+    a complete check of the control behaviour.
+    """
+    isa = build_isa(width)
+    errors = []
+
+    patterns = [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (0xFFFFFFFFFFFFFFFF, 0),
+        (0x0123456789ABCDEF, 0x0FEDCBA987654321 & ~(0x0123456789ABCDEF)),
+    ]
+    cond_words = {
+        0:  (0, 0),
+        1:  (0b1111, 0),      # +1+3+9+27 > 0
+        -1: (0, 0b1111),      # -(1+3+9+27) < 0
+    }
+
+    for mode, test in (("z", lambda s: s == 0),
+                       ("p", lambda s: s > 0),
+                       ("n", lambda s: s < 0)):
+        f = _cmov_impl_for(mode, width)
+        for cs, (cp, cn) in cond_words.items():
+            for (sp, sn) in patterns:
+                for (dp, dn) in patterns:
+                    gp, gn = f(cp, cn, sp, sn, dp, dn)["word"]
+                    expect = (sp, sn) if test(cs) else (dp, dn)
+                    if (gp, gn) != expect:
+                        errors.append(
+                            f"cmov{mode} cond_sign={cs}: expected {expect}, "
+                            f"got {(gp, gn)}")
+    return errors
 
 
 def verify_li5():
