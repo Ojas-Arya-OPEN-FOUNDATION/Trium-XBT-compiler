@@ -609,7 +609,7 @@ if(BT_BUILD_TESTS AND BT_BUILD_SDK)
         add_dependencies(check-all trium_sdk unit_sdk_math unit_sdk_host unit_numerical)
     endif()
     if(BT_ENABLE_ASAN AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        set_property(TEST SDK_Contracts SDK_Native Numerical_Exact_Reference FP_Foundation_Reference SDK_Integration SDK_Vulkan_Offline SDK_Vulkan_Execution APPEND PROPERTY ENVIRONMENT
+        set_property(TEST SDK_Contracts SDK_Native Numerical_Exact_Reference FP_Foundation_Reference SDK_Integration SDK_Gemm_Layout_Python SDK_Vulkan_Offline SDK_Vulkan_Execution APPEND PROPERTY ENVIRONMENT
             "LD_PRELOAD=${BT_ASAN_RUNTIME}:${BT_CXX_ABI_RUNTIME}" "ASAN_OPTIONS=detect_leaks=0")
     endif()
 endif()

@@ -18,6 +18,11 @@
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+// ConstantLike is declared in ConstantInterfaces.td. Without this include,
+// tablegen cannot resolve the trait used by BT_ConstOp and the whole dialect
+// fails to generate -- which is invisible in a build where MLIR is absent,
+// because tablegen never runs in standalone mode.
+include "mlir/Interfaces/ConstantInterfaces.td"
 include "TernaryDialect.td"
 
 //===----------------------------------------------------------------------===//

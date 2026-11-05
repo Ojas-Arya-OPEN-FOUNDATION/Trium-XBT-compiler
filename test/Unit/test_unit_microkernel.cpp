@@ -539,7 +539,16 @@ static void test_bitnet() {
     }
     std::printf("    -> both overloads match naive reference (%zu elements)\n", ref.size());
 
-    const size_t Mn = 256, Nn = 256, Kn = 512;
+    // Shape chosen for SIGNAL, not throughput. The two variants are the same
+    // kernel and differ only by the slice step, so the largest ratio this
+    // comparison can ever show is (gemm + pack) / gemm -- which depends
+    // entirely on the shape. At the 256x256x512 used here previously, packing
+    // was 4.3% of the GEMM, capping the ratio at 1.043; the test then asserted
+    // a value 1% below a hard physical ceiling, so it flaked constantly in CI
+    // and could never have caught the regression it describes. With small M
+    // and large K,N the slice step dominates and the ceiling rises to ~3.1,
+    // leaving real separation between correct (~3) and regressed (~1).
+    const size_t Mn = 1, Nn = 512, Kn = 512;
     TernaryMatrix Wb(Mn, Kn);
     for (size_t i = 0; i < Mn; ++i)
         for (size_t t = 0; t < Kn; ++t) {
@@ -554,23 +563,50 @@ static void test_bitnet() {
     // the activations on every call (the behaviour being replaced), the
     // pre-sliced overload does not. Comparing them here is far more honest
     // than quoting a number from an older benchmark harness.
-    double d = best_of([&]{ gemm_bitnet_i8_ternary(Wb, XSb, Cb, Mn, Nn, Kn); }, 3);
-    double dr = best_of([&]{ gemm_bitnet_i8_ternary(Wb, Xb, Cr, Mn, Nn, Kn); }, 3);
+    // Measure the two variants INTERLEAVED rather than in two separate
+    // blocks. Timing them back to back meant any drift -- CPU frequency
+    // changes, a noisy neighbour on the runner, page faults on first touch --
+    // landed on one variant and not the other, which flipped this assertion
+    // intermittently in CI even though the code was fine. Alternating means
+    // both see the same machine, and best-of-many per variant discards the
+    // outliers that a single unlucky scheduling decision produces.
+    const int reps = 15;
+    double d = 1e300, dr = 1e300;
+    for (int r = 0; r < reps; ++r) {
+        {
+            auto t0 = CK::now();
+            gemm_bitnet_i8_ternary(Wb, XSb, Cb, Mn, Nn, Kn);
+            double x = std::chrono::duration<double>(CK::now() - t0).count();
+            if (x < d) d = x;
+        }
+        {
+            auto t0 = CK::now();
+            gemm_bitnet_i8_ternary(Wb, Xb, Cr, Mn, Nn, Kn);
+            double x = std::chrono::duration<double>(CK::now() - t0).count();
+            if (x < dr) dr = x;
+        }
+    }
     int64_t chk = 0; for (int64_t v : Cb) chk += v;   // sink, outside the timed region
     for (int64_t v : Cr) chk -= v;
     require(chk == 0, "pre-sliced and re-packing BitNet must agree");
     const double mac = double(Mn) * double(Nn) * double(Kn);
-    std::printf("    -> 256x512x256 pre-sliced : %.2f ms = %.2f G MAC/s\n",
-                d * 1e3, mac / d / 1e9);
-    std::printf("    -> 256x512x256 re-slicing : %.2f ms = %.2f G MAC/s  (%.2fx faster when sliced once)\n",
-                dr * 1e3, mac / dr / 1e9, dr / d);
+    std::printf("    -> %zux%zux%zu pre-sliced : %.3f ms\n", Mn, Nn, Kn, d * 1e3);
+    std::printf("    -> %zux%zux%zu re-slicing : %.3f ms  (%.2fx faster when sliced once)\n",
+                Mn, Nn, Kn, dr * 1e3, dr / d);
     require(Cb.size() == Mn * Nn, "bitnet output sized correctly");
-    // The regression this guards was 2.03x - activations were re-sliced on
-    // every call. The remaining margin is ~3%, which is inside the noise on
-    // any machine and flips when other tests run concurrently, so asserting
-    // plain `d < dr` made the suite flaky in CI. Allow 5%: far below the 2x
-    // signal, comfortably above the noise. The ratio is always printed.
-    require(d < dr * 1.05,
+    // The regression this guards was 2.03x: activations were re-sliced on
+    // every call. Note the two variants are the SAME kernel, differing only
+    // by the slice step, so dr == d + pack_time and the ratio is ~2.03 when
+    // correct and ~1.00 if the pre-sliced overload ever starts re-slicing
+    // internally. That is why the bound has to stay near 1 rather than being
+    // loosened to something comfortable: at 1.5x the regression would sail
+    // through. 1.35 sits between the 1.00 failure mode and the 2.03 signal,
+    // and the interleaved best-of-15 timing above keeps the noise well below
+    // the gap on either side. The ratio is always printed.
+    // Threshold 2.0 sits between the ~1.0 the regression would produce and
+    // the ~3.0 correct code produces, so it tolerates large timing noise on
+    // either side while still catching the fault.
+    require(d < dr / 2.0,
             "slicing once must not be materially slower than re-slicing per call");
 }
 
