@@ -50,6 +50,23 @@ jobs:
           ctest --test-dir build/ci --output-on-failure
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
+            if [ -f build/ci/Testing/Temporary/LastTestsFailed.log ]; then
+              FAILURES=$(cat build/ci/Testing/Temporary/LastTestsFailed.log | tr '\n' ' ')
+              echo "::error title=Failed Tests::$FAILURES"
+            fi
+            python3 -c "
+from pathlib import Path
+p = Path('build/ci/Testing/Temporary/LastTest.log')
+if p.exists():
+    import re
+    text = p.read_text()
+    for m in re.finditer(r'(Test:\s*(\w+).*?)(?=Test:\s*\w+|\Z)', text, re.DOTALL):
+        chunk = m.group(1)
+        if 'Completed (Failed)' in chunk:
+            lines = [l for l in chunk.splitlines() if l.strip()]
+            err = '%0A'.join(lines[-25:])
+            print(f'::error title=Failure in {m.group(2)}::{err}')
+" || true
             echo "::error title=CTest Failure::CTest failed with exit code $STATUS"
             echo "### Tests Failed (Status $STATUS)" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
