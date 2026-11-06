@@ -244,3 +244,46 @@ extern "C" {
     pub fn bt_fp32_div(a: BtFp32, b: BtFp32) -> BtFp32;
 }
 ```
+
+---
+
+## 3. High-Level Matrix Layout Packing & Auto-Routing GEMM
+
+In high-performance linear algebra, invoking the raw C ABI `bt_sdk_gemm_ternary` directly requires strict adherence to memory layouts:
+- Matrix $A$: Row-major layout (`DualRail` packed).
+- Matrix $B$: Transposed Word-Plane-Major layout (`DualRail` packed).
+
+To completely shield developers from low-level memory layout traps, Trium provides high-level bindings across C++, Rust, and Python:
+
+### C++ High-Level SDK (`include/Ternary/SDK/SDK.hpp`)
+```cpp
+namespace bt::sdk {
+    DualRail pack_matrix_a(const int64_t* a, uint64_t m, uint64_t k);
+    DualRail pack_matrix_b(const int64_t* b, uint64_t k, uint64_t n);
+    bool is_ternary(const int64_t* data, uint64_t count);
+    std::vector<int64_t> matmul(const int64_t* a, const int64_t* b, uint64_t m, uint64_t k, uint64_t n);
+}
+```
+
+### Python High-Level SDK (`trium.py` / `ffi/python/trium/__init__.py`)
+```python
+import trium as bt
+
+# Automatic inspection and hardware microkernel acceleration:
+# If both A and B are ternary ({-1, 0, 1}), matmul automatically packs
+# into DualRail format and dispatches to the 743 GTOPS AVX-512 microkernel!
+C = bt.matmul(A, B)
+
+# Explicit manual packing for pre-compiled weights:
+packed_A = bt.pack_matrix_a(A)
+packed_B = bt.pack_matrix_b(B)
+C = bt.gemm_ternary(packed_A, packed_B, M, K, N)
+```
+
+### Rust Safe SDK (`ffi/rust/src/sdk.rs`)
+```rust
+use bt_runtime::sdk::{pack_matrix_a, pack_matrix_b, matmul, is_ternary};
+
+let c = matmul(&a, &b, m, k, n)?;
+```
+

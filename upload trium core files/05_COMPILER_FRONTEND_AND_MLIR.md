@@ -220,3 +220,27 @@ public:
 
 } // namespace bt::ast
 ```
+
+---
+
+## 3. The `CoreToBtDialect` MLIR Lowering Bridge & `bt-opt` Pipeline
+
+The lowering bridge (`include/Ternary/MLIR/CoreToBtDialect.hpp`) maps Trium IR directly into MLIR TableGen operations:
+
+```
+Trium Frontend AST ──► Trium IR ──► CoreToBtDialect ──► MLIR bt Dialect ──► bt-opt ──► LLVM/IREE
+```
+
+### TableGen Operation Mappings
+1. **`bt.const`**: Lowers a constant dual-rail literal $(P, N)$ into an SSA value of type `!bt.dualrail<64>`.
+2. **`bt.neg`**: Lowers unary negation to a 0-cycle rail swap involution.
+3. **`bt.lane_mul`**: Multiplies corresponding trits across two dual-rail words without carry generation:
+   $$P_{\text{out}} = (A_P \land B_P) \lor (A_N \land B_N)$$
+   $$N_{\text{out}} = (A_P \land B_N) \lor (A_N \land B_P)$$
+4. **Spaceship Operator (`<=>`) Lowering**:
+   In binary computing, three-way comparison requires two comparisons and conditional branching (`if (a < b) ... else if (a == b) ...`).
+   In Trium, `<=>` computes the sign of $(A - B)$ in single-cycle SWAR:
+   $$\text{sign}(A, B) = \text{KoggeStoneSubtract}(A, B) \to \text{TritValue} \in \{-1, 0, 1\}$$
+5. **Sign-Select Lowering (`select`)**:
+   Selects between three values based on a balanced trit condition ($\text{Neg} \implies -1, \text{Zero} \implies 0, \text{Pos} \implies +1$) in zero branches via bitwise multiplexing.
+

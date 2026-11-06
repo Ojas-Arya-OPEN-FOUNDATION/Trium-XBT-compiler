@@ -210,3 +210,40 @@ module riscv_xbt_alu (
     end
 endmodule
 ```
+
+---
+
+## 3. RISC-V `Xbt` v2 ISA Extension & Hardware Coprocessor
+
+The updated v2 `Xbt` coprocessor specification (`hw/xbt_alu_model.hpp` and `include/Ternary/Target/XbtInstructionSelector.hpp`) expands the custom-0 ISA to complete algebraic control flow:
+
+| Sub-Opcode | Mnemonic | Format | Semantics & Hardware Behavior |
+| :---: | :--- | :--- | :--- |
+| `0x00` | **`KADD`** | R-Type | 64-trit Kogge-Stone parallel prefix addition |
+| `0x01` | **`KSUB`** | R-Type | 64-trit Kogge-Stone subtraction (rail swap + add) |
+| `0x02` | **`DOT`** | R-Type | Planar dual-rail popcount dot product ($\sum A_i B_i$) |
+| `0x03` | **`SIGN`** | R-Type | Extracts ternary sign of 64-trit word ($\{-1, 0, +1\}$) |
+| `0x04` | **`CMOVZ`** | R-Type | Conditional move if condition trit $== 0$ |
+| `0x05` | **`CMOVP`** | R-Type | Conditional move if condition trit $== +1$ |
+| `0x06` | **`CMOVN`** | R-Type | Conditional move if condition trit $== -1$ |
+| `0x07` | **`UNPACK243`** | R-Type | Single-cycle hardware Base-243 byte to 5-trit decoder |
+| `0x08` | **`LI5`** | I-Type | Load immediate 5 balanced trits into register |
+| `0x09` | **`PACK243`** | R-Type | Hardware Base-243 5-trit compressor into 1 byte |
+| `0x0A` | **`BTFA`** | R4-Type | 3-to-2 Carry-Save full adder compressor: $(S, C) = \text{BTFA}(A, B, D)$ |
+| `0x0B` | **`MUL`** | R-Type | Lane-wise trit product: $P = (A_P B_P) \lor (A_N B_N)$, $N = (A_P B_N) \lor (A_N B_P)$ |
+
+---
+
+## 4. Rule-Based Instruction Selection & Binary Encoding
+
+The compiler's target backend (`include/Ternary/Target/XbtInstructionSelector.hpp`) compiles Trium IR into machine instructions using tree pattern matching:
+
+1. **`ir::Op::Spaceship` (`<=>`) Lowering**:
+   - Compiles to `KSUB` followed by `SIGN`.
+   - Directly places the three-way comparison result into the destination register as $\{-1, 0, +1\}$ in 2 CPU cycles without branch prediction penalties.
+2. **`ir::Op::SignSelect` (`select`) Lowering**:
+   - Compiles to a sequence of `CMOVN`, `CMOVZ`, and `CMOVP` conditional move instructions.
+   - Eliminates all pipeline flushes from branch misses.
+3. **Machine Code Generation (`Insn::encode`)**:
+   - Implements standard 32-bit RISC-V R-type, I-type, and R4-type binary instruction encoding into ELF `.text` sections.
+
