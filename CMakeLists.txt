@@ -319,6 +319,29 @@ if(BT_BUILD_TESTS)
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # ---- target descriptions: targets/*.yaml -> generated C++ ---------------
+    # The generated header is COMMITTED, so building never needs Python.
+    # `gen-targets` regenerates it; `Check_Target_Descriptions` asserts the
+    # committed copy matches the YAML, which is what keeps it honest.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_custom_target(gen-targets
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Regenerating GeneratedTargets.hpp from targets/*.yaml"
+            VERBATIM)
+        add_test(NAME Check_Target_Descriptions
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_Target_Descriptions PROPERTIES
+            LABELS "codegen")
+    endif()
+
+    add_executable(unit_generated_targets test/Unit/test_generated_targets.cpp)
+    target_include_directories(unit_generated_targets PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME unit_generated_targets COMMAND unit_generated_targets)
+
     # Frontend -> bt MLIR dialect bridge. Only meaningful when the dialect is
     # compiled in (BT_ENABLE_MLIR), since it links the dialect registry.
     if(BT_ENABLE_MLIR)

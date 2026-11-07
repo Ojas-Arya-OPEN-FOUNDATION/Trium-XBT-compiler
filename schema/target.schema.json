@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trium-xbt.dev/schema/target.schema.json",
+  "title": "Trium-XBT target description",
+  "description":
+    "Declarative description of a ternary hardware target. Validated by this schema, then compiled to C++ by tools/gen_targets.py. Adding a machine means adding a YAML file -- not editing the driver.",
+  "type": "object",
+  "required": ["schema_version", "name"],
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": {
+      "description": "Version of this schema the file targets.",
+      "const": 1
+    },
+
+    "name": {
+      "description": "Canonical target name, e.g. \"riscv64-xbt\". Unique across all files.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "triple": {
+      "description": "LLVM-style triple, if one applies.",
+      "type": "string"
+    },
+    "aliases": {
+      "description": "Alternative spellings accepted on the command line.",
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "default": []
+    },
+    "family": {
+      "description": "Broad class, used by the backend registry to select a code generator.",
+      "enum": ["cpu", "gpu", "accelerator", "simulator"],
+      "default": "accelerator"
+    },
+
+    "datapath": {
+      "description": "The ternary datapath: what one instruction can do.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "native_trit_width": {
+          "description": "Trits per native ternary word.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096,
+          "default": 64
+        },
+        "max_immediate_trits": {
+          "description": "Trits materialisable by a single instruction.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64,
+          "default": 5
+        },
+        "has_word_add":    { "type": "boolean", "default": true },
+        "has_lane_mul":    { "type": "boolean", "default": true },
+        "has_scalar_mul":  { "type": "boolean", "default": false },
+        "has_popcount_dot":{ "type": "boolean", "default": true }
+      },
+      "default": {}
+    },
+
+    "storage": {
+      "description": "How the target stores ternary data.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "native_layouts": {
+          "type": "array",
+          "items": { "enum": ["dual-rail", "base-243", "tcsr", "btfp"] },
+          "minItems": 1,
+          "uniqueItems": true,
+          "default": ["dual-rail"]
+        },
+        "preferred_layout": {
+          "enum": ["dual-rail", "base-243", "tcsr", "btfp"],
+          "default": "dual-rail"
+        }
+      },
+      "default": {}
+    },
+
+    "registers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ternary": { "type": "integer", "minimum": 0, "default": 32 },
+        "scalar":  { "type": "integer", "minimum": 0, "default": 32 },
+        "zero_hardwired": {
+          "description": "Register 0 reads as zero, as in RISC-V.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "default": {}
+    },
+
+    "native_ops": {
+      "description":
+        "Core-profile operation names the target implements in hardware. An empty set means 'assume everything'; anything absent from a non-empty set must be lowered to software or refused.",
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "default": []
+    },
+
+    "memory": {
+      "description":
+        "Memory hierarchy. Drives the memory model of docs/TENSOR_MEMORY_MATHEMATICS.md Part III: Track A (implicit movement) vs Track B (explicit movement).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache_line_bytes": { "type": "integer", "minimum": 1, "default": 64 },
+        "scratchpad_bytes": { "type": "integer", "minimum": 0, "default": 0 },
+        "global_bytes":     { "type": "integer", "minimum": 0, "default": 0 },
+        "explicit_movement": {
+          "description":
+            "True if the compiler must issue data movement itself (Track B accelerators). False for caches managed by hardware (Track A).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "default": {}
+    },
+
+    "costs": {
+      "description":
+        "Instruction latencies in cycles, keyed by core-profile op name. Drives the instruction selector's cost model. Ops absent from this map get the default_cost.",
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 },
+      "default": {}
+    },
+    "default_cost": {
+      "description": "Latency for ops not listed in `costs`.",
+      "type": "integer",
+      "minimum": 0,
+      "default": 1
+    },
+
+    "simulator": {
+      "description":
+        "Track B: how to run this target when no silicon exists. `null` means real hardware is available.",
+           "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      },
+      "required": ["command"],
+      "default": null
+    }
+  }
+}

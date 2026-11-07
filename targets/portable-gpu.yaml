@@ -1,0 +1,48 @@
+# Trium-XBT target: present-day GPU (CUDA / Vulkan compute), ternary in software.
+#
+# Track A. Wide SIMT lanes, no ternary datapath. Described explicitly because
+# the roofline and the memory model differ sharply from the CPU case: the
+# working-set/blocking decisions of docs/TENSOR_MEMORY_MATHEMATICS.md Part III
+# are parameterised by this description.
+
+schema_version: 1
+
+name: portable-gpu
+triple: nvptx64-nvidia-cuda
+aliases: [cuda, vulkan, gpu]
+family: gpu
+
+datapath:
+  native_trit_width: 64
+  max_immediate_trits: 5
+  has_word_add: true
+  has_lane_mul: true
+  has_scalar_mul: true
+  has_popcount_dot: true
+
+storage:
+  native_layouts: [dual-rail]
+  preferred_layout: dual-rail
+
+registers:
+  ternary: 0
+  scalar: 255
+  zero_hardwired: false
+
+native_ops: []
+
+memory:
+  cache_line_bytes: 128
+  scratchpad_bytes: 49152      # 48 KiB shared memory per block
+  global_bytes: 0
+  explicit_movement: true      # shared memory is compiler-managed
+
+costs:
+  add: 8
+  sub: 8
+  negate: 1
+  dot: 4
+  lane-mul: 4
+default_cost: 16
+
+simulator: null

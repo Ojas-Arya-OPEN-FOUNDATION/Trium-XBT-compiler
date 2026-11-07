@@ -1,0 +1,61 @@
+# Trium-XBT target: the "ternary torus" -- a next-generation ternary accelerator.
+#
+# Track B. No silicon exists; this is the contract a vendor would write to be
+# onboarded, and it is executed today through the simulator plug-in interface.
+# Everything the compiler needs to know about the machine is in this file:
+# adding it required no change to the driver, only this YAML.
+
+schema_version: 1
+
+name: ternary-torus
+triple: torus-unknown-none
+aliases: [torus]
+family: accelerator
+
+datapath:
+  native_trit_width: 243       # 3^5: a wide native ternary word
+  max_immediate_trits: 9
+  has_word_add: true
+  has_lane_mul: true
+  has_scalar_mul: true         # the torus has a true multiplier
+  has_popcount_dot: true
+
+storage:
+  native_layouts: [base-243, tcsr]
+  preferred_layout: base-243   # 1.6 bits/trit: 25% more elements per cache
+
+registers:
+  ternary: 64
+  scalar: 16
+  zero_hardwired: true
+
+native_ops:
+  - add
+  - sub
+  - negate
+  - dot
+  - mul
+  - unpack243
+  - pack243
+  - lane-mul
+
+memory:
+  cache_line_bytes: 243
+  scratchpad_bytes: 1048576    # 1 MiB on-chip scratchpad
+  global_bytes: 4294967296     # 4 GiB device memory
+  explicit_movement: true      # Track B: the compiler issues every DMA
+
+costs:
+  add: 1
+  sub: 1
+  negate: 1
+  dot: 2
+  mul: 6
+  unpack243: 1
+  pack243: 1
+  lane-mul: 1
+default_cost: 4
+
+simulator:
+  command: bt-torus-sim
+  args: ["--cycles", "--trace"]
