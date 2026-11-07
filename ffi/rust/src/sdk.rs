@@ -198,6 +198,46 @@ impl Module {
  }
 }
 impl Drop for Module {fn drop(&mut self){unsafe{bt_sdk_release(self.handle,std::ptr::null_mut(),0);}}}
+/// True when every element is a trit in `{-1, 0, +1}`.
+///
+/// This is the routing predicate for [`matmul`]: the ternary GEMM is exact
+/// only because every partial product lies in `{-1,0,+1}`, so deciding the
+/// route on anything looser would be a correctness bug, not just a slowdown.
+pub fn is_ternary(values:&[i8])->bool {
+ values.iter().all(|v| (-1..=1).contains(v))
+}
+
+/// `C[m,n] = A[m,k] * B[k,n]`, auto-routing to the ternary GEMM.
+///
+/// Mirrors the Python `matmul`. When every element of both operands is a
+/// trit and the library exposes `gemm_ternary`, this packs and routes;
+/// otherwise it falls back to the reference kernel. Both paths must agree
+/// bit-for-bit, which `force_reference` exists to let you check.
+pub fn matmul(a:&[i8],b:&[i8],m:usize,k:usize,n:usize,force_reference:bool)
+ ->Result<Vec<i64>,Error>{
+ if m*k!=a.len()||k*n!=b.len() {
+  return Err(Error{code:1,message:"matrix shapes/storage mismatch".into()});
+ }
+ if m==0||n==0||k==0 {return Ok(Vec::new());}
+ if !force_reference && is_ternary(a) && is_ternary(b) {
+  let mut ar:Vec<&[i8]>=Vec::with_capacity(m);
+  for i in 0..m {ar.push(&a[i*k..(i+1)*k]);}
+  let mut br:Vec<&[i8]>=Vec::with_capacity(k);
+  for i in 0..k {br.push(&b[i*n..(i+1)*n]);}
+  let (ap,an)=pack_matrix_a(&ar)?;
+  let (bp,bn)=pack_matrix_b(&br)?;
+  return gemm_ternary(&ap,&an,&bp,&bn,m as u64,n as u64,k as u64);
+ }
+ // Reference path: dense int64 accumulation, exact for any i8 operand.
+ let mut out=vec![0i64;m*n];
+ for i in 0..m {for j in 0..n {
+  let mut acc=0i64;
+  for t in 0..k {acc+=a[i*k+t] as i64*b[t*n+j] as i64;}
+  out[i*n+j]=acc;
+ }}
+ Ok(out)
+}
+
 #[cfg(test)]mod tests {
  use super::*;
  #[test]fn owned_cpu_module(){let module={let context=Context::new().unwrap();context.compile("func transform(x:int)->int{return x*3;}").unwrap()};assert_eq!(module.map("transform",&[-2,0,2],Backend::Cpu).unwrap(),vec![-6,0,6]);}
@@ -310,5 +350,32 @@ impl Drop for Module {fn drop(&mut self){unsafe{bt_sdk_release(self.handle,std::
   assert!(pack_matrix_b(&bref).is_err());
   assert!(pack_matrix_a(&[]).is_err());
   assert!(pack_matrix_b(&[]).is_err());
+ }
+
+ #[test]
+ fn parity_is_ternary_and_matmul_agree_with_reference(){
+  // The whole point of the routing predicate: the ternary GEMM and the
+  // reference kernel must agree EXACTLY, because both are exact integer
+  // computations. Any discrepancy is a bug in one of them.
+  let m=3usize;k=4;n=2;
+  let a:[i8;12]=[1,0,-1,1, 0,1,1,-1, -1,-1,0,1];
+  let b:[i8;8] =[1,-1, 0,1, 1,0, -1,1];
+  let fast=matmul(&a,&b,m,k,n,false).expect("routed matmul");
+  let refd=matmul(&a,&b,m,k,n,true).expect("reference matmul");
+  assert_eq!(fast,refd,"ternary GEMM and reference must agree exactly");
+ }
+ #[test]
+ fn parity_is_ternary(){
+  assert!(is_ternary(&[-1,0,1,1,-1]));
+  assert!(is_ternary(&[]),"empty is vacuously ternary");
+  assert!(!is_ternary(&[2,0,1]),"2 is not a trit");
+  assert!(!is_ternary(&[-2]),"-2 is not a trit");
+ }
+ #[test]
+ fn parity_matmul_rejects_shape_mismatch(){
+  let a:[i8;6]=[1,0,-1,1,0,1];
+  let b:[i8;8]=[1,0,-1,1,0,1,0,1];
+  // a is 2x3, b claims k=3 n=... which does not fit its length
+  assert!(matmul(&a,&b,2,3,3,false).is_err(),"shape mismatch must be refused");
  }
 }

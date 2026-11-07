@@ -1,0 +1,70 @@
+# =============================================================================
+#  A deliberately trivial target.
+#
+#  This is the worked example for docs/TARGET_AUTHORING.md. It is the
+#  smallest file that produces a real backend, so the path from "I have some
+#  hardware" to "the compiler knows about it" is visible end to end.
+#
+#  It is INTENTIONALLY NOT in targets/ -- it is documentation, not a
+#  supported machine. Copy it to targets/ to try it for real.
+#
+#  Validate:  python3 tools/gen_targets.py --check
+#  Generate:  python3 tools/gen_backend.py minimal
+# =============================================================================
+
+schema_version: 1
+
+name: minimal
+family: cpu
+
+# Optional. If omitted, the target is reachable only by its name.
+# triple: minimal-unknown-none
+aliases: [minimal-demo]
+
+# Optional. Listing these makes the generated conformance suite produce ONE
+# FAILING OBLIGATION PER OP, so the suite is exactly as demanding as the
+# capabilities you claim. Omit the field for a generic three-op check.
+native_ops: [add, negate]
+
+datapath:
+  # The compiler's whole notion of "how wide is a word" comes from here.
+  # 9 trits is small enough to exhaustively test.
+  native_trit_width: 9
+  max_immediate_trits: 3
+
+  # Declare ONLY what the hardware actually has. The compiler does not
+  # assume anything not listed here, and it will route around a missing
+  # instruction rather than emit one that does not exist.
+  has_word_add: true
+  has_lane_mul: false
+  has_scalar_mul: false
+  has_popcount_dot: false
+
+# Which formats the device can hold natively. If a layout is not listed,
+# the compiler will not produce it for this target.
+storage:
+  native_layouts: [dual-rail]
+  preferred_layout: dual-rail
+
+registers:
+  ternary: 1
+  scalar: 4
+  # If the device hardwires a register to zero, say so: it is a real
+  # optimisation and the compiler cannot discover it.
+  zero_hardwired: false
+
+memory:
+  cache_line_bytes: 4
+  scratchpad_bytes: 0
+  global_bytes: 1024
+  # false = hardware manages movement (a cache).
+  # true  = the compiler must issue every transfer explicitly.
+  explicit_movement: false
+
+costs:
+  add: 1
+  negate: 1
+
+default_cost: 4
+
+simulator: null              # none yet; see docs/TARGET_AUTHORING.md

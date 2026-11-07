@@ -370,6 +370,15 @@ if(BT_BUILD_TESTS)
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(Check_Generated_Backends PROPERTIES
             LABELS "codegen")
+
+        # SDK parity: an asymmetry between the C, Python and Rust surfaces is
+        # a bug unless it is explicitly justified. Fails on any unjustified gap.
+        add_test(NAME Check_SDK_Parity
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_sdk_parity.py --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_SDK_Parity PROPERTIES
+            LABELS "sdk")
     endif()
 
     add_executable(unit_generated_targets test/Unit/test_generated_targets.cpp)

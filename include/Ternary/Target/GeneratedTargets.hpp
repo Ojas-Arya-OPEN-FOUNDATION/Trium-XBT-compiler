@@ -5,7 +5,7 @@
 //  Contract:         schema/target.schema.json
 //  Regenerate with:  tools/gen_targets.py
 //
-//  Generated 2026-11-07T07:44:16Z  schema sha256:1d71032768cd
+//  Generated 2026-11-07T08:54:08Z  schema sha256:1d71032768cd
 //  This file is committed so the build never requires Python. A CI
 //  job regenerates and fails if the result differs.
 // ==============================================================
