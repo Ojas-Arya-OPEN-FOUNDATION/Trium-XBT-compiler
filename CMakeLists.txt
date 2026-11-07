@@ -319,6 +319,10 @@ if(BT_BUILD_TESTS)
     target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
 
+    add_executable(unit_simulator test/Unit/test_unit_simulator.cpp)
+    target_include_directories(unit_simulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Simulator COMMAND unit_simulator)
+
     add_executable(unit_layouts test/Unit/test_unit_layouts.cpp)
     target_include_directories(unit_layouts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Layouts COMMAND unit_layouts)
@@ -355,6 +359,16 @@ if(BT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py --check
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(Check_Target_Descriptions PROPERTIES
+            LABELS "codegen")
+
+        # Track B: generated backend packages must compile and must FAIL their
+        # own conformance suite. A generated backend that passes would mean the
+        # generator emitted a stub and called it done.
+        add_test(NAME Check_Generated_Backends
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_generated_backends.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_Generated_Backends PROPERTIES
             LABELS "codegen")
     endif()
 

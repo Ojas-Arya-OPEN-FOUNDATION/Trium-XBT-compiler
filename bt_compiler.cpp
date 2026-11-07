@@ -630,6 +630,50 @@ int compiler_main(int argc, char** argv) {
                               << "\n";
                 }
             }
+
+            // Target descriptions compiled from targets/*.yaml. These are
+            // data, not code: adding a machine is a YAML file, and the
+            // Track B exit criterion is that it shows up here with zero
+            // compiler edits. Backends above are hand-written; these are
+            // everything the compiler knows about a target, whether or not
+            // a backend exists for it yet.
+            std::cout << "\nTarget descriptions (from targets/*.yaml, "
+                         "validated against schema/target.schema.json):\n";
+            size_t n = 0;
+            const auto* ms = bt::target::machines(&n);
+            for (size_t i = 0; i < n; ++i) {
+                const auto& m = ms[i];
+                std::cout << "  " << m.name
+                          << "  [" << bt::target::family_name(m.family) << "]";
+                if (m.triple && *m.triple) std::cout << "  " << m.triple;
+                std::cout << "\n    " << m.native_trit_width << " trits/word";
+                std::cout << ", " << m.ternary_registers << " ternary + "
+                          << m.scalar_registers << " scalar registers";
+                std::cout << "\n    layouts: ";
+                for (size_t j = 0; j < m.layout_count; ++j)
+                    std::cout << bt::target::layout_name(m.native_layouts[j])
+                              << " ";
+                std::cout << "(prefers "
+                          << bt::target::layout_name(m.preferred_layout) << ")";
+                std::cout << "\n    native: ";
+                std::cout << (m.has_word_add ? "add " : "")
+                          << (m.has_lane_mul ? "lane-mul " : "")
+                          << (m.has_scalar_mul ? "scalar-mul " : "")
+                          << (m.has_popcount_dot ? "dot " : "");
+                std::cout << "\n    memory: " << m.cache_line_bytes
+                          << "B lines, " << m.scratchpad_bytes
+                          << "B scratchpad, "
+                          << (m.explicit_movement ? "EXPLICIT movement"
+                                                  : "implicit movement");
+                std::cout << "\n    cost(add)=" << m.cost_of("add")
+                          << " default=" << m.default_cost;
+                if (m.has_simulator())
+                    std::cout << "\n    simulator: " << m.simulator_command;
+                std::cout << "\n";
+            }
+            std::cout << "\n  " << n << " target description(s) compiled in. "
+                      << "Add one by writing targets/*.yaml and running "
+                         "tools/gen_targets.py.\n";
             return 0;
         } else if (arg == "-g" || arg == "--debug") {
             opts.emitDebug = true;
