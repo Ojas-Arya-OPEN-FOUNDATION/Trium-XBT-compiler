@@ -156,12 +156,18 @@ with tempfile.TemporaryDirectory(prefix='bt-differential-') as temp:
     strange = str(work/f'out$(touch {marker}).s')
     run([compiler,str(source),'--target=x86_64','-S','-o',strange])
     assert not marker.exists()
-
-    # riscv64-xbt is now a fully implemented target: it succeeds and emits Xbt instructions.
-    r_xbt = run([compiler, str(source), '--target=riscv64-xbt', '-S'])
-    assert r_xbt.returncode == 0, (r_xbt.stderr, r_xbt.stdout)
-    assert 'target riscv64-xbt' in r_xbt.stdout or 'xbt.' in r_xbt.stdout
-
+    # --target=riscv64-xbt used to be listed here as "must fail", because the
+    # selector only handled Add/Sub/Negate/Mul/Parameter/Integer and threw
+    # "instruction selection not implemented" for almost everything real. It is
+    # now a working backend: -S and -c both succeed on this source. Asserting
+    # they fail encoded the old limitation as if it were a guarantee, and the
+    # assertion started failing long before anyone noticed (the backend already
+    # lowered a bare constant under the old selector too).
+    for options in [['--target=riscv64-xbt','-S'],['--target=riscv64-xbt','-c']]:
+        result = run([compiler,str(source),*options])
+        assert result.returncode == 0, options
+        if '-S' in options:
+            assert 'target riscv64-xbt' in result.stdout or 'xbt.' in result.stdout
     for options in [['--emit-metal'],['--emit-vulkan'],['--not-a-real-option']]:
         result = run([compiler,str(source),*options])
         assert result.returncode != 0, options
