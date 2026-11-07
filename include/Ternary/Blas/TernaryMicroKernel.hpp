@@ -504,23 +504,27 @@ inline GemmStats ternary_gemm(const uint64_t* Ap, const uint64_t* An,
                                  "so far; GPU backends plug into this entry point");
     if (o.isa == Isa::Auto) o.isa = detect_isa();
 
-    GemmStats st; st.isa = o.isa; st.mr = o.mr; st.nr = o.nr;
+    GemmStats st; st.mr = o.mr; st.nr = o.nr;
 
 #if TERNARY_BLAS_HAVE_AVX512VPOPCNT
     if (o.isa == Isa::Avx512Vpopcnt) {
+        st.isa = Isa::Avx512Vpopcnt;
         detail::dispatch_mr<Avx512VpopcntLane>(Ap, An, Bp, Bn, C, m, n, k, o, st); return st;
     }
 #endif
 #if TERNARY_BLAS_HAVE_AVX2
     if (o.isa == Isa::Avx2) {
+        st.isa = Isa::Avx2;
         detail::dispatch_mr<Avx2Lane>(Ap, An, Bp, Bn, C, m, n, k, o, st); return st;
     }
 #endif
 #if TERNARY_BLAS_HAVE_NEON
     if (o.isa == Isa::Neon) {
+        st.isa = Isa::Neon;
         detail::dispatch_mr<NeonLane>(Ap, An, Bp, Bn, C, m, n, k, o, st); return st;
     }
 #endif
+    st.isa = Isa::Scalar;
     detail::dispatch_mr<ScalarLane>(Ap, An, Bp, Bn, C, m, n, k, o, st);
     return st;
 }
@@ -656,23 +660,27 @@ inline GemmStats ternary_gemm_packed(const PackedTensor& A, const PackedTensor& 
 
     GemmOptions o = opts;
     if (o.isa == Isa::Auto) o.isa = detect_isa();
-    GemmStats st; st.isa = o.isa; st.mr = o.mr; st.nr = o.nr;
+    GemmStats st; st.mr = o.mr; st.nr = o.nr;
 
-#if TERNARY_BLAS_HAVE_AVX512VPOPCNTDQ
+#if TERNARY_BLAS_HAVE_AVX512VPOPCNT
     if (o.isa == Isa::Avx512Vpopcnt) {
+        st.isa = Isa::Avx512Vpopcnt;
         detail::dispatch_mr_packed<Avx512VpopcntLane>(A, BT, C, m, n, k, o, st); return st;
     }
 #endif
 #if TERNARY_BLAS_HAVE_AVX2
     if (o.isa == Isa::Avx2) {
+        st.isa = Isa::Avx2;
         detail::dispatch_mr_packed<Avx2Lane>(A, BT, C, m, n, k, o, st); return st;
     }
 #endif
 #if TERNARY_BLAS_HAVE_NEON
     if (o.isa == Isa::Neon) {
+        st.isa = Isa::Neon;
         detail::dispatch_mr_packed<NeonLane>(A, BT, C, m, n, k, o, st); return st;
     }
 #endif
+    st.isa = Isa::Scalar;
     detail::dispatch_mr_packed<ScalarLane>(A, BT, C, m, n, k, o, st);
     return st;
 }

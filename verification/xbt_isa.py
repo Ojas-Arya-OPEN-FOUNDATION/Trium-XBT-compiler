@@ -436,6 +436,36 @@ def build_isa(width: int = WIDTH) -> VerifiedISA:
         exhaustive=False, symbolic=False,
     ))
 
+    # ---- SHL3 (proposed, funct3=0b110 funct7=0x07) -----------------------
+    # Shift by trit positions: rd = value(rs1) * 3^shamt. This is the
+    # primitive P1 scalar multiply is built on; the ISA had no shift at all.
+    # The shift amount rides in the rs2 field, as a RISC-V shift-immediate
+    # does, so no new instruction format is needed.
+    def shl3_spec(trits, shamt):
+        v = sum(t * 3 ** i for i, t in enumerate(trits))
+        return {"rd": v * (3 ** shamt)}
+
+    def shl3_impl(ap, an, bp, bn):
+        # `bp/bn` carry the shift amount as a small integer in bp.
+        k = int(bp) if not hasattr(bp, "as_long") else bp.as_long()
+        # Rail-level shift: move both rails left by k trits. Trits that would
+        # leave the word are dropped here by the mask, which is why the
+        # overflow check lives in the model and is verified separately.
+        return {"rd": ((ap << k) & ((1 << W) - 1), (an << k) & ((1 << W) - 1))}
+
+    isa.add(Operation(
+        name="SHL3", mnemonic="xbt.shl3", funct3=0b110,
+        operands=[Operand("rs1", "trit_word", W), Operand("rs2", "trit_word", W),
+                  Operand("rd", "trit_word", W)],
+        spec=shl3_spec, impl=shl3_impl,
+        doc="PROPOSED (funct3=0b110, funct7=0x07). Shift by trit positions: "
+            "rd = value(rs1) * 3^rs2field. Exact within range; the hardware "
+            "model REFUSES (throws) when trits would leave the word, because "
+            "P1 scalar multiply must fail loudly rather than wrap. Verified "
+            "in verification/verify_scalar_mul.py (S1, S2, S7).",
+        exhaustive=False, symbolic=False,
+    ))
+
     return isa
 
 

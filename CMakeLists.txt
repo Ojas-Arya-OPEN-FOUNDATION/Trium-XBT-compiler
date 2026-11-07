@@ -208,6 +208,31 @@ if(BT_BUILD_TESTS)
         target_compile_options(unit_microkernel PRIVATE -march=native)
     endif()
 
+    # Every SIMD lane forced explicitly and compared against the scalar
+    # oracle (SCALING_PLAN 5.1).
+    #
+    # This MUST be built with the ISA flags: the lanes are behind
+    # `#if defined(__AVX2__)` etc, so a default build compiles none of them
+    # and Isa::Auto silently resolves to Scalar -- a differential test then
+    # compares Scalar against Scalar and passes while testing nothing.
+    #
+    # The shapes reach kw >= 8 on purpose. The vectorised inner loop runs
+    # only while `w + W <= kw`, so AVX-512 (W=8) needs k >= 512 and AVX2
+    # (W=4) needs k >= 256; below that only the scalar tail executes and a
+    # corrupted SIMD lane goes undetected.
+    #
+    # -march=native makes this test binary specific to the build machine.
+    # That is acceptable for a test that is built and run in the same place;
+    # it is never installed.
+    add_executable(unit_kernel_isa_paths test/Unit/test_unit_kernel_isa_paths.cpp)
+    target_include_directories(unit_kernel_isa_paths PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(unit_kernel_isa_paths PRIVATE -march=native)
+    endif()
+    add_test(NAME Layer1_Unit_Kernel_ISA_Paths COMMAND unit_kernel_isa_paths)
+
     # Honest benchmark runner. `--check` verifies every kernel bit-exact
     # against a reference and times nothing it has not verified, so CI can run
     # it in seconds. The full sweep (256/512/1024) is opt-in and is the only
@@ -237,6 +262,10 @@ if(BT_BUILD_TESTS)
 
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(unit_carry_free test/Unit/test_unit_carry_free.cpp)
+    target_include_directories(unit_carry_free PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME unit_carry_free COMMAND unit_carry_free)
 
     add_executable(unit_memory test/Unit/test_unit_memory.cpp)
     target_include_directories(unit_memory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -311,9 +340,75 @@ if(BT_BUILD_TESTS)
     add_executable(unit_xbt_selector test/Unit/test_xbt_selector.cpp)
     target_include_directories(unit_xbt_selector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    add_executable(unit_scalar_mul test/Unit/test_unit_scalar_mul.cpp)
+    target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
+
+    add_executable(unit_simulator test/Unit/test_unit_simulator.cpp)
+    target_include_directories(unit_simulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Simulator COMMAND unit_simulator)
+
+    add_executable(unit_layouts test/Unit/test_unit_layouts.cpp)
+    target_include_directories(unit_layouts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Layouts COMMAND unit_layouts)
+
+    add_executable(unit_memory_model test/Unit/test_unit_memory_model.cpp)
+    target_include_directories(unit_memory_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Memory_Model COMMAND unit_memory_model)
+
+    add_executable(unit_tensor test/Unit/test_unit_tensor.cpp)
+    target_include_directories(unit_tensor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Tensor COMMAND unit_tensor)
+
+    add_executable(unit_translation_validation test/Unit/test_translation_validation.cpp)
+    target_include_directories(unit_translation_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Translation_Validation COMMAND unit_translation_validation)
+
     # Retargeting seam: target descriptions + backend registry.
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    # ---- target descriptions: targets/*.yaml -> generated C++ ---------------
+    # The generated header is COMMITTED, so building never needs Python.
+    # `gen-targets` regenerates it; `Check_Target_Descriptions` asserts the
+    # committed copy matches the YAML, which is what keeps it honest.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_custom_target(gen-targets
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Regenerating GeneratedTargets.hpp from targets/*.yaml"
+            VERBATIM)
+        add_test(NAME Check_Target_Descriptions
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_Target_Descriptions PROPERTIES
+            LABELS "codegen")
+
+        # Track B: generated backend packages must compile and must FAIL their
+        # own conformance suite. A generated backend that passes would mean the
+        # generator emitted a stub and called it done.
+        add_test(NAME Check_Generated_Backends
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_generated_backends.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_Generated_Backends PROPERTIES
+            LABELS "codegen")
+
+        # SDK parity: an asymmetry between the C, Python and Rust surfaces is
+        # a bug unless it is explicitly justified. Fails on any unjustified gap.
+        add_test(NAME Check_SDK_Parity
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_sdk_parity.py --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(Check_SDK_Parity PROPERTIES
+            LABELS "sdk")
+    endif()
+
+    add_executable(unit_generated_targets test/Unit/test_generated_targets.cpp)
+    target_include_directories(unit_generated_targets PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME unit_generated_targets COMMAND unit_generated_targets)
 
     # Frontend -> bt MLIR dialect bridge. Only meaningful when the dialect is
     # compiled in (BT_ENABLE_MLIR), since it links the dialect registry.

@@ -97,7 +97,45 @@ The v2 extension closes exactly these three gaps and nothing more.
 | `0b110` | `0x04` | `xbt.cmovz rd, rc, ra` | `if sign(rc) == 0: rd = ra` |
 | `0b110` | `0x05` | `xbt.cmovp rd, rc, ra` | `if sign(rc) > 0: rd = ra` |
 | `0b110` | `0x06` | `xbt.cmovn rd, rc, ra` | `if sign(rc) < 0: rd = ra` |
+| `0b110` | `0x07` | `xbt.shl3 rd, rs1, shamt` | `rd = value(rs1) · 3^shamt`; **throws on overflow** |
 | `0b111` | — | `xbt.li5 rd, byte, chunk` | `rd = (byte − 121) · 3^(5·chunk)` |
+
+#### 4.x SHL3 — shift by trit positions
+
+`xbt.shl3 rd, rs1, shamt` multiplies a word by `3^shamt`, i.e. moves each trit
+up `shamt` places. The shift amount rides in the **rs2 field** (bits `[24:20]`),
+exactly as a RISC-V shift-immediate does, so no new instruction format is
+needed.
+
+This is the primitive **P1 scalar multiply** is built on. The ISA had no shift
+at all, so a general multiply could not be lowered: `a · b` decomposes as
+`Σ_i (trit_i of b) · (a << i)`, and every term needs a shift.
+
+**Overflow is refused, not wrapped.** Trits that would move past bit 63 are
+lost, so `shl3` signals overflow rather than silently returning a wrong word.
+This matches the `__int128` overflow-check philosophy of the reference
+`matmul`. Note the check is against the **64-trit word**, not the logical width
+of the value: shifting a 12-trit value by 12 is legal. The scalar-range check
+belongs to the lowering, which must refuse a product exceeding `int39`.
+
+Verified in `verification/verify_scalar_mul.py`:
+- **S1** exactness — exhaustive over 59 049 (word, shift) pairs, plus symbolic
+  at w = 10.
+- **S2** overflow is detected *exactly* (iff a set trit leaves the word).
+- **S7** out-of-range products are refused; none wrap.
+
+#### 4.y Scalar multiply routing
+
+Whether a multiply compiles to `xbt.mul` or to a shift-add sequence is decided
+by `has_scalar_mul` in `targets/*.yaml` — a data-driven decision, not an
+`#ifdef`. Xbt declares `false` (its `xbt.mul` is lane-wise and drops
+inter-lane carries), so it gets the shift-add; `ternary-torus` declares `true`
+and emits the native instruction.
+
+Only the **constant**-multiplier case is lowered: decomposing a runtime
+multiplier needs a trit-extract instruction the ISA lacks. See
+`docs/SCALING_PLAN.md` §4 for the scope limit and for a correction to the
+partial-product estimate.
 
 #### 3.x SIGN and the conditional moves
 

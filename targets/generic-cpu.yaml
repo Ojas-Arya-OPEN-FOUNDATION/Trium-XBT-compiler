@@ -1,0 +1,48 @@
+# Trium-XBT target: present-day CPU (x86-64 / aarch64), ternary in software.
+#
+# Track A. No ternary datapath at all -- every ternary op is emulated over the
+# binary ALU using dual-rail bit tricks. The point of describing it is that the
+# compiler can then treat "binary CPU" as just another target with a capability
+# set, rather than as a special case hardcoded in the driver.
+
+schema_version: 1
+
+name: generic-cpu
+triple: x86_64-unknown-linux-gnu
+aliases: [x86_64, aarch64, host, cpu]
+family: cpu
+
+datapath:
+  native_trit_width: 64        # emulated over 64-bit binary words
+  max_immediate_trits: 5
+  has_word_add: true           # via the emulated Kogge-Stone
+  has_lane_mul: true
+  has_scalar_mul: true         # real binary multiply is available
+  has_popcount_dot: true       # native hardware popcount
+
+storage:
+  native_layouts: [dual-rail, base-243]
+  preferred_layout: dual-rail
+
+registers:
+  ternary: 0                   # no ternary registers; values live in GPRs
+  scalar: 16
+  zero_hardwired: false
+
+native_ops: []                 # empty == assume everything, lower in software
+
+memory:
+  cache_line_bytes: 64
+  scratchpad_bytes: 0
+  global_bytes: 0
+  explicit_movement: false
+
+costs:
+  add: 6                       # 6-stage Kogge-Stone emulation
+  sub: 6
+  negate: 1                    # wire swap on dual-rail: zero gates
+  dot: 3
+  lane-mul: 4
+default_cost: 12
+
+simulator: null                # it IS the hardware

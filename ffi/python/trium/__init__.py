@@ -237,6 +237,42 @@ class Context:
         return bp,bn
 
     @staticmethod
+    def encode_gemm(a,bt,k):
+        """Pack both GEMM operands at once. Returns (ap, an, bp, bn).
+
+        `a`  is A flattened, m*k trits, row-major (m = len(a)//k).
+        `bt` is B ALREADY TRANSPOSED, n*k trits (n = len(bt)//k), so row j
+             of `bt` is column j of B.
+
+        This is the safe entry point. The two operands are stored
+        DIFFERENTLY at the C ABI -- A row-major, B word-plane-major -- and
+        the two orderings coincide only when k <= 64. Hand-packing a
+        multi-word B the obvious way looks right and silently returns
+        wrong numbers. Calling this instead means the layout is correct
+        by construction.
+        """
+        if k<=0:raise ValueError('k must be positive')
+        if len(a)%k or len(bt)%k:
+            raise ValueError('every row must have exactly k trits')
+        m=len(a)//k;n=len(bt)//k;kw=(k+63)//64
+        ap=[0]*(m*kw);an=[0]*(m*kw)
+        for i in range(m):
+            base=i*kw
+            for t in range(k):
+                v=a[i*k+t]
+                if v>0:ap[base+t//64]|=1<<(t%64)
+                elif v<0:an[base+t//64]|=1<<(t%64)
+        # B: word-plane-major. Word w of B^T row j lives at index w*n + j.
+        bp=[0]*(n*kw);bn=[0]*(n*kw)
+        for j in range(n):
+            for t in range(k):
+                v=bt[j*k+t]
+                w=(t//64)*n+j
+                if v>0:bp[w]|=1<<(t%64)
+                elif v<0:bn[w]|=1<<(t%64)
+        return ap,an,bp,bn
+
+    @staticmethod
     def is_ternary(values):
         """True if every value is a trit in {-1,0,+1}."""
         for v in values:

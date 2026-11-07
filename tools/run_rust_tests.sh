@@ -25,9 +25,9 @@ SEARCH_DIRS=()
 while IFS= read -r f; do
     [ -n "$f" ] && SEARCH_DIRS+=("$(dirname "$f")")
 done < <(
-    find "$ROOT" \( -type f -o -type l \) \
+    find "${BUILD_DIR:-$ROOT/build}" "$ROOT" \( -type f -o -type l \) \
          \( -name 'libtrium_sdk.so' -o -name 'libtrium_sdk.dylib' -o -name 'libtrium_sdk.so.*' \) \
-         -not -path '*/.git/*' 2>/dev/null)
+         -not -path '*/.git/*' -not -path '*/target/*' 2>/dev/null)
 
 if [ "${#SEARCH_DIRS[@]}" -eq 0 ]; then
     echo "SKIP: libtrium_sdk not built yet - build the sdk target first"

@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Antigravity Prime Research & Engineering Engine"]
 description = "Multi-Language Rust FFI Bindings for the Balanced Ternary Engine"
 license = "MIT"
+build = "build.rs"
 
 [lib]
 crate-type = ["rlib"]

@@ -56,8 +56,40 @@ enum class XbtGroup2 : uint8_t {
                     //      NON-ZERO trit, 0 for an all-zero word.
     CMOVZ   = 0x04, // if sign(rs1) == 0 then rd = rs2   (conditional move)
     CMOVP   = 0x05, // if sign(rs1) >  0 then rd = rs2
-    CMOVN   = 0x06  // if sign(rs1) <  0 then rd = rs2
+    CMOVN   = 0x06, // if sign(rs1) <  0 then rd = rs2
+    // R-type group-2 shift. The shift amount rides in the rs2 field
+    // (bits [24:20]), exactly as a RISC-V shift-immediate does, so SHL3 needs
+    // no new instruction format:  rd = value(rs1) * 3^rs2field.
+    SHL3    = 0x07
 };
+
+/// SHL3 immediate field width: shift by 0..63 trit positions.
+static constexpr unsigned XBT_SHL3_MAX = 63;
+
+/**
+ * @brief Exact multiplication by 3^k, with overflow detection.
+ *
+ * This is the primitive P1 scalar multiply is built on: balanced-ternary
+ * multiplication decomposes as a*3^k partial products, and the ISA had no way
+ * to shift before now. Shifting by trit positions is just moving the rails --
+ * no arithmetic at all -- but trits shifted past the top of the word are lost,
+ * so it must be checked rather than assumed.
+ *
+ * Returns false (and leaves `out` untouched) if any set trit would be shifted
+ * out of the word. Overflow must FAIL LOUDLY, not wrap: that is the same
+ * philosophy as the __int128 overflow checks in the reference matmul.
+ */
+inline bool shl3(const TritWord64& in, unsigned k, TritWord64& out) noexcept {
+    if (k == 0) { out = in; return true; }
+    if (k > XBT_SHL3_MAX) return false;
+
+    // Any set trit at position >= W - k would move past the top of the word.
+    const uint64_t keep = (k >= 64) ? 0ULL : (~0ULL >> k);
+    if ((in.P & ~keep) || (in.N & ~keep)) return false;
+
+    out = TritWord64(in.P << k, in.N << k);
+    return true;
+}
 
 // Base-243: 5 trits per byte, digit d = trit + 1, so byte = value + 121.
 static constexpr int XBT_BASE243_BIAS = 121;
@@ -553,6 +585,19 @@ public:
                             place *= 3;
                         }
                         if (d.rd != 0) xreg[d.rd] = byte_val;
+                        break;
+                    }
+                    case XbtGroup2::SHL3: {
+                        // rd = value(rs1) * 3^imm.  Shift by trit positions is
+                        // pure rail movement, but trits leaving the top of the
+                        // word are lost, so overflow is refused rather than
+                        // wrapped.  P1 scalar multiply depends on this.
+                        TritWord64 shifted;
+                        if (!shl3(rs1_t, d.rs2, shifted))
+                            throw std::invalid_argument(
+                                "RiscvXbtCoprocessor::execute: SHL3 overflow "
+                                "(trits shifted out of the ternary word)");
+                        treg[d.rd] = shifted;
                         break;
                     }
                     default:

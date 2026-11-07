@@ -1,0 +1,57 @@
+# Trium-XBT target: RISC-V with the Xbt ternary extension.
+#
+# This is the reference ternary target. It has a real 64-trit datapath,
+# lane-wise multiply, and a planar popcount dot product -- but NO true scalar
+# multiply in hardware (see docs/XBT_ISA_SPEC.md), which is why `xbt.mul` is
+# lane-wise and scalar multiply is lowered by shift-add.
+
+schema_version: 1
+
+name: riscv64-xbt
+triple: riscv64-unknown-linux-gnu
+aliases: [riscv-xbt, xbt]
+family: accelerator
+
+datapath:
+  native_trit_width: 64
+  max_immediate_trits: 5
+  has_word_add: true
+  has_lane_mul: true
+  has_scalar_mul: false      # lane-wise only; scalar mul needs shift-add lowering
+  has_popcount_dot: true
+
+storage:
+  native_layouts: [dual-rail, base-243]
+  preferred_layout: dual-rail
+
+registers:
+  ternary: 32
+  scalar: 32
+  zero_hardwired: true
+
+native_ops:
+  - add
+  - sub
+  - negate
+  - dot
+  - unpack243
+  - pack243
+  - lane-mul
+
+memory:
+  cache_line_bytes: 64
+  scratchpad_bytes: 0
+  global_bytes: 0
+  explicit_movement: false   # cached; hardware moves data
+
+costs:
+  add: 1
+  sub: 1
+  negate: 1
+  dot: 3
+  lane-mul: 2
+  unpack243: 4
+  pack243: 4
+default_cost: 8
+
+simulator: null              # RTL exists (hw/riscv_xbt_extension.sv)
