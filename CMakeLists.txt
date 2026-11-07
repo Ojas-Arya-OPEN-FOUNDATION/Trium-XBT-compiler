@@ -319,6 +319,10 @@ if(BT_BUILD_TESTS)
     target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
 
+    add_executable(unit_layouts test/Unit/test_unit_layouts.cpp)
+    target_include_directories(unit_layouts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Layouts COMMAND unit_layouts)
+
     add_executable(unit_memory_model test/Unit/test_unit_memory_model.cpp)
     target_include_directories(unit_memory_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Memory_Model COMMAND unit_memory_model)
