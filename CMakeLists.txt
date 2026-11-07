@@ -319,6 +319,10 @@ if(BT_BUILD_TESTS)
     target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
 
+    add_executable(unit_tensor test/Unit/test_unit_tensor.cpp)
+    target_include_directories(unit_tensor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Tensor COMMAND unit_tensor)
+
     add_executable(unit_translation_validation test/Unit/test_translation_validation.cpp)
     target_include_directories(unit_translation_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Translation_Validation COMMAND unit_translation_validation)
