@@ -634,3 +634,55 @@ Non-negotiable, carried over from the standing requirements on this project:
 
 *Plan written 2026-11-07. Implementation begins on your go-ahead, in the order
 in §9 unless you redirect it.*
+
+---
+
+## 13. Implementation status
+
+Recorded so the next session starts from fact rather than from a re-read of
+the whole tree. All of this is host C++ and proofs only — **nothing here says
+anything about real hardware**, which remains true and unchanged.
+
+| Item | Status | Where |
+|---|---|---|
+| 3.3 translation validation | **done** | `verification/translation_validation.py` (Z3, 7/7), `test/Unit/test_translation_validation.cpp` (real `Optimizer`, 6/6) |
+| P1 scalar multiply | **done** | `docs/XBT_ISA_SPEC.md` §4.x–§4.y, `verify_scalar_mul.py` 9/9 |
+| 3.1 tensor types | **done** | `include/Ternary/IR/Tensor.hpp`, `verify_tensor_shapes.py` 18/18, 51 checks |
+| 3.2 memory model | **done** | `include/Ternary/Memory/Memory.hpp`, `verify_memory.py` 12/12, 41 checks |
+| 3.4 layout conformance | **done** | `include/Ternary/IR/Layout.hpp`, `specs/layout_conformance.json` (2100 vectors), 13/13 |
+| 5.1 runtime dispatch | **done, and the test was lying** | see below |
+| 6.1 capability contract | **done** | `targets/*.yaml` + `schema/target.schema.json` |
+| 6.2 backend generator | **done** | `tools/gen_backend.py`, `check_generated_backends.py` 24/24 |
+| 6.3 simulator plug-in | **done** | `include/Ternary/Target/Simulator.hpp`, 22 checks |
+| 6.4 emitted backends | **done** | standalone CMake packages per target |
+| P4 vendor onboarding | **done** | `docs/TARGET_AUTHORING.md` + `examples/minimal-target/` |
+| P5 SDK parity | **done (enforced)** | `tools/check_sdk_parity.py` → `docs/SDK_PARITY.md`, 13/27 tri-language |
+| 5.2 GPU execution | **not started** | needs a software compute runner; no GPU in CI |
+| 5.3 advanced capabilities | **not started** | |
+| Phase 4 hardware reality | **not started** | RTL sim in CI; would catch the `CSAMAC` bug |
+
+### 5.1 was the interesting one
+
+Runtime dispatch already existed and was declared done. It was not verifiably
+done, for two reasons worth remembering:
+
+1. **The SIMD lanes are dead code below a threshold.** The vectorised inner
+   loop is `for (; w + W <= kw; w += W)`, so AVX-512 (W=8) needs k ≥ 512 and
+   AVX2 (W=4) needs k ≥ 256. Existing shapes stopped at k=513, so essentially
+   only the scalar tail ran. A corrupted AVX-512 lane went undetected.
+2. **Forcing a lane that is not compiled in falls through to Scalar
+   silently**, and `GemmStats::isa` records the *request*, not what executed —
+   so the statistics cannot be used to detect it either.
+
+`test/Unit/test_unit_kernel_isa_paths.cpp` forces each lane explicitly over
+shapes that reach its vector body, and reports unexercised lanes as SKIPPED.
+
+### Still true and worth restating
+
+- No performance claim has been verified. The ~30× figure in docstrings and
+  `docs/HARDWARE_READINESS_AUDIT.md:442` is **unverified**.
+- `hw/riscv_xbt_extension.sv` is not simulated in CI; the `CSAMAC` bug is
+  unfixed.
+- The Rust additions in `ffi/rust/src/sdk.rs` (`is_ternary`, `matmul`) are
+  **untested** — cargo is unavailable in the sandbox. Run `cargo test`.
+- Scalar multiply is constants-only.
