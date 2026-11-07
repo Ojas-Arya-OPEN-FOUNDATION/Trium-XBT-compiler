@@ -319,6 +319,10 @@ if(BT_BUILD_TESTS)
     target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
 
+    add_executable(unit_translation_validation test/Unit/test_translation_validation.cpp)
+    target_include_directories(unit_translation_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Translation_Validation COMMAND unit_translation_validation)
+
     # Retargeting seam: target descriptions + backend registry.
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
