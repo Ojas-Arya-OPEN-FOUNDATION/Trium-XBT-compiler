@@ -238,6 +238,10 @@ if(BT_BUILD_TESTS)
     add_executable(unit_dense test/Unit/test_unit_dense.cpp)
     target_include_directories(unit_dense PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    add_executable(unit_carry_free test/Unit/test_unit_carry_free.cpp)
+    target_include_directories(unit_carry_free PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME unit_carry_free COMMAND unit_carry_free)
+
     add_executable(unit_memory test/Unit/test_unit_memory.cpp)
     target_include_directories(unit_memory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
