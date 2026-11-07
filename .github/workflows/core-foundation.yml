@@ -158,9 +158,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # This job builds the `all` target, which includes the
+      # xbt_conformance_vectors custom command. That runs
+      # verification/gen_vectors.py, and verification/xbt_isa.py imports z3 at
+      # module scope -- so without this install the build dies with an
+      # ImportError before any C++ is compiled.
+      - run: python -m pip install cmake ninja -r requirements/verification.txt
       - name: Configure with the MLIR dialect enabled
         run: |
-          cmake -S . -B build/mlir -DBT_ENABLE_MLIR=ON \
+          cmake -S . -B build/mlir -G Ninja -DBT_ENABLE_MLIR=ON \
             -DCMAKE_BUILD_TYPE=Debug -DBT_ENABLE_ASAN=OFF
       - name: Build
         run: |

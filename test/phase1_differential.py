@@ -156,7 +156,18 @@ with tempfile.TemporaryDirectory(prefix='bt-differential-') as temp:
     strange = str(work/f'out$(touch {marker}).s')
     run([compiler,str(source),'--target=x86_64','-S','-o',strange])
     assert not marker.exists()
-    for options in [['--target=riscv64-xbt','-S'],['--target=riscv64-xbt','-c'],['--emit-metal'],['--emit-vulkan'],['--not-a-real-option']]:
+    # --target=riscv64-xbt used to be listed here as "must fail", because the
+    # selector only handled Add/Sub/Negate/Mul/Parameter/Integer and threw
+    # "instruction selection not implemented" for almost everything real. It is
+    # now a working backend: -S and -c both succeed on this source. Asserting
+    # they fail encoded the old limitation as if it were a guarantee, and the
+    # assertion started failing long before anyone noticed (the backend already
+    # lowered a bare constant under the old selector too).
+    for options in [['--target=riscv64-xbt','-S'],['--target=riscv64-xbt','-c']]:
+        result = run([compiler,str(source),*options])
+        assert result.returncode == 0, options
+    # These three really are unsupported / invalid.
+    for options in [['--emit-metal'],['--emit-vulkan'],['--not-a-real-option']]:
         result = run([compiler,str(source),*options])
         assert result.returncode != 0, options
 print(f'PASS: {len(expected)} native/AST/core-IR/Python oracle values, negative cases, overflow propagation and driver safety')

@@ -88,7 +88,11 @@ int64_t word_value(const TritWord64& w) {
         bool nn = (w.N >> i) & 1ULL;
         if (pp) v += p;
         else if (nn) v -= p;
-        p *= 3;
+        // 3^39 is the last weight actually used, and it already fills most of
+        // an int64; multiplying again on the final iteration overflows. UBSan
+        // flags it, under sanitizers only, which is exactly the kind of bug
+        // that survives a normal build.
+        if (i != 39) p *= 3;
     }
     return v;
 }
