@@ -1,6 +1,11 @@
 #ifndef TERNARY_TARGET_XBT_INSTRUCTION_SELECTOR_HPP
 #define TERNARY_TARGET_XBT_INSTRUCTION_SELECTOR_HPP
 
+// MachineDescription (generated from targets/*.yaml) lets rules consult target
+// capability. This is what makes `has_scalar_mul` a data-driven decision.
+#include "GeneratedTargets.hpp"
+#include "TargetDescription.hpp"
+
 /**
  * @file include/Ternary/Target/XbtInstructionSelector.hpp
  * @brief Rule-driven lowering of the backend-neutral core IR to Xbt machine code.
@@ -81,6 +86,7 @@ enum class Group2 : uint8_t {
     CMOVZ   = 0x04,
     CMOVP   = 0x05,
     CMOVN   = 0x06,
+    SHL3    = 0x07,   // rd = value(rs1) * 3^rs2field; see hw/xbt_alu_model.hpp
 };
 
 constexpr int BASE243_BIAS = 121;
@@ -206,6 +212,24 @@ public:
         register_default_rules();
     }
 
+    /**
+     * @brief Construct for a specific target.
+     *
+     * Target capability drives rule availability -- that is the whole point of
+     * describing hardware as data. Today it selects between a native scalar
+     * multiply and the shift-add lowering.
+     */
+    explicit InstructionSelector(const bt::target::MachineDescription& m,
+                                 int available_regs = 16)
+        : available_(available_regs), machine_(&m) {
+        if (available_ < 4 || available_ >= REG_COUNT)
+            throw std::invalid_argument("xbt: register count out of range");
+        register_default_rules();
+    }
+
+    /** The target this selector was built for, or nullptr if unspecified. */
+    const bt::target::MachineDescription* machine() const { return machine_; }
+
     LoweredFunction lower_function(const ir::Function& f) {
         LoweredFunction out;
         out.name = f.name;
@@ -240,6 +264,7 @@ private:
     friend struct RuleContext;
 
     int available_;
+    const bt::target::MachineDescription* machine_{nullptr};
     int next_reg_{1};
     std::map<uint32_t, int> symbol_reg_;
     std::set<int> free_regs_;
@@ -440,6 +465,27 @@ inline void InstructionSelector::register_default_rules() {
             return d;
         }});
 
+    // ---------------- native scalar multiply ----------------
+    // Only available when the TARGET says it has one. This is the whole point
+    // of describing hardware as data: the same IR lowers differently on a
+    // machine with a true multiplier than on one without, and the decision is
+    // a field in targets/*.yaml rather than an #ifdef in the driver.
+    add_rule({ir::Op::Mul, "native-scalar-mul", 1,
+        [this](const ir::Expression&) {
+            return machine_ != nullptr && machine_->has_scalar_mul;
+        },
+        [](const RuleContext& c, const ir::Expression& e) -> int {
+            int a = c.lower(e->operands.at(0));
+            int b = c.lower(e->operands.at(1));
+            int d = c.alloc();
+            c.emit(c.sel->make_r(Funct3::GROUP2, (uint8_t)Group2::MUL, d, a, b,
+                "xbt.mul t" + std::to_string(d) + ", t" + std::to_string(a) +
+                ", t" + std::to_string(b) + "   // native scalar multiply"));
+            c.release(a); c.release(b);
+            return d;
+        },
+        "requires a target with has_scalar_mul (see targets/*.yaml)"});
+
     // ---------------- lane-wise multiply ----------------
     // Only safe for single-trit operands: the hardware product drops every
     // carry that would cross a lane boundary.
@@ -460,6 +506,104 @@ inline void InstructionSelector::register_default_rules() {
         },
         "both operands must be single-trit: the Xbt MUL is lane-wise and "
         "would silently drop inter-lane carries"});
+
+    // ---------------- multiply by a compile-time constant ----------------
+    //
+    //   a * K = SUM_i (trit_i of K) * (a << i)          accumulated by ksadd
+    //
+    // Needs SHL3, the shift added for exactly this purpose. Only the CONSTANT
+    // case is handled here: decomposing a runtime multiplier would require
+    // extracting its trits one at a time, and the ISA has no trit-extract
+    // instruction. That general case stays a documented refusal below rather
+    // than a silently wrong expansion.
+    //
+    // Note on partial products: verification/verify_scalar_mul.py (S4) shows
+    // balanced ternary is NOT automatically non-adjacent form -- most words
+    // have adjacent nonzeros -- so the count here is the number of nonzero
+    // trits, roughly 2/3 of the width, not the ~1/3 a true NAF would give.
+    add_rule({ir::Op::Mul, "const-shift-add-mul", 8,
+        [](const ir::Expression& e) {
+            const auto& a = e->operands.at(0);
+            const auto& b = e->operands.at(1);
+            auto is_const = [](const ir::Expression& x) {
+                return x && x->op == ir::Op::Integer;
+            };
+            // Exactly one side constant; the other is lowered normally.
+            return is_const(a) != is_const(b);
+        },
+        [](const RuleContext& c, const ir::Expression& e) -> int {
+            const auto& x0 = e->operands.at(0);
+            const auto& x1 = e->operands.at(1);
+            const bool k_first = (x0 && x0->op == ir::Op::Integer);
+            const ir::Expression& k_expr = k_first ? x0 : x1;
+            const ir::Expression& v_expr = k_first ? x1 : x0;
+            const int64_t K = k_expr->integer;
+
+            int v = c.lower(v_expr);
+
+            if (K == 0) {                       // a * 0 == 0
+                int d = c.alloc();
+                for (auto& i : c.sel->materialise(0, d)) c.emit(i);
+                c.release(v);
+                return d;
+            }
+            if (K == 1) return v;               // a * 1 == a
+
+            // Balanced-ternary digits of |K|; the sign is folded in at the end
+            // because negation is a free wire swap on dual-rail.
+            uint64_t mag = (K < 0) ? static_cast<uint64_t>(-K)
+                                   : static_cast<uint64_t>(K);
+            int trits[41];
+            int n = 0;
+            while (mag != 0 && n < 41) {
+                unsigned r = static_cast<unsigned>(mag % 3);
+                if (r == 0)      { trits[n++] = 0;  mag /= 3; }
+                else if (r == 1) { trits[n++] = 1;  mag = (mag - 1) / 3; }
+                else             { trits[n++] = -1; mag = (mag + 1) / 3; }
+            }
+
+            int acc = -1;
+            for (int i = 0; i < n; ++i) {
+                if (trits[i] == 0) continue;
+                int sh = c.alloc();
+                c.emit(c.sel->make_r(Funct3::GROUP2, (uint8_t)Group2::SHL3,
+                    sh, v, i,
+                    "shl3 t" + std::to_string(sh) + ", t" + std::to_string(v) +
+                    ", " + std::to_string(i) + "   // partial product 3^" +
+                    std::to_string(i)));
+                if (trits[i] < 0) {
+                    c.emit(c.sel->make_r(Funct3::NEG, 0, sh, sh, 0,
+                        "neg t" + std::to_string(sh) + ", t" +
+                        std::to_string(sh) + "   // negative trit"));
+                }
+                if (acc < 0) {
+                    acc = sh;                   // first partial product
+                } else {
+                    c.emit(c.sel->make_r(Funct3::KSADD, 0, acc, acc, sh,
+                        "ksadd t" + std::to_string(acc) + ", t" +
+                        std::to_string(acc) + ", t" + std::to_string(sh)));
+                    c.release(sh);
+                }
+            }
+
+            if (acc < 0) {                      // K != 0 guarantees this is dead
+                acc = c.alloc();
+                for (auto& i : c.sel->materialise(0, acc)) c.emit(i);
+            }
+            c.release(v);
+
+            if (K < 0) {                        // negate: free on dual-rail
+                int d = c.alloc();
+                c.emit(c.sel->make_r(Funct3::NEG, 0, d, acc, 0,
+                    "neg t" + std::to_string(d) + ", t" + std::to_string(acc)));
+                c.release(acc);
+                return d;
+            }
+            return acc;
+        },
+        "exactly one operand must be a compile-time constant; the ISA has no "
+        "trit-extract instruction, so a runtime multiplier cannot be "
+        "decomposed into partial products"});
 
     // ---------------- sign of a difference ----------------
     // Shared helper: every comparison is a predicate over sign(a - b).

@@ -298,10 +298,30 @@ Balanced-ternary multiplication then decomposes as
 
     a * b = Σ_i  (trit_i of b) * (a << i)        for each nonzero trit i
 
-with the sum accumulated by `ksadd`. Using **non-adjacent form (NAF)** —
-digits in {-1,0,+1} with no two adjacent nonzeros, which balanced ternary
-gives naturally — halves the number of partial products versus plain ternary
-recoding and removes the need for a separate subtraction pass.
+with the sum accumulated by `ksadd`.
+
+> **Correction (found during implementation, verified in
+> `verification/verify_scalar_mul.py` S4/S5).** The original text claimed
+> balanced ternary "gives NAF naturally" and so "halves the number of partial
+> products versus plain ternary recoding". **Both halves of that are wrong.**
+>
+> - Balanced ternary is *not* automatically non-adjacent form. NAF requires no
+>   two adjacent nonzeros; the canonical balanced encoding of 5 is `[1,-1,-1]`,
+>   which has adjacent nonzeros. Measured: **6220 of 6561** canonical 8-trit
+>   words have adjacent nonzeros. Balanced ternary shares NAF's *digit set*
+>   ({-1,0,+1}) but not its *non-adjacency property*.
+> - Against plain ternary recoding there is therefore **no saving at all**:
+>   both average 2/3 of digits nonzero. The real NAF benefit is over *binary*
+>   recoding (1/3 density vs 1/2), and measured here it is **6.00 vs 6.45**
+>   average nonzeros at w = 9 — about 7%, not a halving.
+>
+> Consequence: expect roughly **2/3 · w partial products**, not ~1/3 · w. At
+> w = 40 that is ~26 partial products, not ~13. This does not change
+> correctness, only the cost estimate below.
+
+The recoding does still remove the need for a separate subtraction pass,
+because a negative trit is folded in by `neg` (a free wire swap on dual-rail)
+rather than by subtracting.
 
 This is a new selector rule (appended, per the rule-table design), plus a new
 ISA op with a Z3 spec, plus a hardware-model implementation.
@@ -323,9 +343,16 @@ ISA op with a Z3 spec, plus a hardware-model implementation.
 - Overflow: must **fail loudly**, not wrap — consistent with the existing
   `__int128` overflow-check philosophy in the reference `matmul`.
 
-**Risks.** 40-trit shift-add is ~40× slower than a hardware multiplier; that is
-acceptable for correctness but must be *reported*, and is exactly why
-`has_scalar_mul` routing matters — a target with real multiply never pays it.
+**Risks.** The shift-add is ~26 partial products at int39 width (see the
+correction above — not the ~13 originally estimated), each a `shl3` plus a
+`ksadd`, so roughly 50 instructions versus 1. That is acceptable for
+correctness but must be *reported*, and is exactly why `has_scalar_mul`
+routing matters — a target with real multiply never pays it.
+
+**Scope limit, stated explicitly.** Only the **constant**-multiplier case is
+lowered. Decomposing a *runtime* multiplier would require extracting its trits
+one at a time, and the ISA has no trit-extract instruction. That case remains a
+documented refusal with an actionable message, not a silently wrong expansion.
 
 **Exit criteria.** General multiply compiles and is proved correct on the
 model; overflow is detected; targets with `has_scalar_mul` emit the native

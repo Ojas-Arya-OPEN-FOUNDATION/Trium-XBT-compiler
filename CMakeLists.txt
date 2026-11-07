@@ -315,6 +315,10 @@ if(BT_BUILD_TESTS)
     add_executable(unit_xbt_selector test/Unit/test_xbt_selector.cpp)
     target_include_directories(unit_xbt_selector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    add_executable(unit_scalar_mul test/Unit/test_unit_scalar_mul.cpp)
+    target_include_directories(unit_scalar_mul PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME Layer1_Unit_Scalar_Mul COMMAND unit_scalar_mul)
+
     # Retargeting seam: target descriptions + backend registry.
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
