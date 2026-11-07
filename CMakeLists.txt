@@ -208,6 +208,31 @@ if(BT_BUILD_TESTS)
         target_compile_options(unit_microkernel PRIVATE -march=native)
     endif()
 
+    # Every SIMD lane forced explicitly and compared against the scalar
+    # oracle (SCALING_PLAN 5.1).
+    #
+    # This MUST be built with the ISA flags: the lanes are behind
+    # `#if defined(__AVX2__)` etc, so a default build compiles none of them
+    # and Isa::Auto silently resolves to Scalar -- a differential test then
+    # compares Scalar against Scalar and passes while testing nothing.
+    #
+    # The shapes reach kw >= 8 on purpose. The vectorised inner loop runs
+    # only while `w + W <= kw`, so AVX-512 (W=8) needs k >= 512 and AVX2
+    # (W=4) needs k >= 256; below that only the scalar tail executes and a
+    # corrupted SIMD lane goes undetected.
+    #
+    # -march=native makes this test binary specific to the build machine.
+    # That is acceptable for a test that is built and run in the same place;
+    # it is never installed.
+    add_executable(unit_kernel_isa_paths test/Unit/test_unit_kernel_isa_paths.cpp)
+    target_include_directories(unit_kernel_isa_paths PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(unit_kernel_isa_paths PRIVATE -march=native)
+    endif()
+    add_test(NAME Layer1_Unit_Kernel_ISA_Paths COMMAND unit_kernel_isa_paths)
+
     # Honest benchmark runner. `--check` verifies every kernel bit-exact
     # against a reference and times nothing it has not verified, so CI can run
     # it in seconds. The full sweep (256/512/1024) is opt-in and is the only

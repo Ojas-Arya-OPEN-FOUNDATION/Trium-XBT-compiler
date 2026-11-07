@@ -77,6 +77,12 @@ static std::vector<int64_t> reference_gemm(const Operands& o) {
 // ---------------------------------------------------------------------------
 static void test_correctness() {
     std::printf("  [MicroKernel] differential correctness vs naive reference...\n");
+    // NOTE: this compares `Auto` against `Scalar`. It does NOT verify the
+    // individual SIMD lanes: Auto resolves to whichever single lane this CPU
+    // reports, so the others are never executed, and lanes whose vector body
+    // needs kw >= W are skipped entirely for small K. Per-lane differential
+    // verification lives in test_unit_kernel_isa_paths.cpp, which forces each
+    // lane explicitly over shapes that actually reach its vector body.
     std::mt19937_64 g(20261103);
 
     // Deliberately awkward shapes: not multiples of MR/NR (4) nor of 64.
