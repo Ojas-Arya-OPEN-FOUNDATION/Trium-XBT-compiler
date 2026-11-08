@@ -384,7 +384,8 @@ if(BT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_targets.py --check
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(Check_Target_Descriptions PROPERTIES
-            LABELS "codegen")
+            LABELS "codegen"
+            SKIP_RETURN_CODE 77)
 
         # Track B: generated backend packages must compile and must FAIL their
         # own conformance suite. A generated backend that passes would mean the
@@ -394,7 +395,8 @@ if(BT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_generated_backends.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(Check_Generated_Backends PROPERTIES
-            LABELS "codegen")
+            LABELS "codegen"
+            SKIP_RETURN_CODE 77)
 
         # SDK parity: an asymmetry between the C, Python and Rust surfaces is
         # a bug unless it is explicitly justified. Fails on any unjustified gap.
@@ -403,7 +405,8 @@ if(BT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_sdk_parity.py --check
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(Check_SDK_Parity PROPERTIES
-            LABELS "sdk")
+            LABELS "sdk"
+            SKIP_RETURN_CODE 77)
     endif()
 
     add_executable(unit_generated_targets test/Unit/test_generated_targets.cpp)

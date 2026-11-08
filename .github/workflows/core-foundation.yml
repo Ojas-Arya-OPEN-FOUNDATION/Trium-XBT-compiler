@@ -174,7 +174,7 @@ jobs:
       # verification/gen_vectors.py, and verification/xbt_isa.py imports z3 at
       # module scope -- so without this install the build dies with an
       # ImportError before any C++ is compiled.
-      - run: python -m pip install cmake ninja z3-solver
+      - run: python -m pip install cmake ninja -r requirements/verification.txt
       - name: Configure with the MLIR dialect enabled
         run: |
           cmake -S . -B build/mlir -G Ninja -DBT_ENABLE_MLIR=ON \
@@ -223,7 +223,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install build tools and Z3
-        run: python -m pip install cmake ninja z3-solver
+        run: python -m pip install cmake ninja -r requirements/verification.txt
       - name: Prove the Xbt instruction set against ternary arithmetic
         run: python3 -m verification.verify_isa
       - name: Generate conformance vectors from the proved specification

@@ -40,12 +40,14 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    sys.exit("gen_targets: PyYAML is required (pip install pyyaml)")
+    print("SKIP: gen_targets: PyYAML is required (pip install pyyaml)", file=sys.stderr)
+    sys.exit(77)
 
 try:
     from jsonschema import Draft202012Validator
 except ImportError:
-    sys.exit("gen_targets: jsonschema is required (pip install jsonschema)")
+    print("SKIP: gen_targets: jsonschema is required (pip install jsonschema)", file=sys.stderr)
+    sys.exit(77)
 
 
 ROOT = Path(__file__).resolve().parent.parent

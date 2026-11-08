@@ -52,8 +52,14 @@ def main() -> int:
     print("=" * 78)
 
     # Import the generators so we use the same code the build does.
-    import gen_backend
-    import gen_targets
+    try:
+        import gen_backend
+        import gen_targets
+    except SystemExit as e:
+        sys.exit(e.code)
+    except ImportError as e:
+        print(f"SKIP: check_generated_backends: {e}", file=sys.stderr)
+        sys.exit(77)
 
     targets = gen_targets.load_targets()
     print(f"\n  {len(targets)} targets: "
