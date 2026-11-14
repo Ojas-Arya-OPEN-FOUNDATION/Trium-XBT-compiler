@@ -153,7 +153,7 @@
     LLVM_IR --&gt; Clang[&quot;Host Clang Compiler (-O3)&quot;]
     Clang --&gt; NativeMach[&quot;Native CPU Machine Code (.dylib)&lt;br/&gt;(ARM64 / x86_64 / RISC-V 64)&quot;]
     
-    PathB --&gt; MLIR_Dialect[&quot;MLIR &#x27;bt&#x27; Dialect&lt;br/&gt;(TernaryDialect.td / TernaryOps.td)&quot;]
+    PathB --&gt; MLIR_Dialect[&quot;MLIR &#x27;bt&#x27; Dialect&lt;br/&gt;(include/Ternary/TernaryDialect.td / TernaryOps.td)&quot;]
     MLIR_Dialect --&gt; Lowerings[&quot;Linalg &amp; SIMD Vector Lowerings&lt;br/&gt;(linalg.generic + math.ctpop)&quot;]
     Lowerings --&gt; IREE[&quot;IREE GPU Plugin&lt;br/&gt;(Vulkan SPIR-V / Metal MSL / CUDA PTX)&quot;]
     
@@ -1036,14 +1036,6 @@ for (int i = 0; i &lt; 16; ++i) {
 <li><code>bt_compiler.cpp</code>:</li>
 </ul>
 <p>  <strong>The main command-line compiler executable (<code>bt-compiler</code>).</strong> Orchestrates parsing, semantic checking, optimization passes, AST dumping, and code emission based on user flags (<code>--emit-llvm</code>, <code>--emit-mlir</code>, <code>--emit-metal</code>, <code>--opt-level</code>).</p>
-<ul>
-<li><code>ternary_linalg_lowering.mlir</code>:</li>
-</ul>
-<p>  <strong>Reference MLIR linalg lowerings.</strong> Demonstrates how ternary tensor contractions lower to standard MLIR <code>linalg.generic</code> loops and <code>vector.contract</code> primitives.</p>
-<ul>
-<li><code>TernaryDialect.td</code> &amp; <code>TernaryOps.td</code>:</li>
-</ul>
-<p>  <strong>Root TableGen dialect definitions.</strong> Declares the <code>bt</code> dialect namespace and core operations for LLVM/MLIR code generation.</p>
 <hr>
 <h3 id="c-gpu-shaders-accelerators">(C) GPU Shaders &amp; Accelerators</h3>
 <ul>
@@ -1085,21 +1077,9 @@ for (int i = 0; i &lt; 16; ++i) {
 </ul>
 <p>  <strong>Z3 SMT matrix verification script.</strong> Proves algebraic associativity and non-overflow guarantees for blocked matrix multiplication algorithms.</p>
 <ul>
-<li><code>verify_ternary.py</code>:</li>
-</ul>
-<p>  <strong>Python reference test oracle.</strong> Exhaustively verifies bit-sliced operations against pure Python arbitrary-precision arithmetic.</p>
-<ul>
 <li><code>test_multiprecision_oracle.py</code>:</li>
 </ul>
 <p>  <strong>Python multi-precision test harness.</strong> Stress-tests <code>ternary_bigint.hpp</code> with random 512-bit and 1024-bit test vectors.</p>
-<ul>
-<li><code>hamiltonian_ternary_simulator.py</code>:</li>
-</ul>
-<p>  <strong>Python physics simulator.</strong> Reference implementation of the symplectic planetary leapfrog integrator.</p>
-<ul>
-<li><code>ternary_compiler_prototype.py</code> &amp; <code>ternary_compiler_solutions.py</code>:</li>
-</ul>
-<p>  <strong>Python research prototypes.</strong> Prototyped compiler passes and grammar specifications developed during research phases.</p>
 <hr>
 <h3 id="e-benchmarks-microarchitecture-tests">(E) Benchmarks &amp; Microarchitecture Tests</h3>
 <ul>
@@ -1133,17 +1113,13 @@ for (int i = 0; i &lt; 16; ++i) {
 </ul>
 <p>  One-shot master shell script that builds and runs all unit tests, sanitizers, and benchmarks.</p>
 <ul>
-<li><code>sample_program.bt</code>:</li>
+<li><code>examples/</code>:</li>
 </ul>
-<p>  A complete, working sample program written in the <code>.bt</code> programming language showing tensor declarations, matrix multiplications, and symplectic physics routines.</p>
+<p>  Working <code>.bt</code> sample programs (<code>01_arithmetic_spaceship.bt</code> .. <code>07_gpu_kernel_demo.bt</code>) demonstrating language features, matrix operations, and GPU kernels.</p>
 <ul>
 <li><code>README.md</code> &amp; <code>LICENSE</code>:</li>
 </ul>
 <p>  Project overview and open-source licensing terms.</p>
-<ul>
-<li><code>Production_Grade_Ternary_Core_Library.md</code>, <code>Compiler_Math_Backends_and_System_Architecture.md</code>, <code>Balanced_Ternary_Foundations_and_Architecture.md</code>, <code>Hardware_Agnostic_IREE_Compilation_Architecture.md</code>, <code>Ternary_Compiler_Engineering_Solutions.md</code>, <code>Universal_Balanced_Ternary_Compiler_Masterplan.md</code>:</li>
-</ul>
-<p>  In-depth architectural design specifications and research whitepapers.</p>
 <hr>
 <h3 id="g-directory-includeternary">(G) Directory: <code>include/Ternary/</code></h3>
 <p>Standard C++ and MLIR public interface headers:</p>
@@ -1388,7 +1364,7 @@ for (int i = 0; i &lt; 16; ++i) {
 <p>In this chapter, we will walk side by side through every single stage of the compiler pipeline in <code>bt_compiler.cpp</code>, <code>ternary_frontend_ast.hpp</code>, and <code>ternary_llvm_codegen.hpp</code>. We will trace real code, examine assembly outputs, explore source-level debugging with DWARF 5, and recount real-world debugging stories where subtle LLVM quirks threatened to break our machine code.</p>
 <hr>
 <h2 id="1-the-complete-journey-of-a-bt-program">1. The Complete Journey of a <code>.bt</code> Program</h2>
-<p>When you run <code>./bt-compiler run --native sample_program.bt</code>, your program goes through seven distinct phases. Each phase takes the output of the previous phase and refines it, moving from human thought down to raw silicon:</p>
+<p>When you run <code>./bt-compiler run --native examples/01_arithmetic_spaceship.bt</code>, your program goes through seven distinct phases. Each phase takes the output of the previous phase and refines it, moving from human thought down to raw silicon:</p>
 <pre class="mermaid">flowchart TD
     subgraph HumanLevel[&quot;1. Human Source Level&quot;]
         Source[&quot;.bt Source Text&lt;br/&gt;(UTF-8 Character Stream)&quot;]
@@ -2790,7 +2766,7 @@ bt-opt --convert-all input.mlir -o output_ready.mlir</code></pre>
     // ...
 }</code></pre>
 <h3 id="lowering-btplanar-dot-to-standard-mlir">Lowering <code>bt.planar_dot</code> to Standard MLIR</h3>
-<p>Let&#x27;s look at a concrete before-and-after example from <code>ternary_linalg_lowering.mlir</code>.</p>
+<p>Let&#x27;s look at a concrete before-and-after example of <code>bt.planar_dot</code> lowering (<code>test/Dialect/bt_opt_lowering.mlir</code>).</p>
 <p><strong>Input MLIR (<code>bt</code> dialect)</strong>:</p>
 <pre><code class="lang-mlir">%res = bt.planar_dot %a_p, %a_n, %b_p, %b_n : (i64, i64, i64, i64) -&gt; i64</code></pre>
 <p><strong>Lowered MLIR (after <code>bt-opt --convert-bt-to-vector</code>)</strong>:</p>
@@ -3152,7 +3128,7 @@ def test_btha_soundness():
 <ol>
 <li><strong>MLIR Dialects</strong>: Why does the compiler lower high-level code to an MLIR dialect like <code>bt</code> first, rather than compiling directly to LLVM IR?</li>
 <li><strong>TableGen</strong>: What is the purpose of <code>.td</code> files in <code>include/Ternary/</code>? What does the LLVM TableGen tool do with them?</li>
-<li><strong>Hardware Lowering</strong>: In <code>ternary_linalg_lowering.mlir</code>, what machine intrinsic does <code>bt.planar_dot</code> lower to for counting set bits?</li>
+<li><strong>Hardware Lowering</strong>: In MLIR lowering (<code>lib/Ternary/TernaryPasses.cpp</code>), what machine intrinsic does <code>bt.planar_dot</code> lower to for counting set bits?</li>
 <li><strong>GPU Compute</strong>: In <code>gemm_kernel.metal</code>, how does the compute shader compute balanced ternary dot products on an Apple Silicon GPU without using floating-point multipliers?</li>
 <li><strong>C ABI</strong>: Why are data structures in <code>include/Ternary/ternary_c_abi.h</code> declared with standard C types (<code>uint64_t</code>, <code>int64_t</code>) and <code>extern &quot;C&quot;</code> rather than C++ classes and templates?</li>
 <li><strong>Formal Verification</strong>: What does an <code>UNSAT</code> result from the Z3 SMT solver mean when testing <code>verify_z3_ternary.py</code>?</li>
@@ -3509,7 +3485,7 @@ DualRailPlanes planes(num_words);</code></pre>
 <hr>
 <h3 id="milestone-10-mlir-dialect-lowering-passes-bt-opt-tool">Milestone 10: MLIR Dialect, Lowering Passes &amp; <code>bt-opt</code> Tool</h3>
 <ul>
-<li><strong>Target Files</strong>: <code>TernaryDialect.td</code>, <code>TernaryOps.td</code>, <code>lib/Ternary/TernaryDialect.cpp</code>, <code>lib/Ternary/TernaryPasses.cpp</code>, <code>tools/bt-opt/bt-opt.cpp</code>, <code>ternary_mlir_lowering.hpp</code></li>
+<li><strong>Target Files</strong>: <code>include/Ternary/TernaryDialect.td</code>, <code>include/Ternary/TernaryOps.td</code>, <code>lib/Ternary/TernaryDialect.cpp</code>, <code>lib/Ternary/TernaryPasses.cpp</code>, <code>tools/bt-opt/bt-opt.cpp</code>, <code>ternary_mlir_lowering.hpp</code></li>
 <li><strong>Core Responsibility</strong>: Declare the <code>bt</code> MLIR dialect using LLVM TableGen. Implement dialect operations (<code>bt.btha</code>, <code>bt.dot</code>), conversion patterns lowering <code>bt</code> to <code>linalg.generic</code> and <code>vector.contract</code> (Larq-style bit-sliced POPCNT), and compile the <code>bt-opt</code> command-line optimizer.</li>
 <li><strong>Key Signatures</strong>:</li>
 </ul>
@@ -3699,6 +3675,8 @@ DualRailPlanes planes(num_words);</code></pre>
 </ol>
 <p>   The T-CSR matrix-vector multiplier processes non-zero elements at <strong>0.364 cycles per non-zero entry</strong>, sustaining <strong>2.75 billion non-zeros per second</strong> without touching a hardware multiplier unit.</p>
 <hr>
+<blockquote>[!IMPORTANT]</blockquote>
+<blockquote><strong>Provenance &amp; Measurement Note</strong>: The cycle-normalized figures above derive from the synthetic in-memory microbenchmark harness (<code>bench_cycle_accurate.cpp</code>), where timer ticks (<code>cntvct_el0</code> on ARM64) are normalized against timer clock frequency. On ARM64 without kernel-level PMU cycle counter access (<code>PMCCNTR_EL0</code>), user-space timers record virtual timer intervals. True whole-program system benchmarks and qualification runs with exact environment hashes and platform strings are archived under <code>docs/evidence/</code>.</blockquote>
 <h2 id="3-demystifying-gtops-vs-flops-a-fair-comparison">3. Demystifying GTOPS vs. FLOPS: A Fair Comparison</h2>
 <p>In modern high-performance computing, marketing departments often play games with terminology. It is vital to understand the difference between <strong>GTOPS</strong> and <strong>FLOPS</strong>.</p>
 <h3 id="what-is-a-trit-op-gtops">What is a &quot;Trit Op&quot; (GTOPS)?</h3>

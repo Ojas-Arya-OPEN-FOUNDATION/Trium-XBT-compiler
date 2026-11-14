@@ -125,10 +125,6 @@ These headers provide the foundational math library. They require zero memory al
   **Target code generation emitters.** Generates target-specific assembly, C++ stubs, Apple Metal Shading Language (`MSL`), and Vulkan SPIR-V compute kernels from compiled AST representations.
 - `bt_compiler.cpp`:
   **The main command-line compiler executable (`bt-compiler`).** Orchestrates parsing, semantic checking, optimization passes, AST dumping, and code emission based on user flags (`--emit-llvm`, `--emit-mlir`, `--emit-metal`, `--opt-level`).
-- `ternary_linalg_lowering.mlir`:
-  **Reference MLIR linalg lowerings.** Demonstrates how ternary tensor contractions lower to standard MLIR `linalg.generic` loops and `vector.contract` primitives.
-- `TernaryDialect.td` & `TernaryOps.td`:
-  **Root TableGen dialect definitions.** Declares the `bt` dialect namespace and core operations for LLVM/MLIR code generation.
 
 ---
 
@@ -157,14 +153,8 @@ These headers provide the foundational math library. They require zero memory al
   **Z3 SMT solver verification script.** Uses Microsoft Z3 SMT solver (Bit-Vector QF_BV logic) to prove exhaustively that `BTHA`, `BTFA`, `BT_CSA`, and the Base-243 magic multipliers `(171, 57, 19, 203)` produce zero error for all possible inputs.
 - `verify_z3_dense_algebra.py`:
   **Z3 SMT matrix verification script.** Proves algebraic associativity and non-overflow guarantees for blocked matrix multiplication algorithms.
-- `verify_ternary.py`:
-  **Python reference test oracle.** Exhaustively verifies bit-sliced operations against pure Python arbitrary-precision arithmetic.
 - `test_multiprecision_oracle.py`:
   **Python multi-precision test harness.** Stress-tests `ternary_bigint.hpp` with random 512-bit and 1024-bit test vectors.
-- `hamiltonian_ternary_simulator.py`:
-  **Python physics simulator.** Reference implementation of the symplectic planetary leapfrog integrator.
-- `ternary_compiler_prototype.py` & `ternary_compiler_solutions.py`:
-  **Python research prototypes.** Prototyped compiler passes and grammar specifications developed during research phases.
 
 ---
 
@@ -189,12 +179,10 @@ These headers provide the foundational math library. They require zero memory al
   The complete CMake build configuration for building all libraries, binaries, test runners, and MLIR plugins.
 - `run_all_tests.sh`:
   One-shot master shell script that builds and runs all unit tests, sanitizers, and benchmarks.
-- `sample_program.bt`:
-  A complete, working sample program written in the `.bt` programming language showing tensor declarations, matrix multiplications, and symplectic physics routines.
+- `examples/`:
+  Working `.bt` sample programs (`01_arithmetic_spaceship.bt` .. `07_gpu_kernel_demo.bt`) demonstrating language features, matrix operations, and GPU kernels.
 - `README.md` & `LICENSE`:
   Project overview and open-source licensing terms.
-- `Production_Grade_Ternary_Core_Library.md`, `Compiler_Math_Backends_and_System_Architecture.md`, `Balanced_Ternary_Foundations_and_Architecture.md`, `Hardware_Agnostic_IREE_Compilation_Architecture.md`, `Ternary_Compiler_Engineering_Solutions.md`, `Universal_Balanced_Ternary_Compiler_Masterplan.md`:
-  In-depth architectural design specifications and research whitepapers.
 
 ---
 

@@ -63,7 +63,7 @@ is where projects usually mislead themselves.
 | Packed storage | **works** | 1.6 bits/trit; 20× smaller than FP32 weights |
 | GPU backend | **algorithm verified, dispatch not built** | Shaders + emulator pass; no Vulkan dispatch |
 | RTL / FPGA | **exists, unmeasured** | `hw/` present; no numbers on real hardware |
-| MLIR dialect | **exists** | `TernaryDialect.td`, `TernaryOps.td` |
+| MLIR dialect | **exists** | `include/Ternary/TernaryDialect.td`, `include/Ternary/TernaryOps.td` |
 | SDK | **usable** | C ABI 1.3 + C++ + Python; Rust wrapper uncompiled |
 
 The honest summary: **the CPU side is real and measured. Everything device-side

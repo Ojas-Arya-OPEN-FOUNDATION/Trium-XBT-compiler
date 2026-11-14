@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
 
 ### Lowering `bt.planar_dot` to Standard MLIR
 
-Let's look at a concrete before-and-after example from `ternary_linalg_lowering.mlir`.
+Let's look at a concrete before-and-after example of `bt.planar_dot` lowering (`test/Dialect/bt_opt_lowering.mlir`).
 
 **Input MLIR (`bt` dialect)**:
 ```mlir
@@ -602,7 +602,7 @@ Test your understanding of Chapter 6 with these 6 questions:
 
 1. **MLIR Dialects**: Why does the compiler lower high-level code to an MLIR dialect like `bt` first, rather than compiling directly to LLVM IR?
 2. **TableGen**: What is the purpose of `.td` files in `include/Ternary/`? What does the LLVM TableGen tool do with them?
-3. **Hardware Lowering**: In `ternary_linalg_lowering.mlir`, what machine intrinsic does `bt.planar_dot` lower to for counting set bits?
+3. **Hardware Lowering**: In MLIR lowering (`lib/Ternary/TernaryPasses.cpp`), what machine intrinsic does `bt.planar_dot` lower to for counting set bits?
 4. **GPU Compute**: In `gemm_kernel.metal`, how does the compute shader compute balanced ternary dot products on an Apple Silicon GPU without using floating-point multipliers?
 5. **C ABI**: Why are data structures in `include/Ternary/ternary_c_abi.h` declared with standard C types (`uint64_t`, `int64_t`) and `extern "C"` rather than C++ classes and templates?
 6. **Formal Verification**: What does an `UNSAT` result from the Z3 SMT solver mean when testing `verify_z3_ternary.py`?

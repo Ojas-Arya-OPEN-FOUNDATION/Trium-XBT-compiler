@@ -378,7 +378,7 @@ flowchart TD
 ---
 
 ### Milestone 10: MLIR Dialect, Lowering Passes & `bt-opt` Tool
-- **Target Files**: `TernaryDialect.td`, `TernaryOps.td`, `lib/Ternary/TernaryDialect.cpp`, `lib/Ternary/TernaryPasses.cpp`, `tools/bt-opt/bt-opt.cpp`, `ternary_mlir_lowering.hpp`
+- **Target Files**: `include/Ternary/TernaryDialect.td`, `include/Ternary/TernaryOps.td`, `lib/Ternary/TernaryDialect.cpp`, `lib/Ternary/TernaryPasses.cpp`, `tools/bt-opt/bt-opt.cpp`, `ternary_mlir_lowering.hpp`
 - **Core Responsibility**: Declare the `bt` MLIR dialect using LLVM TableGen. Implement dialect operations (`bt.btha`, `bt.dot`), conversion patterns lowering `bt` to `linalg.generic` and `vector.contract` (Larq-style bit-sliced POPCNT), and compile the `bt-opt` command-line optimizer.
 - **Key Signatures**:
   ```cpp

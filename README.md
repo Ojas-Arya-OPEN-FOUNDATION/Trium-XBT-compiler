@@ -17,7 +17,7 @@
 
 ---
 
-[📖 Complete 31,000-Word Guide](TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.md) &nbsp;•&nbsp;
+[📖 Complete 31,000-Word Guide](docs/Next_Gen_Foundation_Compiler_Guide.md) &nbsp;•&nbsp;
 [⚡ Quick Start](#quick-start-build-run-and-verify-in-60-seconds) &nbsp;•&nbsp;
 [📊 Benchmarks](#section-5-measured-hardware-cycle-accurate-benchmarks) &nbsp;•&nbsp;
 [🤝 Contributing](CONTRIBUTING.md)

@@ -26,10 +26,6 @@ ROOT = DOCS.parent
 CHAPTERS = DOCS / "chapters"
 OUT_MD = DOCS / "Next_Gen_Foundation_Compiler_Guide.md"
 OUT_HTML = DOCS / "Next_Gen_Foundation_Compiler_Guide.html"
-ROOT_MD = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.md"
-ROOT_HTML = ROOT / "NEXT_GEN_FOUNDATION_COMPILER_COMPLETE_GUIDE.html"
-ROOT_TRIUM_MD = ROOT / "TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.md"
-ROOT_TRIUM_HTML = ROOT / "TRIUM_XBT_FOUNDATIONAL_COMPILER_COMPLETE_GUIDE.html"
 
 TITLE = "Trium-XBT Foundational Compiler: The Complete Guide"
 SUBTITLE = "From zero knowledge to rebuilding the whole project"
@@ -250,10 +246,6 @@ def main() -> int:
     html_content = HTML_TEMPLATE.format(title=html.escape(TITLE), body=md_to_html_body(md))
     OUT_MD.write_text(md, encoding="utf-8")
     OUT_HTML.write_text(html_content, encoding="utf-8")
-    ROOT_MD.write_text(md, encoding="utf-8")
-    ROOT_HTML.write_text(html_content, encoding="utf-8")
-    ROOT_TRIUM_MD.write_text(md, encoding="utf-8")
-    ROOT_TRIUM_HTML.write_text(html_content, encoding="utf-8")
 
     print(f"Chapters : {len(chapters)}")
     for p, t in chapters:
@@ -263,8 +255,6 @@ def main() -> int:
           f"{stats['codeblocks']} code blocks, {stats['paths']} file references checked")
     print(f"Wrote    : {OUT_MD.relative_to(ROOT)}  ({OUT_MD.stat().st_size // 1024} KiB)")
     print(f"Wrote    : {OUT_HTML.relative_to(ROOT)}  ({OUT_HTML.stat().st_size // 1024} KiB)")
-    print(f"Wrote    : {ROOT_MD.name}  ({ROOT_MD.stat().st_size // 1024} KiB) [Project Root Single File]")
-    print(f"Wrote    : {ROOT_HTML.name}  ({ROOT_HTML.stat().st_size // 1024} KiB) [Project Root Single File]")
     if problems:
         print(f"\n{len(problems)} problem(s):")
         for p in problems:

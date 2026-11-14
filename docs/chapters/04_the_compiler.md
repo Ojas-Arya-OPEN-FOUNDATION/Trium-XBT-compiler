@@ -16,7 +16,7 @@ In this chapter, we will walk side by side through every single stage of the com
 
 ## 1. The Complete Journey of a `.bt` Program
 
-When you run `./bt-compiler run --native sample_program.bt`, your program goes through seven distinct phases. Each phase takes the output of the previous phase and refines it, moving from human thought down to raw silicon:
+When you run `./bt-compiler run --native examples/01_arithmetic_spaceship.bt`, your program goes through seven distinct phases. Each phase takes the output of the previous phase and refines it, moving from human thought down to raw silicon:
 
 ```mermaid
 flowchart TD

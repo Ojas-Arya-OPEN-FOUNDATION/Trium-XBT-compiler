@@ -85,7 +85,7 @@ flowchart TD
     LLVM_IR --> Clang["Host Clang Compiler (-O3)"]
     Clang --> NativeMach["Native CPU Machine Code (.dylib)<br/>(ARM64 / x86_64 / RISC-V 64)"]
     
-    PathB --> MLIR_Dialect["MLIR 'bt' Dialect<br/>(TernaryDialect.td / TernaryOps.td)"]
+    PathB --> MLIR_Dialect["MLIR 'bt' Dialect<br/>(include/Ternary/TernaryDialect.td / TernaryOps.td)"]
     MLIR_Dialect --> Lowerings["Linalg & SIMD Vector Lowerings<br/>(linalg.generic + math.ctpop)"]
     Lowerings --> IREE["IREE GPU Plugin<br/>(Vulkan SPIR-V / Metal MSL / CUDA PTX)"]
     
