@@ -59,6 +59,7 @@ with tempfile.TemporaryDirectory(prefix="bt-legacy-ffi-") as directory:
     work = Path(directory)
     marker = work / "hijack-marker"
     shutil.copy(hijack, work / "libbt_runtime.so")
+    shutil.copy(hijack, work / "libbt_runtime.dylib")
 
     environment = dict(os.environ)
     environment.pop("BT_RUNTIME_LIBRARY", None)
@@ -66,12 +67,14 @@ with tempfile.TemporaryDirectory(prefix="bt-legacy-ffi-") as directory:
     environment["BT_HIJACK_MARKER"] = str(marker)
     # The real runtime is discoverable through the loader search path only; the
     # working directory (which holds the hijack fixture) must not be consulted.
-    environment["LD_LIBRARY_PATH"] = str(runtime.parent) + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+    for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        existing = environment.get(var, "")
+        environment[var] = f"{runtime.parent}{os.pathsep}{existing}" if existing else str(runtime.parent)
 
     result = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(runtime), str(hijack),
                              str(module_path)], cwd=work, env=environment,
                             capture_output=True, text=True, timeout=120)
-    assert not marker.exists(), "S-01: libbt_runtime.so from the working directory was loaded"
+    assert not marker.exists(), "S-01: shared library from the working directory was loaded"
     if result.returncode != 0:
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)

@@ -29,9 +29,18 @@ def _find_and_load_library() -> ctypes.CDLL:
     search_paths = [
         package_dir,
         os.path.normpath(os.path.join(package_dir, "..", "..")),
-        "/usr/local/lib",
-        "/usr/lib",
     ]
+    for env_var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+        raw = os.environ.get(env_var, "")
+        for entry in raw.split(os.pathsep):
+            # Reject empty, relative, or '.' entries so CWD is never searched.
+            if entry and entry != "." and os.path.isabs(entry):
+                norm = os.path.normpath(entry)
+                if norm not in search_paths:
+                    search_paths.append(norm)
+    for sys_dir in ("/usr/local/lib", "/usr/lib"):
+        if sys_dir not in search_paths:
+            search_paths.append(sys_dir)
 
     for path in search_paths:
         for name in lib_names:
@@ -41,13 +50,6 @@ def _find_and_load_library() -> ctypes.CDLL:
                     return ctypes.CDLL(full_path)
                 except OSError:
                     pass
-
-    # Fallback to the system linker search path (never the current directory).
-    for name in lib_names:
-        try:
-            return ctypes.CDLL(name)
-        except OSError:
-            pass
 
     raise FileNotFoundError(
         "Could not load libbt_runtime.dylib. Please compile it first using: "
