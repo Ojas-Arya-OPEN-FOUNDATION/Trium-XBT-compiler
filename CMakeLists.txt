@@ -364,6 +364,24 @@ if(BT_BUILD_TESTS)
     target_include_directories(unit_translation_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME Translation_Validation COMMAND unit_translation_validation)
 
+    # Isolated Algebraic Virtual Memory & Circulant Weighing Engine
+    add_executable(unit_algebraic_memory test/Unit/test_unit_algebraic_memory.cpp)
+    target_include_directories(unit_algebraic_memory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(unit_algebraic_memory PRIVATE -march=native)
+    endif()
+    add_test(NAME Layer1_Unit_Algebraic_Memory COMMAND unit_algebraic_memory)
+
+    add_executable(algebraic_memory_bench tools/bench_algebraic_memory.cpp tools/bench_harness.hpp)
+    target_include_directories(algebraic_memory_bench PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+    if(BT_HAS_MARCH_NATIVE)
+        target_compile_options(algebraic_memory_bench PRIVATE -march=native)
+    endif()
+    add_test(NAME Algebraic_Memory_Bench_Check COMMAND algebraic_memory_bench --check)
+
     # Retargeting seam: target descriptions + backend registry.
     add_executable(unit_backend_registry test/Unit/test_backend_registry.cpp)
     target_include_directories(unit_backend_registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -563,7 +581,9 @@ if(BT_BUILD_TESTS)
     set_tests_properties(Core_Program_Differential PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME Phase1_Z3
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_phase1.py)
-    set_tests_properties(Phase1_LLVM_Differential Phase1_Z3 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    add_test(NAME Algebraic_Memory_Z3
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_z3_algebraic_memory.py)
+    set_tests_properties(Phase1_LLVM_Differential Phase1_Z3 Algebraic_Memory_Z3 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     add_test(NAME Runtime_ABI_Client COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/runtime_abi_regression.py $<TARGET_FILE:ternary_clibi>)
     add_test(NAME Phase1_Python_FFI
@@ -608,6 +628,7 @@ if(BT_BUILD_TESTS)
             unit_audit_regressions bt_hijack_fixture
             unit_microkernel ternary_bench unit_kernel_contract
             unit_xbt_conformance unit_xbt_selector unit_backend_registry
+            unit_algebraic_memory algebraic_memory_bench
     )
 endif()
 
