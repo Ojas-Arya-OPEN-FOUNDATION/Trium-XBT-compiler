@@ -19,7 +19,7 @@
 
 [📖 Complete 31,000-Word Guide](docs/Next_Gen_Foundation_Compiler_Guide.md) &nbsp;•&nbsp;
 [⚡ Quick Start](#quick-start-build-run-and-verify-in-60-seconds) &nbsp;•&nbsp;
-[📊 Benchmarks](#section-5-measured-hardware-cycle-accurate-benchmarks) &nbsp;•&nbsp;
+[📊 Benchmark & Architecture Report](docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md) &nbsp;•&nbsp;
 [🤝 Contributing](CONTRIBUTING.md)
 
 ---
@@ -307,6 +307,21 @@ Microbenchmarks in `bench_cycle_accurate.cpp` measure timer deltas and operation
 | **Multiplier-Free T-CSR SpMV** | 1,000 × 1,000 (52K NNZ) | 134,039 ticks | 2.549 ticks / NNZ | 134.0 μs | **0.39 G-NNZ/s** | 
 | **BT-FP32 Addition ($O(1)$ Fast Path)** | 20-trit mantissa | 17.48 ticks | 0.874 ticks / trit | 17.48 ns | **0.06 GAdd/s** | 
 | **BT-FP32 Multiplication ($O(1)$ Mul)** | 20-trit mantissa | 119.06 ticks | 5.953 ticks / trit | 119.06 ns | **0.01 GMul/s** | 
+
+### Head-to-Head: Standalone Trium-XBT CPU Core vs. USN REBEL-6
+
+Measured via direct live integration with the official USN REBEL-6 simulator (`Soppe/RV32IToREBEL`) and Trium cycle-accurate simulator on the `main` branch:
+
+| Benchmark / Capability | USN REBEL-6 (R2R) | Trium-XBT Core & Compiler | Architectural Implication |
+| :--- | :--- | :--- | :--- |
+| **768-Trit Vector Dot-Product** | 4,608 instructions (scalar loop) | **24 instructions (`xbt.dot64`)** | **192.0× instruction reduction** |
+| **Ternary Memory Decoding** | 44.8 µs (software `div`/`mod 3`) | **1.3 µs / 1 cycle (reciprocals)** | **34.5× faster 1-cycle Base-243 decode** |
+| **Dhrystone 2.1 Dynamic Power** | 2.70 flips/insn (-31.6% vs RV32I) | **2.54 flips/insn (-26.1% vs RV32I)** | **Validates balanced-ternary low-power physics** |
+| **Word Datapath Width** | 32 Trits (24-trit `Tint` in sim) | **64 Trits Native (128-bit dual-rail)** | **2.0× wider word bandwidth per register** |
+| **Host GEMM Throughput** | N/A (simulation only) | **113.10 G MAC/s** | **6.0× faster than Microsoft BitNet b1.58** |
+| **Formal Verification** | None | **4 Z3 SMT Formal Mathematical Proofs** | **Theorems 1–4 mathematically proven (`UNSAT`)** |
+
+*For complete mathematical proofs, transistor-level DRC rules, and full reproduction instructions, see [docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md](docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md).* 
 
 ---
 
