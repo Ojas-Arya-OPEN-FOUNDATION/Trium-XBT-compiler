@@ -156,6 +156,47 @@ void gemm_dual_rail_popcnt(const TritWord64* __restrict A,
     }
 }
 
+#if defined(__aarch64__) || defined(__arm64__)
+void gemm_dual_rail_neon128(const TritWord64* __restrict A,
+                            const TritWord64* __restrict BT,
+                            int64_t* __restrict C,
+                            size_t M, size_t K, size_t N) noexcept {
+    const size_t words = K / 64;
+    for (size_t i = 0; i < M; ++i) {
+        const TritWord64* a_ptr = &A[i * words];
+        for (size_t j = 0; j < N; ++j) {
+            const TritWord64* b_ptr = &BT[j * words];
+            uint16x8_t acc_p = vdupq_n_u16(0);
+            uint16x8_t acc_n = vdupq_n_u16(0);
+            size_t w = 0;
+            for (; w + 2 <= words; w += 2) {
+                uint64x2x2_t va = vld2q_u64(reinterpret_cast<const uint64_t*>(&a_ptr[w]));
+                uint64x2x2_t vb = vld2q_u64(reinterpret_cast<const uint64_t*>(&b_ptr[w]));
+                uint8x16_t ap = vreinterpretq_u8_u64(va.val[0]);
+                uint8x16_t an = vreinterpretq_u8_u64(va.val[1]);
+                uint8x16_t bp = vreinterpretq_u8_u64(vb.val[0]);
+                uint8x16_t bn = vreinterpretq_u8_u64(vb.val[1]);
+
+                uint8x16_t pp = vorrq_u8(vandq_u8(ap, bp), vandq_u8(an, bn));
+                uint8x16_t np = vorrq_u8(vandq_u8(ap, bn), vandq_u8(an, bp));
+
+                acc_p = vpadalq_u8(acc_p, vcntq_u8(pp));
+                acc_n = vpadalq_u8(acc_n, vcntq_u8(np));
+            }
+            int64_t sum = static_cast<int64_t>(vaddvq_u32(vpaddlq_u16(acc_p))) -
+                          static_cast<int64_t>(vaddvq_u32(vpaddlq_u16(acc_n)));
+            for (; w < words; ++w) {
+                uint64_t pp = (a_ptr[w].P & b_ptr[w].P) | (a_ptr[w].N & b_ptr[w].N);
+                uint64_t np = (a_ptr[w].P & b_ptr[w].N) | (a_ptr[w].N & b_ptr[w].P);
+                sum += static_cast<int64_t>(std::popcount(pp)) -
+                       static_cast<int64_t>(std::popcount(np));
+            }
+            C[i * N + j] = sum;
+        }
+    }
+}
+#endif
+
 // Harley-Seal 3:2 Carry-Save Adder (CSA) reduction across word triples
 static inline void csa3(uint64_t a, uint64_t b, uint64_t c,
                         uint64_t& ones, uint64_t& twos) noexcept {
@@ -233,14 +274,21 @@ int main() {
     pack_matrix_neon(BT_i8.data(), BT_dr.data(), N, K);
 
     std::vector<int32_t> C_i8(M * N, 0);
-    std::vector<int64_t> C_pop(M * N, 0), C_hs(M * N, 0);
+    std::vector<int64_t> C_pop(M * N, 0), C_neon128(M * N, 0), C_hs(M * N, 0);
 
     gemm_int8_neon(A_i8.data(), BT_i8.data(), C_i8.data(), M, K, N);
     gemm_dual_rail_popcnt(A_dr.data(), BT_dr.data(), C_pop.data(), M, K, N);
+#if defined(__aarch64__) || defined(__arm64__)
+    gemm_dual_rail_neon128(A_dr.data(), BT_dr.data(), C_neon128.data(), M, K, N);
+#endif
     gemm_dual_rail_harley_seal(A_dr.data(), BT_dr.data(), C_hs.data(), M, K, N);
 
     for (size_t i = 0; i < M * N; ++i) {
-        if (C_i8[i] != C_pop[i] || C_i8[i] != C_hs[i]) {
+        if (C_i8[i] != C_pop[i] || C_i8[i] != C_hs[i]
+#if defined(__aarch64__) || defined(__arm64__)
+            || C_i8[i] != C_neon128[i]
+#endif
+        ) {
             std::cerr << "[FAIL] Mismatch at " << i << "\n";
             return 1;
         }
@@ -260,6 +308,17 @@ int main() {
         gemm_dual_rail_popcnt(A_dr.data(), BT_dr.data(), C_pop.data(), M, K, N);
         clobberMemory(C_pop.data());
     });
+#if defined(__aarch64__) || defined(__arm64__)
+    double ms_neon128_k = bench_median_ms(5, 50, [&]() {
+        gemm_dual_rail_neon128(A_dr.data(), BT_dr.data(), C_neon128.data(), M, K, N);
+        clobberMemory(C_neon128.data());
+    });
+    double ms_neon128_e2e = bench_median_ms(5, 50, [&]() {
+        pack_matrix_neon(A_i8.data(), A_dr.data(), M, K);
+        gemm_dual_rail_neon128(A_dr.data(), BT_dr.data(), C_neon128.data(), M, K, N);
+        clobberMemory(C_neon128.data());
+    });
+#endif
     double ms_hs_k = bench_median_ms(5, 50, [&]() {
         gemm_dual_rail_harley_seal(A_dr.data(), BT_dr.data(), C_hs.data(), M, K, N);
         clobberMemory(C_hs.data());
@@ -273,17 +332,21 @@ int main() {
     auto print_row = [&](const std::string& name, double ms) {
         double gops = (total_ops / (ms / 1000.0)) / 1e9;
         double speedup = ms_i8 / ms;
-        std::cout << std::left << std::setw(42) << name
+        std::cout << std::left << std::setw(44) << name
                   << std::right << std::fixed << std::setprecision(4) << std::setw(10) << ms << " ms"
                   << std::setprecision(2) << std::setw(12) << gops << " GOPS"
                   << std::setw(10) << speedup << "x\n";
     };
 
     print_row("1. INT8 NEON vdotq_s32 (Baseline)", ms_i8);
-    print_row("2. Dual-Rail POPCNT (Kernel-Only)", ms_pop_k);
-    print_row("3. Dual-Rail POPCNT (End-to-End Pack+GEMM)", ms_pop_e2e);
-    print_row("4. Dual-Rail Harley-Seal CSA (Kernel-Only)", ms_hs_k);
-    print_row("5. Dual-Rail Harley-Seal (End-to-End)", ms_hs_e2e);
+    print_row("2. Dual-Rail Scalar POPCNT (Kernel-Only)", ms_pop_k);
+    print_row("3. Dual-Rail Scalar POPCNT (End-to-End)", ms_pop_e2e);
+#if defined(__aarch64__) || defined(__arm64__)
+    print_row("4. Dual-Rail 128-bit NEON SIMD (Kernel-Only)", ms_neon128_k);
+    print_row("5. Dual-Rail 128-bit NEON SIMD (End-to-End)", ms_neon128_e2e);
+#endif
+    print_row("6. Dual-Rail Harley-Seal CSA (Kernel-Only)", ms_hs_k);
+    print_row("7. Dual-Rail Harley-Seal (End-to-End)", ms_hs_e2e);
 
     return 0;
 }
