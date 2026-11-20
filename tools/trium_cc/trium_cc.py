@@ -9,10 +9,10 @@ Features:
   1. Full C99 Frontend (via pycparser):
      - Functions, stack frames, calling conventions (ABI: sp=tr2, ra=tr1, fp=tr8, a0..a7=tr10..tr17)
      - Arithmetic, pointer arithmetic, structs, arrays, loops, and control flow
-     - Native balanced-ternary 3-way branch synthesis (<=> / sign)
+     - Branchless balanced-ternary relational predicates via xbt.sign + xbt.cmov{p,n,z}
   2. Auto-Vectorization & Idiom Recognition:
-     - Loop vectorizer detects scalar dot-product and matrix loops:
-       sum += a[i] * b[i]  -->  xbt.dot64 (64 trits per cycle)
+     - Loop vectorizer verifies unit-stride, zero-based induction variable, and matched a[i]*b[i]
+       indexing before promoting dot-product loops to chunked/unrolled xbt.dot64 + scalar tail
      - Base-243 packing optimization for ternary weight tensors.
   3. Preprocessed Assembly Translation:
      - Lowering engine for standard RV32I / RV64I assembly files (e.g., Dhrystone, Coremark).
@@ -81,8 +81,9 @@ class CToTriumCompiler(c_ast.NodeVisitor if HAVE_PYCPARSER else object):
         # Map parameters to argument registers a0..a7 (tr10..tr17)
         if node.decl.type.args:
             for i, param in enumerate(node.decl.type.args.params):
-                reg = f"tr{10 + i}"
-                self.locals[param.name] = ("reg", reg)
+                if param.name:
+                    reg = f"tr{10 + i}"
+                    self.locals[param.name] = ("reg", reg)
 
         self.visit(node.body)
 
@@ -192,49 +193,262 @@ class CToTriumCompiler(c_ast.NodeVisitor if HAVE_PYCPARSER else object):
 
         self.emit_label(lbl_end)
 
+    @staticmethod
+    def _parse_int_constant(node: Any) -> Optional[int]:
+        """Parse an integer c_ast.Constant, returning None if not an integer literal."""
+        if not isinstance(node, c_ast.Constant):
+            return None
+        if "int" not in getattr(node, "type", "int"):
+            return None
+        raw = str(node.value).rstrip("uUlL")
+        try:
+            return int(raw, 0)
+        except ValueError:
+            return None
+
+    def _extract_loop_init_zero(self, init_node: Any) -> Optional[str]:
+        """Verify loop init is `i = 0` or `int i = 0` and return induction variable name."""
+        if isinstance(init_node, c_ast.Assignment):
+            if init_node.op == "=" and isinstance(init_node.lvalue, c_ast.ID):
+                if self._parse_int_constant(init_node.rvalue) == 0:
+                    return init_node.lvalue.name
+        elif isinstance(init_node, c_ast.DeclList):
+            if init_node.decls and len(init_node.decls) == 1:
+                decl = init_node.decls[0]
+                if isinstance(decl, c_ast.Decl) and decl.name:
+                    if self._parse_int_constant(decl.init) == 0:
+                        return decl.name
+        return None
+
+    def _is_unit_stride(self, next_node: Any, idx_var: str) -> bool:
+        """Verify loop step advances `idx_var` by exactly +1 (`i++`, `++i`, `i += 1`, `i = i + 1`)."""
+        if isinstance(next_node, c_ast.UnaryOp):
+            return (
+                next_node.op in ("p++", "++")
+                and isinstance(next_node.expr, c_ast.ID)
+                and next_node.expr.name == idx_var
+            )
+        if isinstance(next_node, c_ast.Assignment):
+            if not (isinstance(next_node.lvalue, c_ast.ID) and next_node.lvalue.name == idx_var):
+                return False
+            if next_node.op == "+=":
+                return self._parse_int_constant(next_node.rvalue) == 1
+            if next_node.op == "=" and isinstance(next_node.rvalue, c_ast.BinaryOp) and next_node.rvalue.op == "+":
+                lhs, rhs = next_node.rvalue.left, next_node.rvalue.right
+                if isinstance(lhs, c_ast.ID) and lhs.name == idx_var and self._parse_int_constant(rhs) == 1:
+                    return True
+                if isinstance(rhs, c_ast.ID) and rhs.name == idx_var and self._parse_int_constant(lhs) == 1:
+                    return True
+        return False
+
+    def _load_var_into_reg(self, var_name: str, dst_reg: str, comment: str = ""):
+        """Load a local variable (register or stack) into dst_reg."""
+        loc_type, loc = self.locals.get(var_name, ("unknown", None))
+        if loc_type == "reg":
+            if loc != dst_reg:
+                self.emit("xbt.addi", [dst_reg, loc, "0"], comment)
+        elif loc_type == "stack":
+            self.emit("xbt.lw", [dst_reg, f"{loc}(tr8)"], comment)
+        else:
+            self.emit("xbt.addi", [dst_reg, "tr0", "0"], comment or f"zero-init {var_name}")
+
+    def _store_reg_to_var(self, src_reg: str, var_name: str, comment: str = ""):
+        """Store src_reg back into a local variable (register or stack)."""
+        if var_name not in self.locals:
+            self.locals[var_name] = ("stack", self.stack_offset)
+            self.stack_offset -= 4
+        loc_type, loc = self.locals[var_name]
+        if loc_type == "reg":
+            if loc != src_reg:
+                self.emit("xbt.addi", [loc, src_reg, "0"], comment)
+        else:
+            self.emit("xbt.sw", [src_reg, f"{loc}(tr8)"], comment)
+
+    def _emit_scalar_dot_tail(self, count_reg: str, a_ptr_reg: str, b_ptr_reg: str, acc_reg: str):
+        """Emit a scalar tail loop for remaining elements in count_reg."""
+        lbl_tail_cond = self.new_label("dot_tail_cond")
+        lbl_tail_done = self.new_label("dot_tail_done")
+        self.emit_label(lbl_tail_cond)
+        self.emit("xbt.beq", [count_reg, "tr0", lbl_tail_done], "done when tail count == 0")
+        self.emit("xbt.lw", ["tr5", f"0({a_ptr_reg})"], "load tail a[i]")
+        self.emit("xbt.lw", ["tr6", f"0({b_ptr_reg})"], "load tail b[i]")
+        self.emit("xbt.mul", ["tr23", "tr5", "tr6"], "scalar trit product")
+        self.emit("xbt.ksadd", [acc_reg, acc_reg, "tr23"], "accumulate scalar tail")
+        self.emit("xbt.addi", [a_ptr_reg, a_ptr_reg, "1"], "advance a ptr by 1")
+        self.emit("xbt.addi", [b_ptr_reg, b_ptr_reg, "1"], "advance b ptr by 1")
+        self.emit("xbt.addi", [count_reg, count_reg, "-1"], "decrement tail count")
+        self.emit("xbt.jal", ["tr0", lbl_tail_cond], "next tail element")
+        self.emit_label(lbl_tail_done)
+
     def _try_vectorize_dot(self, node: c_ast.For) -> bool:
         """
-        Detects vector dot-product loop:
+        Hardened vector dot-product loop recognizer:
           for (i = 0; i < N; i++) sum += a[i] * b[i];
-        and promotes it to 64-trit SIMD: xbt.dot64.
+
+        Requirements enforced before vectorizing:
+          1. Induction variable `i` initialized to 0.
+          2. Unit stride (`i++`, `++i`, `i += 1`, or `i = i + 1`).
+          3. Loop bound `i < N` (or `i <= C` for integer constant C) where N is a
+             compile-time integer constant >= 64 or a runtime variable.
+          4. Single-statement accumulation `sum += a[i] * b[i]` (or `sum = sum + a[i] * b[i]`)
+             where BOTH array subscripts match the exact induction variable `i`.
+
+        Code generation:
+          - Constant N >= 64: unrolled `N // 64` `xbt.dot64` chunks (or counted chunk loop
+            if chunks > 16), advancing pointers by 64 trits per chunk, plus a scalar tail
+            loop if `N % 64 != 0`.
+          - Runtime variable N: counted SIMD loop advancing pointers by 64 trits per
+            `xbt.dot64` iteration, followed by a scalar tail loop for `N % 64`.
         """
         try:
-            # Check loop body
-            body = node.stmt
-            if isinstance(body, c_ast.Compound) and len(body.block_items) == 1:
-                body = body.block_items[0]
-
-            if not isinstance(body, c_ast.Assignment):
+            # 1. Verify induction variable init: i = 0 / int i = 0
+            idx_var = self._extract_loop_init_zero(node.init)
+            if not idx_var:
                 return False
 
-            # Pattern: sum += a[i] * b[i]
-            if body.op in ("+=", "="):
-                rhs = body.rvalue
-                if body.op == "=" and isinstance(rhs, c_ast.BinaryOp) and rhs.op == "+":
-                    rhs = rhs.right
+            # 2. Verify unit stride on idx_var
+            if not self._is_unit_stride(node.next, idx_var):
+                return False
 
-                if isinstance(rhs, c_ast.BinaryOp) and rhs.op == "*":
-                    if isinstance(rhs.left, c_ast.ArrayRef) and isinstance(rhs.right, c_ast.ArrayRef):
-                        target_var = body.lvalue.name
-                        a_name = rhs.left.name.name
-                        b_name = rhs.right.name.name
+            # 3. Verify loop condition: i < N (constant or variable) or i <= const
+            cond = node.cond
+            if not (isinstance(cond, c_ast.BinaryOp) and isinstance(cond.left, c_ast.ID) and cond.left.name == idx_var):
+                return False
 
-                        a_loc = self.locals.get(a_name, ("reg", "tr10"))
-                        b_loc = self.locals.get(b_name, ("reg", "tr11"))
-                        res_loc = self.locals.get(target_var, ("reg", "tr10"))
+            const_trip: Optional[int] = None
+            var_trip: Optional[str] = None
+            if cond.op == "<":
+                cval = self._parse_int_constant(cond.right)
+                if cval is not None:
+                    const_trip = cval
+                elif isinstance(cond.right, c_ast.ID):
+                    var_trip = cond.right.name
+                else:
+                    return False
+            elif cond.op == "<=":
+                cval = self._parse_int_constant(cond.right)
+                if cval is not None:
+                    const_trip = cval + 1
+                else:
+                    return False
+            else:
+                return False
 
-                        a_reg = a_loc[1] if a_loc[0] == "reg" else "tr10"
-                        b_reg = b_loc[1] if b_loc[0] == "reg" else "tr11"
-                        res_reg = res_loc[1] if res_loc[0] == "reg" else "tr10"
+            # Refuse to vectorize constant loops shorter than 1 SIMD chunk (64 trits)
+            if const_trip is not None and const_trip < 64:
+                return False
 
-                        self.emit(f"# --- Auto-Vectorized Loop -> XBT.DOT64 ---")
-                        self.emit("xbt.dot64", [res_reg, a_reg, b_reg], "1-cycle 64-trit balanced ternary dot product")
-                        if res_loc[0] == "stack":
-                            self.emit("xbt.sw", [res_reg, f"{res_loc[1]}(tr8)"], f"store dot product result to {target_var}")
-                        return True
+            # 4. Verify single-statement body: sum += a[i] * b[i] or sum = sum + a[i] * b[i]
+            body = node.stmt
+            if isinstance(body, c_ast.Compound):
+                if not body.block_items or len(body.block_items) != 1:
+                    return False
+                body = body.block_items[0]
+
+            if not (isinstance(body, c_ast.Assignment) and isinstance(body.lvalue, c_ast.ID)):
+                return False
+
+            target_var = body.lvalue.name
+            if target_var == idx_var:
+                return False
+
+            prod = None
+            if body.op == "+=":
+                prod = body.rvalue
+            elif body.op == "=" and isinstance(body.rvalue, c_ast.BinaryOp) and body.rvalue.op == "+":
+                if isinstance(body.rvalue.left, c_ast.ID) and body.rvalue.left.name == target_var:
+                    prod = body.rvalue.right
+                elif isinstance(body.rvalue.right, c_ast.ID) and body.rvalue.right.name == target_var:
+                    prod = body.rvalue.left
+                else:
+                    return False
+            else:
+                return False
+
+            if not (isinstance(prod, c_ast.BinaryOp) and prod.op == "*"):
+                return False
+            if not (isinstance(prod.left, c_ast.ArrayRef) and isinstance(prod.right, c_ast.ArrayRef)):
+                return False
+            if not (isinstance(prod.left.name, c_ast.ID) and isinstance(prod.right.name, c_ast.ID)):
+                return False
+
+            # Strictly verify BOTH array subscripts are the exact loop induction variable `idx_var`
+            if not (
+                isinstance(prod.left.subscript, c_ast.ID)
+                and prod.left.subscript.name == idx_var
+                and isinstance(prod.right.subscript, c_ast.ID)
+                and prod.right.subscript.name == idx_var
+            ):
+                return False
+
+            a_name = prod.left.name.name
+            b_name = prod.right.name.name
+            if a_name in (idx_var, target_var) or b_name in (idx_var, target_var):
+                return False
+
+            # 5. Emit hardened chunked SIMD code
+            # Working registers: tr20=a_ptr, tr21=b_ptr, tr22=acc, tr23=partial, tr24=count, tr25=stride64
+            self._load_var_into_reg(a_name, "tr20", f"init a_ptr from {a_name}")
+            self._load_var_into_reg(b_name, "tr21", f"init b_ptr from {b_name}")
+            self._load_var_into_reg(target_var, "tr22", f"load accumulator {target_var}")
+
+            if const_trip is not None:
+                chunks = const_trip // 64
+                tail = const_trip % 64
+                self.emit(
+                    f"# --- Auto-Vectorized Dot Product (N={const_trip}: {chunks}x xbt.dot64 + {tail} scalar tail) ---"
+                )
+                if chunks <= 16:
+                    for k in range(chunks):
+                        self.emit(
+                            "xbt.dot64",
+                            ["tr23", "tr20", "tr21"],
+                            f"64-trit dot chunk {k + 1}/{chunks} (trits {k * 64}..{(k + 1) * 64 - 1})",
+                        )
+                        self.emit("xbt.ksadd", ["tr22", "tr22", "tr23"], "accumulate chunk dot product")
+                        if k + 1 < chunks or tail > 0:
+                            self.emit("xbt.addi", ["tr20", "tr20", "64"], "advance a_ptr by 64 trits")
+                            self.emit("xbt.addi", ["tr21", "tr21", "64"], "advance b_ptr by 64 trits")
+                else:
+                    lbl_chunk = self.new_label("dot64_chunk")
+                    lbl_chunk_done = self.new_label("dot64_chunk_done")
+                    self.emit("xbt.li", ["tr24", str(chunks)], f"chunk count = {chunks}")
+                    self.emit_label(lbl_chunk)
+                    self.emit("xbt.beq", ["tr24", "tr0", lbl_chunk_done], "exit when chunks == 0")
+                    self.emit("xbt.dot64", ["tr23", "tr20", "tr21"], "64-trit balanced ternary dot product")
+                    self.emit("xbt.ksadd", ["tr22", "tr22", "tr23"], "accumulate chunk dot product")
+                    self.emit("xbt.addi", ["tr20", "tr20", "64"], "advance a_ptr by 64 trits")
+                    self.emit("xbt.addi", ["tr21", "tr21", "64"], "advance b_ptr by 64 trits")
+                    self.emit("xbt.addi", ["tr24", "tr24", "-1"], "decrement chunk count")
+                    self.emit("xbt.jal", ["tr0", lbl_chunk], "next 64-trit chunk")
+                    self.emit_label(lbl_chunk_done)
+
+                if tail > 0:
+                    self.emit("xbt.li", ["tr24", str(tail)], f"scalar tail count = {tail}")
+                    self._emit_scalar_dot_tail("tr24", "tr20", "tr21", "tr22")
+            else:
+                # Runtime variable trip count `var_trip`
+                assert var_trip is not None
+                self.emit(f"# --- Auto-Vectorized Dot Product (runtime N={var_trip}, 64-trit chunks + tail) ---")
+                self._load_var_into_reg(var_trip, "tr24", f"load runtime trip count {var_trip}")
+                self.emit("xbt.li", ["tr25", "64"], "SIMD chunk width = 64 trits")
+                lbl_vec_loop = self.new_label("dot64_vec_loop")
+                lbl_vec_tail = self.new_label("dot64_vec_tail")
+                self.emit_label(lbl_vec_loop)
+                self.emit("xbt.blt", ["tr24", "tr25", lbl_vec_tail], "if remaining < 64, enter scalar tail")
+                self.emit("xbt.dot64", ["tr23", "tr20", "tr21"], "1-cycle 64-trit balanced ternary dot product")
+                self.emit("xbt.ksadd", ["tr22", "tr22", "tr23"], "accumulate chunk dot product")
+                self.emit("xbt.addi", ["tr20", "tr20", "64"], "advance a_ptr by 64 trits")
+                self.emit("xbt.addi", ["tr21", "tr21", "64"], "advance b_ptr by 64 trits")
+                self.emit("xbt.addi", ["tr24", "tr24", "-64"], "remaining -= 64")
+                self.emit("xbt.jal", ["tr0", lbl_vec_loop], "next 64-trit chunk")
+                self.emit_label(lbl_vec_tail)
+                self._emit_scalar_dot_tail("tr24", "tr20", "tr21", "tr22")
+
+            self._store_reg_to_var("tr22", target_var, f"store dot product result to {target_var}")
+            return True
         except Exception:
-            pass
-        return False
+            return False
 
     def visit_While(self, node: c_ast.While):
         lbl_cond = self.new_label("while_cond")
@@ -344,6 +558,12 @@ class CToTriumCompiler(c_ast.NodeVisitor if HAVE_PYCPARSER else object):
                 self.emit("xbt.lw", [target_reg, f"{loc}(tr8)"], f"load local {node.name}")
                 return target_reg
             return target_reg
+        elif isinstance(node, c_ast.ArrayRef):
+            base_reg = self.visit_expr(node.name, "tr26")
+            idx_reg = self.visit_expr(node.subscript, "tr27")
+            self.emit("xbt.ksadd", ["tr26", base_reg, idx_reg], "compute element address")
+            self.emit("xbt.lw", [target_reg, "0(tr26)"], "load array element")
+            return target_reg
         elif isinstance(node, c_ast.BinaryOp):
             left_reg = self.visit_expr(node.left, "tr5")
             right_reg = self.visit_expr(node.right, "tr6")
@@ -355,10 +575,29 @@ class CToTriumCompiler(c_ast.NodeVisitor if HAVE_PYCPARSER else object):
             elif node.op == "*":
                 self.emit("xbt.mul", [target_reg, left_reg, right_reg], "AOI22 lane multiplier")
             elif node.op in ("<", "<=", ">", ">=", "==", "!="):
-                # 3-Way Balanced Ternary Comparator
+                # Branchless Balanced Ternary Relational Predicate:
+                # diff = lhs - rhs, s = sign(diff) in {-1, 0, +1},
+                # seed res = -1 (false), one = +1 (true), then apply exact cmov* predicate.
                 self.emit("xbt.neg", ["tr7", right_reg], "negate right operand")
-                self.emit("xbt.ksadd", ["tr7", left_reg, "tr7"], "compute diff = left - right")
-                self.emit("xbt.sign", [target_reg, "tr7"], "balanced ternary sign {-1, 0, +1}")
+                self.emit("xbt.ksadd", ["tr7", left_reg, "tr7"], "compute diff = lhs - rhs")
+                self.emit("xbt.sign", ["tr28", "tr7"], "s = sign(diff) in {-1, 0, +1}")
+                self.emit("xbt.li", [target_reg, "-1"], f"seed result = -1 (false) for '{node.op}'")
+                self.emit("xbt.li", ["tr29", "1"], "load +1 (true)")
+                if node.op == ">":
+                    self.emit("xbt.cmovp", [target_reg, "tr28", "tr29"], "if s > 0: res = +1")
+                elif node.op == "<":
+                    self.emit("xbt.cmovn", [target_reg, "tr28", "tr29"], "if s < 0: res = +1")
+                elif node.op == "==":
+                    self.emit("xbt.cmovz", [target_reg, "tr28", "tr29"], "if s == 0: res = +1")
+                elif node.op == "!=":
+                    self.emit("xbt.cmovp", [target_reg, "tr28", "tr29"], "if s > 0: res = +1")
+                    self.emit("xbt.cmovn", [target_reg, "tr28", "tr29"], "if s < 0: res = +1")
+                elif node.op == ">=":
+                    self.emit("xbt.cmovp", [target_reg, "tr28", "tr29"], "if s > 0: res = +1")
+                    self.emit("xbt.cmovz", [target_reg, "tr28", "tr29"], "if s == 0: res = +1")
+                elif node.op == "<=":
+                    self.emit("xbt.cmovn", [target_reg, "tr28", "tr29"], "if s < 0: res = +1")
+                    self.emit("xbt.cmovz", [target_reg, "tr28", "tr29"], "if s == 0: res = +1")
             return target_reg
         elif isinstance(node, c_ast.UnaryOp):
             if node.op == "-":

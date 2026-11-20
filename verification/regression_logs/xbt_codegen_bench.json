@@ -1,0 +1,274 @@
+{
+  "timestamp_utc": "2026-11-20T14:34:19Z",
+  "host": {
+    "platform": "macOS-27.2-arm64-arm-64bit",
+    "python_version": "3.9.6"
+  },
+  "all_passed": true,
+  "cpp_codegen_benchmark": {
+    "suite": "trium_xbt_codegen_and_coprocessor_bench",
+    "all_verified": true,
+    "elapsed_ms": 4.2122,
+    "dot_product": {
+      "dot64": {
+        "width_trits": 64,
+        "verified": true,
+        "expected_dot": -8,
+        "actual_dot": -8,
+        "instructions_retired": 1,
+        "cycles": 1,
+        "dual_rail_hamming_flips": 88
+      },
+      "dot768": {
+        "width_trits": 768,
+        "chunks_64": 12,
+        "verified": true,
+        "scalar_verified": true,
+        "expected_dot": -14,
+        "actual_dot": -14,
+        "xbt_dot64_instructions_retired": 12,
+        "xbt_dot64_cycles": 12,
+        "xbt_dot64_dual_rail_hamming_flips": 1323,
+        "scalar_loop_instructions_retired": 1536,
+        "scalar_loop_cycles": 1536,
+        "scalar_loop_dual_rail_hamming_flips": 2575,
+        "instruction_speedup": 128.0,
+        "cycle_speedup": 128.0,
+        "hamming_flip_reduction_ratio": 1.9463
+      }
+    },
+    "base243_roundtrip": {
+      "total_bytes": 243,
+      "passed_bytes": 243,
+      "verified": true,
+      "instructions_retired": 486,
+      "cycles": 486
+    },
+    "ksadd_and_zero_gate_neg": {
+      "pairs_tested": 1000,
+      "passed_pairs": 1000,
+      "verified": true,
+      "instructions_retired": 2000,
+      "cycles": 1000,
+      "zero_gate_negations": 1000
+    },
+    "end_to_end_codegen": {
+      "all_ok": true,
+      "workloads": [
+        {
+          "id": "3-way_classifier",
+          "function_name": "classify",
+          "source": "func classify(x: int) -> int { return x * 3 + select(x <=> 0, 1, 0, -1); }",
+          "ok": true,
+          "complete": true,
+          "ir_folded": 1,
+          "ir_removed_statements": 0,
+          "emitted_instructions": 14,
+          "ternary_regs_used": 8,
+          "instruction_breakdown": {
+            "li5": 4,
+            "shl3": 1,
+            "cmov": 2,
+            "neg": 1,
+            "ksadd": 4,
+            "sign": 1,
+            "other": 1
+          }
+        },
+        {
+          "id": "radix3_polynomial",
+          "function_name": "poly",
+          "source": "func poly(x: int, y: int) -> int { return 9 * x + 27 * y - 3 * x + 81; }",
+          "ok": true,
+          "complete": true,
+          "ir_folded": 0,
+          "ir_removed_statements": 0,
+          "emitted_instructions": 11,
+          "ternary_regs_used": 7,
+          "instruction_breakdown": {
+            "li5": 1,
+            "shl3": 3,
+            "cmov": 0,
+            "neg": 1,
+            "ksadd": 4,
+            "sign": 0,
+            "other": 2
+          }
+        },
+        {
+          "id": "sign_select_chain",
+          "function_name": "clamp3",
+          "source": "func clamp3(x: int) -> int { return select(x, 1, 0, -1); }",
+          "ok": true,
+          "complete": true,
+          "ir_folded": 1,
+          "ir_removed_statements": 0,
+          "emitted_instructions": 8,
+          "ternary_regs_used": 6,
+          "instruction_breakdown": {
+            "li5": 3,
+            "shl3": 0,
+            "cmov": 2,
+            "neg": 0,
+            "ksadd": 2,
+            "sign": 0,
+            "other": 1
+          }
+        }
+      ]
+    },
+    "compile_ms": 3039.138,
+    "wall_run_ms": 466.131
+  },
+  "trium_cc_verification": {
+    "status": "passed",
+    "pycparser_available": true,
+    "all_passed": true,
+    "relational_operators": {
+      "all_passed": true,
+      "all_6_distinct": true,
+      "operators": {
+        ">": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovp"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovp"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        },
+        "<": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovn"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovn"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        },
+        "==": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovz"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovz"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        },
+        "!=": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovp",
+            "xbt.cmovn"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovp",
+            "xbt.cmovn"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        },
+        ">=": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovp",
+            "xbt.cmovz"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovp",
+            "xbt.cmovz"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        },
+        "<=": {
+          "passed": true,
+          "emitted_cmovs": [
+            "xbt.cmovn",
+            "xbt.cmovz"
+          ],
+          "expected_cmovs": [
+            "xbt.cmovn",
+            "xbt.cmovz"
+          ],
+          "branchless": true,
+          "truth_table_ok": true
+        }
+      }
+    },
+    "dot_product_vectorization": {
+      "all_passed": true,
+      "cases": {
+        "const_64_exact": {
+          "passed": true,
+          "dot64_count": 1,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": false,
+          "has_runtime_loop": false
+        },
+        "const_768_unrolled": {
+          "passed": true,
+          "dot64_count": 12,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": true,
+          "has_runtime_loop": false
+        },
+        "const_100_with_tail": {
+          "passed": true,
+          "dot64_count": 1,
+          "has_scalar_tail": true,
+          "has_ptr_step_64": true,
+          "has_runtime_loop": false
+        },
+        "const_128_stride_plus_eq_1": {
+          "passed": true,
+          "dot64_count": 2,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": true,
+          "has_runtime_loop": false
+        },
+        "runtime_var_n": {
+          "passed": true,
+          "dot64_count": 1,
+          "has_scalar_tail": true,
+          "has_ptr_step_64": true,
+          "has_runtime_loop": true
+        },
+        "reject_const_32_below_64": {
+          "passed": true,
+          "dot64_count": 0,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": false,
+          "has_runtime_loop": false
+        },
+        "reject_stride_2": {
+          "passed": true,
+          "dot64_count": 0,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": false,
+          "has_runtime_loop": false
+        },
+        "reject_mismatched_index": {
+          "passed": true,
+          "dot64_count": 0,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": false,
+          "has_runtime_loop": false
+        },
+        "reject_offset_index": {
+          "passed": true,
+          "dot64_count": 0,
+          "has_scalar_tail": false,
+          "has_ptr_step_64": false,
+          "has_runtime_loop": false
+        }
+      }
+    }
+  }
+}
