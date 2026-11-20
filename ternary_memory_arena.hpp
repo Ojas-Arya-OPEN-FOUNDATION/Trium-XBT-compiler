@@ -494,11 +494,11 @@ struct Base243Block {
         return Base243Span(data, 0, num_trits);
     }
 
-    [[nodiscard]] Trit get(size_t idx) const noexcept {
+    [[nodiscard]] Trit get(size_t idx) const {
         return span().get(idx);
     }
 
-    void set(size_t idx, Trit t) noexcept {
+    void set(size_t idx, Trit t) {
         span().set(idx, t);
     }
 };

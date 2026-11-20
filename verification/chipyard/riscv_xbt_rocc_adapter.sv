@@ -48,9 +48,39 @@ module riscv_xbt_rocc_adapter (
 
     // Register File wires
     logic [63:0] rf_rs1_p, rf_rs1_n, rf_rs2_p, rf_rs2_n;
-    logic rf_we;
+    logic [63:0] rf_rd_p_in, rf_rd_n_in;
+    logic [11:0] alu_imm12;
+    logic        is_scalar_res;
+    logic        rf_we;
 
-    assign rf_we = rocc_cmd_valid && (rocc_cmd_inst_rd != 5'd0);
+    // Shadow bank for tr[rd] read port (used by CSAMAC, BTFA, CMOVZ/P/N)
+    logic [63:0] rd_shadow_p [0:31];
+    logic [63:0] rd_shadow_n [0:31];
+
+    assign alu_imm12     = {rocc_cmd_inst_funct7, rocc_cmd_inst_rs2};
+    assign is_scalar_res = (rocc_cmd_inst_funct3 == 3'b010) ||
+                           (rocc_cmd_inst_funct3 == 3'b110 && rocc_cmd_inst_funct7 == 7'h02);
+
+    // Gate register file writes so scalar-result ops (DOT64, PACK243) never clobber tr[rd]
+    assign rf_we = rocc_cmd_valid && rocc_cmd_ready && alu_valid &&
+                   (rocc_cmd_inst_rd != 5'd0) &&
+                   (rocc_cmd_inst_funct3 != 3'b010) &&
+                   !(rocc_cmd_inst_funct3 == 3'b110 && rocc_cmd_inst_funct7 == 7'h02);
+
+    assign rf_rd_p_in = (rocc_cmd_inst_rd == 5'd0) ? 64'd0 : rd_shadow_p[rocc_cmd_inst_rd];
+    assign rf_rd_n_in = (rocc_cmd_inst_rd == 5'd0) ? 64'd0 : rd_shadow_n[rocc_cmd_inst_rd];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int r = 0; r < 32; r++) begin
+                rd_shadow_p[r] <= 64'd0;
+                rd_shadow_n[r] <= 64'd0;
+            end
+        end else if (rf_we) begin
+            rd_shadow_p[rocc_cmd_inst_rd] <= alu_rd_p;
+            rd_shadow_n[rocc_cmd_inst_rd] <= alu_rd_n;
+        end
+    end
 
     // Instantiate 32x128 Dual-Rail Register File
     xbt_regfile32x128 u_regfile (
@@ -79,7 +109,10 @@ module riscv_xbt_rocc_adapter (
         .rs1_n      (rf_rs1_n),
         .rs2_p      (rf_rs2_p),
         .rs2_n      (rf_rs2_n),
+        .rd_p_in    (rf_rd_p_in),
+        .rd_n_in    (rf_rd_n_in),
         .rs1_scalar (rocc_cmd_rs1_data),
+        .imm12      (alu_imm12),
         .rd_p       (alu_rd_p),
         .rd_n       (alu_rd_n),
         .rd_aux_p   (alu_rd_aux_p),
@@ -93,7 +126,7 @@ module riscv_xbt_rocc_adapter (
         rocc_cmd_ready  = rocc_resp_ready || !rocc_cmd_inst_xd;
         rocc_resp_valid = rocc_cmd_valid && rocc_cmd_inst_xd && alu_valid;
         rocc_resp_rd    = rocc_cmd_inst_rd;
-        rocc_resp_data  = (rocc_cmd_inst_funct3 == 3'b010) ? 64'(signed'(alu_rd_scalar)) : alu_rd_p;
+        rocc_resp_data  = is_scalar_res ? alu_rd_scalar : alu_rd_p;
         rocc_busy       = rocc_cmd_valid;
         rocc_interrupt  = 1'b0;
     end

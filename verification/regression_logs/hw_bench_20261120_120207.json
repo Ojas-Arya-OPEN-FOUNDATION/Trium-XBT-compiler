@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-11-20T12:02:07.442667+00:00",
+  "platform": "Linux x86_64",
+  "python": "3.11.2",
+  "tools_detected": {
+    "verilator": false,
+    "iverilog": false,
+    "yosys": false,
+    "g++": true
+  },
+  "suites": {
+    "golden_model_v1_v2": {
+      "status": "pass",
+      "checks": 14331,
+      "failures": 0,
+      "elapsed_ms": 422.82,
+      "dot64_10k_ms": 296.53,
+      "dot64_checksum": 39
+    },
+    "external_simulator_pipe": {
+      "status": "pass",
+      "elapsed_ms": 1567.84,
+      "result": "2/2"
+    },
+    "rtl_testbench": {
+      "status": "skipped",
+      "reason": "tool_not_installed",
+      "missing_tools": [
+        "verilator",
+        "iverilog"
+      ]
+    },
+    "yosys_synthesis": {
+      "status": "skipped",
+      "reason": "tool_not_installed",
+      "missing_tools": [
+        "yosys"
+      ]
+    }
+  },
+  "overall_status": "partial_eda_skipped"
+}

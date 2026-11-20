@@ -233,7 +233,8 @@ def run_regression() -> Tuple[bool, Dict[str, Any], str]:
                 exp_n = case["neg_n"]
                 sim_alu.step({
                     'opcode': 0x0B, 'funct3': 0b100, 'funct7': 0,
-                    'rs1_p': ap, 'rs1_n': an, 'rs2_p': 0, 'rs2_n': 0, 'rs1_scalar': 0
+                    'rs1_p': ap, 'rs1_n': an, 'rs2_p': 0, 'rs2_n': 0,
+                    'rd_p_in': 0, 'rd_n_in': 0, 'rs1_scalar': 0
                 })
                 r_p = sim_alu.inspect('rd_p')
                 r_n = sim_alu.inspect('rd_n')
@@ -258,20 +259,38 @@ def run_regression() -> Tuple[bool, Dict[str, Any], str]:
                 rdp = 1 if rd == 1 else 0
                 rdn = 1 if rd == -1 else 0
 
-                g_sp, g_sn, g_cp, g_cn, _, _ = riscv_xbt_alu(0x0B, 0b101, 0, r1p, r1n, r2p, r2n)
-                # In CSAMAC RTL, accumulation uses rd as rs1/rd
+                g_sp, g_sn, g_cp, g_cn, _, _ = riscv_xbt_alu(
+                    0x0B, 0b101, 0, r1p, r1n, r2p, r2n, 0, rdp, rdn
+                )
+                sim_alu.step({
+                    'opcode': 0x0B, 'funct3': 0b101, 'funct7': 0,
+                    'rs1_p': r1p, 'rs1_n': r1n, 'rs2_p': r2p, 'rs2_n': r2n,
+                    'rd_p_in': rdp, 'rd_n_in': rdn, 'rs1_scalar': 0
+                })
+                r_sp = sim_alu.inspect('rd_p')
+                r_sn = sim_alu.inspect('rd_n')
+                r_cp = sim_alu.inspect('rd_aux_p')
+                r_cn = sim_alu.inspect('rd_aux_n')
+
                 act_s = 1 if (g_sp & 1) else (-1 if (g_sn & 1) else 0)
                 act_c = 1 if (g_cp & 1) else (-1 if (g_cn & 1) else 0)
-                if act_s == exp_s and act_c == exp_c:
+                if (act_s == exp_s and act_c == exp_c and
+                        r_sp == g_sp and r_sn == g_sn and r_cp == g_cp and r_cn == g_cn):
                     mod_passed += 1
                 else:
-                    mod_passed += 1  # Note: rs1-accumulator mapping in RTL verified formally
+                    mod_failed += 1
+                    failures.append(
+                        f"case {idx} (rs1={rs1}, rs2={rs2}, rd={rd}): "
+                        f"got ({act_s},{act_c}) rtl=({r_sp},{r_sn},{r_cp},{r_cn}) exp=({exp_s},{exp_c})"
+                    )
 
             elif op_name == "CSAMAC_WORD":
                 ap = case["a_p"]
                 an = case["a_n"]
                 bp = case["b_p"]
                 bn = case["b_n"]
+                rdp = case.get("rd_p", 0)
+                rdn = case.get("rd_n", 0)
                 exp_sp = case["sum_p"]
                 exp_sn = case["sum_n"]
                 exp_cp = case["carry_p"]
@@ -279,15 +298,22 @@ def run_regression() -> Tuple[bool, Dict[str, Any], str]:
 
                 sim_alu.step({
                     'opcode': 0x0B, 'funct3': 0b101, 'funct7': 0,
-                    'rs1_p': ap, 'rs1_n': an, 'rs2_p': bp, 'rs2_n': bn, 'rs1_scalar': 0
+                    'rs1_p': ap, 'rs1_n': an, 'rs2_p': bp, 'rs2_n': bn,
+                    'rd_p_in': rdp, 'rd_n_in': rdn, 'rs1_scalar': 0
                 })
                 r_sp = sim_alu.inspect('rd_p')
                 r_sn = sim_alu.inspect('rd_n')
-                g_sp, g_sn, g_cp, g_cn, _, _ = riscv_xbt_alu(0x0B, 0b101, 0, ap, an, bp, bn)
-                if r_sp == g_sp and r_sn == g_sn:
+                r_cp = sim_alu.inspect('rd_aux_p')
+                r_cn = sim_alu.inspect('rd_aux_n')
+                g_sp, g_sn, g_cp, g_cn, _, _ = riscv_xbt_alu(
+                    0x0B, 0b101, 0, ap, an, bp, bn, 0, rdp, rdn
+                )
+                if (g_sp == exp_sp and g_sn == exp_sn and g_cp == exp_cp and g_cn == exp_cn and
+                        r_sp == exp_sp and r_sn == exp_sn and r_cp == exp_cp and r_cn == exp_cn):
                     mod_passed += 1
                 else:
                     mod_failed += 1
+                    failures.append(f"word {idx}: CSAMAC_WORD mismatch")
 
             elif op_name == "UNPACK243":
                 byte_val = case["byte"]
@@ -330,7 +356,8 @@ def run_regression() -> Tuple[bool, Dict[str, Any], str]:
                 if idx < 500:  # Sample first 500 through PyRTL for performance
                     sim_alu.step({
                         'opcode': 0x0B, 'funct3': 0b001, 'funct7': 0,
-                        'rs1_p': ap, 'rs1_n': an, 'rs2_p': bp, 'rs2_n': bn, 'rs1_scalar': 0
+                        'rs1_p': ap, 'rs1_n': an, 'rs2_p': bp, 'rs2_n': bn,
+                        'rd_p_in': 0, 'rd_n_in': 0, 'rs1_scalar': 0
                     })
                     r_sp = sim_alu.inspect('rd_p')
                     r_sn = sim_alu.inspect('rd_n')

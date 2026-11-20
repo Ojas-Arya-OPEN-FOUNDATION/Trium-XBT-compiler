@@ -1,127 +1,97 @@
 """
-epfl_benchmark.py -- EPFL Combinational & ISCAS-85 Circuit Benchmark Evaluator
-for Balanced Ternary Logic & RISC-V Xbt Extension.
+epfl_benchmark.py -- EPFL Combinational & ISCAS-85 Circuit Benchmark Evaluator.
 
-Implements structural circuit models and logic depth / gate count evaluations
-for standard EDA verification benchmarks:
-  1. EPFL Combinational Benchmarks:
-     - Adder64 (64-trit Kogge-Stone vs EPFL 64-bit adder)
-     - Priority Encoder (64-trit SIGN priority circuit)
-     - Voter (Dual-rail majority consensus cell)
-     - ALU64 (64-trit multifunction execution unit)
-  2. ISCAS-85 Classic Circuit Benchmarks:
-     - c432 (Priority interrupt decoder)
-     - c880 (ALU and control unit)
-     - c6288 (16x16 multiplier array)
+When Yosys is installed, runs real CMOS-2 synthesis via hw/synth_xbt_yosys.ys.
+When Yosys is absent, reports analytical estimates clearly tagged as
+"analytical_estimate_no_yosys" rather than claiming synthesized silicon numbers.
 """
 
 from __future__ import annotations
+
 import math
-from typing import Dict, Any, List, Tuple
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, List
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def evaluate_epfl_adder() -> Dict[str, Any]:
-    """
-    EPFL Arithmetic Benchmark: 64-trit Kogge-Stone Parallel-Prefix Adder.
-    Evaluates:
-      - Logical depth (stages of lookahead)
-      - Gate count per stage
-      - Information density: 3^64 = 3.43e30 dynamic range (equivalent to 101.4 binary bits)
-    """
     word_trits = 64
-    stages = 6  # log2(64) stages
-    equivalent_binary_bits = math.log2(3 ** word_trits)  # ~101.4 bits
-
-    # Gate count estimation:
-    # Stage 0: 6 gates per lane (BTHA) = 384 gates
-    # Stages 1..6: Transfer function composition across 64 lanes
-    # Each transfer function node: ~14 CMOS gates
-    total_gates = 384 + (stages * 64 * 14)
-
+    stages = 6
+    equivalent_binary_bits = math.log2(3**word_trits)
+    estimated_gates = 384 + (stages * 64 * 14)
     return {
         "benchmark": "EPFL_Adder64_Ternary",
-        "category": "Arithmetic",
+        "mode": "analytical_estimate",
         "word_trits": word_trits,
         "equivalent_binary_bits": round(equivalent_binary_bits, 1),
         "logic_depth_stages": stages,
-        "critical_path_delay_FO4": stages * 2.5 + 3.0,  # ~18 FO4 gate delays
-        "total_gate_count": total_gates,
-        "verification": "PASS (proved by Z3 Kogge-Stone induction and CTest)",
+        "estimated_critical_path_FO4": stages * 2.5 + 3.0,
+        "estimated_gate_count": estimated_gates,
     }
 
 
 def evaluate_epfl_priority_encoder() -> Dict[str, Any]:
-    """
-    EPFL Logic Benchmark: 64-trit Sign Priority Encoder (XBT.SIGN).
-    Finds the most significant non-zero trit among 64 lanes.
-    """
     lanes = 64
-    depth = math.ceil(math.log2(lanes))  # 6 levels of 2-input priority tree
-    total_gates = lanes * 4 + (lanes - 1) * 3
-
+    depth = math.ceil(math.log2(lanes))
+    estimated_gates = lanes * 4 + (lanes - 1) * 3
     return {
         "benchmark": "EPFL_Priority_Encoder_SIGN",
-        "category": "Control / Logic",
+        "mode": "analytical_estimate",
         "lanes": lanes,
         "tree_depth": depth,
-        "gate_count": total_gates,
-        "verification": "PASS (proved exhaustively up to 10 trits and symbolically in Z3)",
+        "estimated_gate_count": estimated_gates,
     }
 
 
-def evaluate_iscas_benchmarks() -> List[Dict[str, Any]]:
-    """ISCAS-85 benchmark representations mapped to dual-rail logic cells."""
-    benchmarks = [
-        {"name": "c432", "function": "27-channel interrupt priority", "inputs": 36, "outputs": 7, "gates": 160},
-        {"name": "c880", "function": "8-bit ALU / lookahead arithmetic", "inputs": 60, "outputs": 26, "gates": 383},
-        {"name": "c1355", "function": "32-bit SEC-DED parity matrix", "inputs": 41, "outputs": 32, "gates": 546},
-        {"name": "c6288", "function": "16x16 dual-rail multiplier matrix", "inputs": 32, "outputs": 32, "gates": 2416},
-    ]
+def run_yosys_if_available() -> Dict[str, Any]:
+    yosys = shutil.which("yosys")
+    script = REPO_ROOT / "hw" / "synth_xbt_yosys.ys"
+    if not yosys or not script.exists():
+        return {"status": "skipped", "reason": "yosys_not_installed"}
 
-    results = []
-    for b in benchmarks:
-        results.append({
-            "iscas_id": b["name"],
-            "description": b["function"],
-            "inputs": b["inputs"],
-            "outputs": b["outputs"],
-            "gate_complexity": b["gates"],
-            "ternary_dual_rail_mapping": "VALIDATED",
-            "status": "PASS",
-        })
-    return results
+    r = subprocess.run([yosys, "-s", str(script)], cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        return {"status": "fail", "returncode": r.returncode, "stderr": r.stderr[-1000:]}
+
+    cells: Dict[str, int] = {}
+    current = None
+    for line in r.stdout.splitlines():
+        m_mod = re.search(r"===\s+(\w+)\s+===", line)
+        if m_mod:
+            current = m_mod.group(1)
+        m_c = re.search(r"Number of cells:\s+(\d+)", line)
+        if m_c and current:
+            cells[current] = int(m_c.group(1))
+            current = None
+    return {"status": "pass", "module_cell_counts": cells}
 
 
 def run_epfl_suite() -> Dict[str, Any]:
     print("=" * 80)
-    print("=== EPFL Combinational & ISCAS-85 Circuit Benchmark Suite ===")
+    print("=== EPFL Combinational Circuit Evaluator (Analytical + Optional Yosys) ===")
     print("=" * 80)
 
     adder = evaluate_epfl_adder()
-    print(f"  [PASS] {adder['benchmark']}")
-    print(f"         Dynamic Range     : 3^64 = 3.43e30 ({adder['equivalent_binary_bits']} bits equivalent)")
-    print(f"         Prefix Depth      : {adder['logic_depth_stages']} stages (O(log2 N))")
-    print(f"         Critical Path     : {adder['critical_path_delay_FO4']:.1f} FO4 gate delays")
-    print(f"         Total Gate Count  : {adder['total_gate_count']:,} CMOS gates")
-
     priority = evaluate_epfl_priority_encoder()
-    print(f"  [PASS] {priority['benchmark']}")
-    print(f"         Priority Depth    : {priority['tree_depth']} tree levels")
-    print(f"         Gate Count        : {priority['gate_count']} gates")
+    yosys_res = run_yosys_if_available()
 
-    iscas = evaluate_iscas_benchmarks()
-    for b in iscas:
-        print(f"  [PASS] ISCAS-85 {b['iscas_id']:<6} : {b['description']:<35} | {b['gate_complexity']:>5} gates")
-
-    print("-" * 80)
-    print("EPFL & ISCAS-85 BENCHMARK EVALUATION: 100% COMPLETE & VERIFIED")
-    print("=" * 80)
+    print(f"  [ESTIMATE] {adder['benchmark']}: {adder['logic_depth_stages']} stages, ~{adder['estimated_gate_count']:,} gates (analytical)")
+    print(f"  [ESTIMATE] {priority['benchmark']}: {priority['tree_depth']} levels, ~{priority['estimated_gate_count']} gates (analytical)")
+    if yosys_res["status"] == "pass":
+        print(f"  [YOSYS]    Real CMOS-2 synthesis cell counts: {yosys_res['module_cell_counts']}")
+    else:
+        print("  [SKIP]     Yosys not installed; real synthesis skipped (run tools/run_hardware_benchmarks.py on a Yosys host).")
 
     return {
+        "mode": "yosys_synthesized" if yosys_res["status"] == "pass" else "analytical_estimate_no_yosys",
         "epfl_adder": adder,
         "epfl_priority": priority,
-        "iscas_benchmarks": iscas,
-        "status": "PASS",
+        "yosys_synthesis": yosys_res,
+        "status": "PASS" if yosys_res["status"] != "fail" else "FAIL",
     }
 
 

@@ -117,8 +117,8 @@ struct Rational {
         return Rational(den, num);
     }
 
-    Rational abs() const noexcept {
-        // INT64_MIN-safe: negate via 128-bit domain.
+    Rational abs() const {
+        // INT64_MIN-safe: negate via 128-bit domain; throws std::overflow_error if |num| > INT64_MAX.
         __int128_t n = num;
         if (n < 0) n = -n;
         return from_reduced(n, static_cast<__int128_t>(den));

@@ -350,7 +350,8 @@ public:
     PackedTensor() = default;
     PackedTensor(size_t rows, size_t cols) : rows_(rows), cols_(cols) {
         bytes_per_row_ = (cols + 4) / 5;                 // 5 trits per byte
-        bytes_.assign(rows * bytes_per_row_, 0);
+        // 121 (0x79) encodes five zero trits in Base-243 (digit 1 -> trit 0).
+        bytes_.assign(rows * bytes_per_row_, 121);
     }
 
     inline size_t rows() const noexcept { return rows_; }

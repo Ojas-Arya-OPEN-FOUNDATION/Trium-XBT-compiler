@@ -119,13 +119,20 @@ inline int8_t apply_transfer(int8_t f, int8_t carry_in) noexcept {
 /// overflow.  `M` may be given as any upper bound on |val(X)|.
 inline constexpr unsigned required_width(unsigned n, unsigned long long M,
                                          unsigned long long N) noexcept {
-    const unsigned long long need = (M == 0 ? 1ULL : M) * (N == 0 ? 1ULL : N);
+    const unsigned __int128 need =
+        static_cast<unsigned __int128>(M == 0 ? 1ULL : M) *
+        static_cast<unsigned __int128>(N == 0 ? 1ULL : N);
     unsigned w = (n == 0 ? 1u : n);
-    unsigned long long cap = 1ULL;              // (3^w - 1) / 2, iterated
-    // cap(1) = 1, cap(w+1) = 3*cap(w) + 1
+    unsigned __int128 cap = 1;                  // (3^1 - 1) / 2
+    // Initialize cap to (3^w - 1) / 2 matching w = max(1, n).
+    // (3^81 - 1) / 2 < 2^128 < (3^82 - 1) / 2, so w >= 82 already exceeds max need.
+    for (unsigned i = 1u; i < w; ++i) {
+        if (i >= 81u) return w + 2u;
+        cap = 3 * cap + 1;
+    }
     while (cap < need) {
-        if (w >= 40u) return w + 2u;            // 3^40 already exceeds 2^63
-        cap = 3ULL * cap + 1ULL;
+        if (w >= 81u) return 82u + 2u;          // (3^82 - 1)/2 > 2^128 > need
+        cap = 3 * cap + 1;
         ++w;
     }
     return w + 2u;

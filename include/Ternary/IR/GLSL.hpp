@@ -59,8 +59,10 @@ public:
      */
     std::string generate(const Program& p, const std::string& entry,
                          const Config& cfg = Config{}) {
+        verify_program(p);
         entry_ = entry;
         cfg_ = cfg;
+        tmp_counter_ = 0;
         const Function* fn = nullptr;
         for (const auto& f : p.functions)
             if (f.name == entry) { fn = &f; break; }
@@ -87,8 +89,8 @@ public:
                 "' returns a non-numeric type; a compute kernel that maps to a "
                 "buffer must return a value.");
 
-        uses_fp64_ = (fn->parameters[0].type == Type::Float64 ||
-                      fn->result == Type::Float64);
+        std::set<std::string> fp64_visited;
+        uses_fp64_ = detect_fp64(p, entry, fp64_visited);
 
         std::ostringstream o;
         o << "#version 450\n";
@@ -121,6 +123,48 @@ private:
     std::string entry_;
     Config     cfg_;
     bool       uses_fp64_{false};
+    unsigned   tmp_counter_{0};
+
+    std::string fresh_tmp() {
+        return "bt_tmp_" + std::to_string(tmp_counter_++);
+    }
+
+    static bool detect_fp64(const Program& p, const std::string& name,
+                            std::set<std::string>& visited) {
+        if (visited.count(name)) return false;
+        visited.insert(name);
+        for (const auto& f : p.functions) {
+            if (f.name != name) continue;
+            if (f.result == Type::Float64) return true;
+            for (const auto& param : f.parameters)
+                if (param.type == Type::Float64) return true;
+            for (const auto& s : f.body)
+                if (detect_fp64_stmt(s, p, visited)) return true;
+            return false;
+        }
+        return false;
+    }
+
+    static bool detect_fp64_stmt(const Statement& s, const Program& p,
+                                 std::set<std::string>& visited) {
+        if (s.type == Type::Float64) return true;
+        if (s.value && detect_fp64_expr(*s.value, p, visited)) return true;
+        for (const auto& b : {&s.body, &s.alternative, &s.negative})
+            for (const auto& c : *b)
+                if (detect_fp64_stmt(c, p, visited)) return true;
+        return false;
+    }
+
+    static bool detect_fp64_expr(const Expr& e, const Program& p,
+                                 std::set<std::string>& visited) {
+        if (e.type == Type::Float64 || e.op == Op::Floating ||
+            e.op == Op::IntToFloat)
+            return true;
+        if (e.op == Op::Call && detect_fp64(p, e.name, visited)) return true;
+        for (const auto& c : e.operands)
+            if (c && detect_fp64_expr(*c, p, visited)) return true;
+        return false;
+    }
 
     static std::string sanitise(const std::string& s) {
         std::string r;
@@ -173,29 +217,50 @@ private:
     void statement(const Statement& s, int ind, std::ostringstream& o) {
         const std::string pad(ind * 4, ' ');
         switch (s.kind) {
-        case StatementKind::Let:
-            o << pad << glsl(s.type) << " v" << s.symbol << " = "
-              << expression(*s.value) << ";\n";
+        case StatementKind::Let: {
+            std::ostringstream pre;
+            const std::string val = expression(*s.value, pad, pre);
+            o << pre.str();
+            o << pad << glsl(s.type) << " v" << s.symbol << " = " << val << ";\n";
             break;
-        case StatementKind::Assign:
-            o << pad << "v" << s.symbol << " = " << expression(*s.value) << ";\n";
+        }
+        case StatementKind::Assign: {
+            std::ostringstream pre;
+            const std::string val = expression(*s.value, pad, pre);
+            o << pre.str();
+            o << pad << "v" << s.symbol << " = " << val << ";\n";
             break;
-        case StatementKind::Evaluate:
-            o << pad << expression(*s.value) << ";\n";
+        }
+        case StatementKind::Evaluate: {
+            std::ostringstream pre;
+            const std::string val = expression(*s.value, pad, pre);
+            o << pre.str();
+            o << pad << val << ";\n";
             break;
+        }
         case StatementKind::Block:
             o << pad << "{\n";
             for (const auto& b : s.body) statement(b, ind + 1, o);
             o << pad << "}\n";
             break;
-        case StatementKind::Return:
-            o << pad << "return" << (s.value ? " " + expression(*s.value) : "")
-              << ";\n";
+        case StatementKind::Return: {
+            if (s.value) {
+                std::ostringstream pre;
+                const std::string val = expression(*s.value, pad, pre);
+                o << pre.str();
+                o << pad << "return " << val << ";\n";
+            } else {
+                o << pad << "return;\n";
+            }
             break;
-        case StatementKind::If:
+        }
+        case StatementKind::If: {
             // Condition is the SIGN test, exactly as LLVMEmitter does it:
             // compare(value, positive=true) -> value > 0.
-            o << pad << "if (" << expression(*s.value) << " > 0) {\n";
+            std::ostringstream pre;
+            const std::string cond = expression(*s.value, pad, pre);
+            o << pre.str();
+            o << pad << "if (" << cond << " > 0) {\n";
             for (const auto& b : s.body) statement(b, ind + 1, o);
             if (!s.alternative.empty()) {
                 o << pad << "} else {\n";
@@ -203,24 +268,38 @@ private:
             }
             o << pad << "}\n";
             break;
-        case StatementKind::While:
-            o << pad << "while (" << expression(*s.value) << " > 0) {\n";
+        }
+        case StatementKind::While: {
+            const std::string body_pad((ind + 1) * 4, ' ');
+            std::ostringstream pre;
+            const std::string cond = expression(*s.value, body_pad, pre);
+            if (pre.str().empty()) {
+                o << pad << "while (" << cond << " > 0) {\n";
+            } else {
+                o << pad << "while (true) {\n";
+                o << pre.str();
+                o << body_pad << "if (!(" << cond << " > 0)) break;\n";
+            }
             for (const auto& b : s.body) statement(b, ind + 1, o);
             o << pad << "}\n";
             break;
+        }
         case StatementKind::SignSelect: {
             // Three-way on the sign: >0 -> body, <0 -> negative, else alternative.
-            const std::string v = "bt_sel_" + std::to_string(ind);
+            const std::string inner_pad((ind + 1) * 4, ' ');
+            std::ostringstream pre;
+            const std::string val = expression(*s.value, inner_pad, pre);
+            const std::string v = fresh_tmp();
             o << pad << "{\n";
-            o << pad << "    " << glsl(s.value->type) << " " << v << " = "
-              << expression(*s.value) << ";\n";
-            o << pad << "    if (" << v << " > 0) {\n";
+            o << pre.str();
+            o << inner_pad << glsl(s.value->type) << " " << v << " = " << val << ";\n";
+            o << inner_pad << "if (" << v << " > 0) {\n";
             for (const auto& b : s.body) statement(b, ind + 2, o);
-            o << pad << "    } else if (" << v << " < 0) {\n";
+            o << inner_pad << "} else if (" << v << " < 0) {\n";
             for (const auto& b : s.negative) statement(b, ind + 2, o);
-            o << pad << "    } else {\n";
+            o << inner_pad << "} else {\n";
             for (const auto& b : s.alternative) statement(b, ind + 2, o);
-            o << pad << "    }\n";
+            o << inner_pad << "}\n";
             o << pad << "}\n";
             break;
         }
@@ -228,7 +307,8 @@ private:
     }
 
     // ---------------- expressions ----------------
-    std::string expression(const Expr& e) {
+    std::string expression(const Expr& e, const std::string& pad,
+                           std::ostringstream& pre) {
         switch (e.op) {
         case Op::Integer:
             // int64_t literal suffix keeps it from being truncated to int.
@@ -242,38 +322,46 @@ private:
         case Op::Parameter:
             return "v" + std::to_string(e.symbol);
         case Op::Negate:
-            if (e.type == Type::Float64) return "(-" + expression(*e.operands[0]) + ")";
-            return "(0L - " + expression(*e.operands[0]) + ")";   // matches LLVM sub i64 0, a
+            if (e.type == Type::Float64) return "(-" + expression(*e.operands[0], pad, pre) + ")";
+            return "(0L - " + expression(*e.operands[0], pad, pre) + ")";   // matches LLVM sub i64 0, a
         case Op::Add: case Op::Sub: case Op::Mul: {
             const char* sym = e.op == Op::Add ? "+" : e.op == Op::Sub ? "-" : "*";
-            return "(" + expression(*e.operands[0]) + " " + sym + " " +
-                   expression(*e.operands[1]) + ")";
+            return "(" + expression(*e.operands[0], pad, pre) + " " + sym + " " +
+                   expression(*e.operands[1], pad, pre) + ")";
         }
         case Op::IntCast:
-            return expression(*e.operands[0]);   // identity, as in LLVM
+            return expression(*e.operands[0], pad, pre);   // identity, as in LLVM
         case Op::IntToFloat:
-            return "(double)(" + expression(*e.operands[0]) + ")";
+            return "(double)(" + expression(*e.operands[0], pad, pre) + ")";
         case Op::Abs:
-            return "abs(" + expression(*e.operands[0]) + ")";
+            return "abs(" + expression(*e.operands[0], pad, pre) + ")";
         case Op::Sqrt:
-            return "sqrt(" + expression(*e.operands[0]) + ")";
+            return "sqrt(" + expression(*e.operands[0], pad, pre) + ")";
         case Op::Fma:
-            return "fma(" + expression(*e.operands[0]) + ", " +
-                   expression(*e.operands[1]) + ", " +
-                   expression(*e.operands[2]) + ")";
+            return "fma(" + expression(*e.operands[0], pad, pre) + ", " +
+                   expression(*e.operands[1], pad, pre) + ", " +
+                   expression(*e.operands[2], pad, pre) + ")";
         case Op::Spaceship: {
-            const std::string a = expression(*e.operands[0]);
-            const std::string b = expression(*e.operands[1]);
-            return "((" + a + " > " + b + ") ? 1L : ((" + a + " < " + b +
+            // Bind both operands to temp locals so neither is evaluated twice.
+            const std::string a_expr = expression(*e.operands[0], pad, pre);
+            const std::string b_expr = expression(*e.operands[1], pad, pre);
+            const std::string ta = fresh_tmp();
+            const std::string tb = fresh_tmp();
+            pre << pad << glsl(e.operands[0]->type) << " " << ta << " = " << a_expr << ";\n";
+            pre << pad << glsl(e.operands[1]->type) << " " << tb << " = " << b_expr << ";\n";
+            return "((" + ta + " > " + tb + ") ? 1L : ((" + ta + " < " + tb +
                    ") ? -1L : 0L))";
         }
         case Op::SignSelect: {
             // operands: condition, positive, zero, negative
-            const std::string c = expression(*e.operands[0]);
-            const std::string p = expression(*e.operands[1]);
-            const std::string z = expression(*e.operands[2]);
-            const std::string n = expression(*e.operands[3]);
-            return "((" + c + " > 0) ? (" + p + ") : ((" + c + " < 0) ? (" +
+            // Bind condition to a temp local so it is evaluated exactly once.
+            const std::string c_expr = expression(*e.operands[0], pad, pre);
+            const std::string tc = fresh_tmp();
+            pre << pad << glsl(e.operands[0]->type) << " " << tc << " = " << c_expr << ";\n";
+            const std::string p = expression(*e.operands[1], pad, pre);
+            const std::string z = expression(*e.operands[2], pad, pre);
+            const std::string n = expression(*e.operands[3], pad, pre);
+            return "((" + tc + " > 0) ? (" + p + ") : ((" + tc + " < 0) ? (" +
                    n + ") : (" + z + ")))";
         }
         case Op::Equal: case Op::NotEqual: case Op::Less:
@@ -282,15 +370,15 @@ private:
                 e.op == Op::Equal ? "==" : e.op == Op::NotEqual ? "!=" :
                 e.op == Op::Less ? "<" : e.op == Op::Greater ? ">" :
                 e.op == Op::LessEqual ? "<=" : ">=";
-            const std::string a = expression(*e.operands[0]);
-            const std::string b = expression(*e.operands[1]);
+            const std::string a = expression(*e.operands[0], pad, pre);
+            const std::string b = expression(*e.operands[1], pad, pre);
             // LLVM returns i64 1 / -1, not 0/1. Match it exactly.
             return "((" + a + " " + sym + " " + b + ") ? 1L : -1L)";
         }
         case Op::Call: {
             std::string s = "bt_" + sanitise(e.name) + "(";
             for (size_t i = 0; i < e.operands.size(); ++i)
-                s += (i ? ", " : "") + expression(*e.operands[i]);
+                s += (i ? ", " : "") + expression(*e.operands[i], pad, pre);
             return s + ")";
         }
         case Op::Print:
@@ -494,9 +582,12 @@ inline std::vector<std::string> validate_against_contract(const std::string& gls
             problems.push_back("contract declares push constants but the shader has no "
                                "push_constant block");
         } else {
-            const auto eol = glsl.find(';', pc);
-            const std::string block = glsl.substr(pc, eol == std::string::npos
-                                                           ? std::string::npos : eol - pc);
+            const auto close_brace = glsl.find('}', pc);
+            const auto eol = (close_brace != std::string::npos)
+                                 ? glsl.find(';', close_brace)
+                                 : glsl.find(';', pc);
+            const std::string block = glsl.substr(
+                pc, eol == std::string::npos ? std::string::npos : (eol - pc + 1));
             for (const auto& f : c.push_fields)
                 if (block.find(f.name) == std::string::npos)
                     problems.push_back("push-constant field '" + f.name +

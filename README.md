@@ -6,461 +6,315 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Organization](https://img.shields.io/badge/Organization-Ojas--Arya_OPEN--FOUNDATION-8A2BE2.svg)](https://github.com/Ojas-Arya-OPEN-FOUNDATION)
-[![Rocq 9.2 Machine Proofs](https://img.shields.io/badge/Rocq_9.2-100%25_Verified-brightgreen.svg)](proofs/rocq/BalancedTernaryFoundations.v)
-[![Lean 4 Proofs](https://img.shields.io/badge/Lean_4-v4.34.0_Verified-brightgreen.svg)](BalancedTernary.lean)
-[![Z3 SMT Solvers](https://img.shields.io/badge/Z3_SMT-312_Obligations_Verified-brightgreen.svg)](verify_z3_kogge_stone.py)
-[![LLVM 7-Layer Test Suite](https://img.shields.io/badge/LLVM_Tests-7_Layers_Passed-brightgreen.svg)]()
-[![Sanitizers](https://img.shields.io/badge/Sanitizers-ASan_%2B_UBSan_Clean-success.svg)]()
-[![Silicon RTL](https://img.shields.io/badge/RTL-RISC--V_Xbt_SystemVerilog-blueviolet.svg)](hw/riscv_xbt_extension.sv)
+[![Lean 4](https://img.shields.io/badge/Lean_4-5_Files_%7C_0_sorry-brightgreen.svg)](BalancedTernary.lean)
+[![Rocq 9](https://img.shields.io/badge/Rocq_9-4_Files_%7C_66_Theorems_%7C_0_Axioms-brightgreen.svg)](proofs/rocq/BalancedTernaryFoundations.v)
+[![Z3 SMT](https://img.shields.io/badge/Z3_SMT-14_Root_%2B_11_Suite-brightgreen.svg)](verify_z3_kogge_stone.py)
+[![Golden Model](https://img.shields.io/badge/Xbt_Golden_Model-14%2C331_v1%2Bv2_Checks-brightgreen.svg)](verification/golden_model/xbt_golden.py)
+[![CTest](https://img.shields.io/badge/CTest-90_Targets-success.svg)](CMakeLists.txt)
+[![Silicon RTL](https://img.shields.io/badge/RTL-RISC--V_Xbt_Pre--Silicon-blueviolet.svg)](hw/riscv_xbt_extension.sv)
 
-*A mathematically proven, hardware-agnostic balanced ternary compiler infrastructure, high-performance numerical algebra engine, and synthesizable silicon design executing directly on commodity binary CPUs, GPUs, and RISC-V accelerators.*
+*A formally verified, hardware-agnostic balanced ternary (`{-1, 0, +1}`) compiler infrastructure, bit-sliced linear algebra SDK, and declarative RISC-V `Xbt` hardware target toolchain.*
 
----
-
-[📖 Complete 31,000-Word Guide](docs/Next_Gen_Foundation_Compiler_Guide.md) &nbsp;•&nbsp;
-[⚡ Quick Start](#quick-start-build-run-and-verify-in-60-seconds) &nbsp;•&nbsp;
-[📊 Benchmark & Architecture Report](docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md) &nbsp;•&nbsp;
+[📘 Complete Technical Book (PDF)](docs/Trium_XBT_Complete_Technical_Book.pdf) &nbsp;•&nbsp;
+[🧭 Architecture Tracks](docs/ARCHITECTURE_TRACKS.md) &nbsp;•&nbsp;
+[⚡ SDK Quickstart](#sdk-quickstart-track-1) &nbsp;•&nbsp;
+[🔬 Verified Benchmarks](#verified-benchmarks) &nbsp;•&nbsp;
+[🛠️ Hardware Authoring](#hardware-authoring-quickstart-track-2) &nbsp;•&nbsp;
 [🤝 Contributing](CONTRIBUTING.md)
-
----
 
 </div>
 
-## 📌 Executive Summary
-
-We built the **Trium-XBT Foundational Compiler** to solve a 70-year-old fundamental dilemma in computer science: **how to run Balanced Ternary (`{-1, 0, +1}`) mathematics on standard binary computers (`{0, 1}`) at speeds faster than native binary floating-point arithmetic.**
-
-This repository delivers an end-to-end, production-grade toolchain:
-- **Domain-Specific Language (`.bt`)**: Custom grammar with native 3-way spaceship `<=>`, `select` branching, and dual-rail types.
-- **LLVM IR CodeGen & Bare-Metal Clang JIT**: Direct AST lowering into LLVM SSA bitcode with DWARF-5 debug metadata and in-memory execution via `dlopen`/`dlsym`.
-- **MLIR `bt` Dialect**: TableGen dialect schemas and lowering passes targeting `linalg.generic`, `vector.reduction`, and hardware `llvm.intr.ctpop`.
-- **Multiplier-Free Linear Algebra**: 64-trit dot products computed in 7 CPU instructions via bitwise logic and hardware `std::popcount` with zero multiplier circuits.
-- **Synthesizable RISC-V Silicon (`Xbt`)**: IEEE 1800-2017 SystemVerilog RTL (`hw/riscv_xbt_extension.sv`) defining Custom-0 (`opcode = 0x0B`) execution units.
-- **Tri-Prover Machine-Checked Proofs**: Core algebraic identities verified with 0 axioms and 0 errors across **Rocq 9.2**, **Lean 4.34.0**, and **Z3 SMT**.
-
 ---
 
-## 🎯 Direction: a foundation compiler for next-generation hardware
+## One Unified `Trium-XBT`, Two Clear Engineering Tracks
 
-Balanced ternary is not a curiosity of number theory — it is the natural fit for
-three-state nanoscale substrates (CNTFET, memristive, QCA, spin, photonic), where
-a binary compiler must first discard the third state and then emulate it with two
-wires. A trit carries log₂(3) = 1.585 bits, so the same information needs ~37%
-fewer interconnects; a ternary weight is 1.6 bits packed versus 32 for FP32, a
-**20× reduction in memory traffic** in the regime that actually limits modern
-accelerators.
+Balanced ternary (`{-1, 0, +1}`) eliminates hardware multipliers for ternary weights, gives zero-cycle sign negation via dual-rail swap (`P ↔ N`), provides symmetric unbiased rounding, and packs weights at **1.6 bits/trit** (Base-243) — a **20× memory-footprint reduction** versus FP32. Rather than conflating what runs fast on commodity CPUs/GPUs today with pre-silicon ternary hardware research, **Trium-XBT** is organized around **one shared verified Core IR and formal proof backbone** feeding **two distinct engineering tracks** (see [`docs/ARCHITECTURE_TRACKS.md`](docs/ARCHITECTURE_TRACKS.md)):
 
-The full statement of the goal, the backend contract, and the milestone order is
-in **[`docs/VISION_NEXT_GEN_HARDWARE.md`](docs/VISION_NEXT_GEN_HARDWARE.md)**.
-Start there if you are adding a hardware target.
-
-Measured status of that roadmap, on a 2-core Xeon @2.6 GHz with
-AVX-512 VPOPCNTDQ, every figure verified bit-exact against a naive O(n³)
-reference before being timed:
-
-| Capability | Status | Measured |
-|---|---|---|
-| CPU ternary GEMM (n=1024) | done | **213 G MAC/s** vs 62 previous |
-| Packed weights | done | 1.6 bits/trit, 20× smaller than FP32 |
-| BitNet b1.58 | done | 2.03× faster than the original kernel |
-| GPU backend | algorithm verified, dispatch pending | shaders + emulator pass; no Vulkan dispatch |
-| RTL / FPGA | exists | not measured on hardware |
-
-Ternary's advantage is **memory bandwidth, not raw FLOPs** — target large `n`.
-
-**Benchmarking rule.** Performance numbers come from
-`tools/ternary_bench.cpp`, built on `tools/bench_harness.hpp`, which verifies
-bit-exactness *before* timing, reports `UNVERIFIED` instead of a number for any
-case that fails, and exits nonzero if anything did not verify. Do not quote a
-number that harness did not produce.
-
-```
-cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
-./build/ternary_bench --check        # seconds, correctness + timing  (CI)
-./build/ternary_bench --json r.json  # full sweep, machine-readable
-```
-
-## 🗺️ System Architecture Infographic
-
-The following diagram illustrates the complete, self-contained vertical compilation and execution pipeline:
+| Track | Focus | Core Components | Current Status |
+| :--- | :--- | :--- | :--- |
+| **Track 1 — Present-Day Hardware Compiler & SDK** | High-throughput balanced ternary execution on commodity x86_64, ARM64, Vulkan, and CUDA | Checked scalar Core IR (`int39`, `BTFP<1..40>`), AVX-512/AVX2/NEON bit-sliced ternary GEMM (`include/Ternary/Blas/TernaryMicroKernel.hpp`), Vulkan/CUDA map kernels, `libtrium_sdk` (C, C++20, Python `trium`, Rust `bt_runtime::sdk`), unified `tools/trium_workflow.py` | **Measured & verified on bare-metal CPUs** (90 CTest targets; Xeon Platinum 8481C & Apple M2 reproductions) |
+| **Track 2 — Next-Generation Ternary & RISC-V `Xbt` Hardware Compiler** | Target-agnostic backend authoring, ISA selection, co-simulation, and synthesizable RTL | Declarative YAML targets (`targets/*.yaml` → `tools/gen_targets.py` → `tools/gen_backend.py`), rule-driven `XbtInstructionSelector` (v1+v2 Custom-0 `0x0B`), POSIX-pipe `ExternalSimulator`, `hw/riscv_xbt_extension.sv`, 5-stage `hw/trium_cpu_core.sv`, `hw/tb_riscv_xbt_alu.sv`, `hw/synth_xbt_yosys.ys`, Chipyard `WithXbtRoCCAccelerator`, `tools/run_hardware_benchmarks.py` | **Pre-silicon RTL & conformance verified** (14,331 Golden Model v1+v2 checks; EDA scripts ready; not yet taped out or FPGA-measured) |
 
 ```mermaid
 flowchart TD
-    subgraph Frontend ["1. Frontend & Language Layer"]
-        BT_SRC[".bt Source Program"] --> LEX["Lexer & Preprocessor\n(@import module resolution)"]
-        LEX --> PARSE["Recursive-Descent Parser\n(Ternary AST)"]
-        PARSE --> SEMA["Semantic Type Checker\n(Kleene 3-Valued Logic Safety)"]
+    subgraph Shared ["Unified Core & Formal Verification Backbone"]
+        SRC[".bt Source / SDK API"] --> IR["Checked Scalar Core IR\n(int39, BTFP<1..40>, Dual-Rail P/N)"]
+        IR -.-> PROOFS["Formal Verification Gate\nLean 4 (5 files, 0 sorry) • Rocq 9 (66 theorems, 0 axioms) • Z3 (14+11)"]
     end
 
-    subgraph Compiler ["2. Compiler & Middle-End Layer"]
-        SEMA --> CODEGEN["LLVM CodeGen Visitor\n(SSA IR + DWARF-5 Metadata)"]
-        SEMA --> MLIR["MLIR bt Dialect\n(TableGen Schemas)"]
-        MLIR --> OPT["bt-opt Optimizer\n(linalg.generic & vector lowerings)"]
+    subgraph Track1 ["Track 1 — Present-Day Hardware Compiler & SDK"]
+        IR --> GEMM["Bit-Sliced Ternary Micro-Kernel\nAVX-512 / AVX2 / NEON (TernaryMicroKernel.hpp)"]
+        IR --> GPU["Map Kernels\nVulkan SPIR-V & CUDA (tools/cuda_map.py)"]
+        GEMM --> SDK["libtrium_sdk (ABI v1 / API 1.3)\nC • C++20 • Python (trium) • Rust (bt_runtime::sdk)"]
+        GPU --> SDK
+        SDK --> WF["Unified CLI Workflow\ntools/trium_workflow.py"]
     end
 
-    subgraph Runtime ["3. JIT & Native Execution Targets"]
-        CODEGEN --> JIT["Bare-Metal Clang JIT\n(dlopen / dlsym in-memory execution)"]
-        CODEGEN --> AARCH["ARM64 Native Assembly\n(Apple Silicon NEON)"]
-        CODEGEN --> X86["x86_64 Native Assembly\n(AVX-512 / BMI2)"]
-        CODEGEN --> RISCV["RISC-V 64 Assembly\n(Custom Xbt Instructions)"]
-        OPT --> IREE["IREE Dispatch Bridge\n(Apple Metal MSL / Vulkan SPIR-V)"]
+    subgraph Track2 ["Track 2 — Next-Gen Ternary & RISC-V Xbt Hardware Compiler"]
+        YAML["Declarative Targets\ntargets/*.yaml → gen_targets.py → gen_backend.py"] --> ISEL["Rule-Driven XbtInstructionSelector\nRISC-V Custom-0 (0x0B) v1 + v2"]
+        IR --> ISEL
+        ISEL --> SIM["POSIX-Pipe ExternalSimulator\nConformance Runner & Golden Model (14,331 checks)"]
+        ISEL --> RTL["Synthesizable SystemVerilog RTL\nhw/riscv_xbt_extension.sv • hw/trium_cpu_core.sv"]
+        RTL --> EDA["Verilator / Icarus (tb_riscv_xbt_alu.sv)\nYosys (synth_xbt_yosys.ys) • Chipyard WithXbtRoCCAccelerator"]
     end
 
-    subgraph Silicon ["4. Hardware & Formal Proof Layer"]
-        RISCV --> RTL["Synthesizable SystemVerilog RTL\n(hw/riscv_xbt_extension.sv)"]
-        CODEGEN --> FFI["C ABI (libbt_runtime.dylib)\nPython ctypes & Rust Crate"]
-        SEMA -.-> PROOFS["Tri-Prover Verification Gate\n(Rocq 9.2 + Lean 4 + Z3 SMT)"]
-    end
+    style Shared fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
+    style Track1 fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc
+    style Track2 fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
+```
 
-    style Frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
-    style Compiler fill:#1e293b,stroke:#8b5cf6,stroke-width:2px,color:#f8fafc
-    style Runtime fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc
-    style Silicon fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
+For full mathematical derivations, compiler internals, RTL microarchitecture, and verification methodology, read the complete multi-chapter book **[`docs/Trium_XBT_Complete_Technical_Book.pdf`](docs/Trium_XBT_Complete_Technical_Book.pdf)** alongside **[`docs/ARCHITECTURE_TRACKS.md`](docs/ARCHITECTURE_TRACKS.md)** and **[`docs/VISION_NEXT_GEN_HARDWARE.md`](docs/VISION_NEXT_GEN_HARDWARE.md)**.
+
+---
+
+## Verified Benchmarks
+
+**Benchmarking rule:** Every throughput figure reported by `tools/ternary_bench.cpp` (built on `tools/bench_harness.hpp`) is checked bit-exact against a naive $O(n^3)$ reference *before* timing. Any case that fails prints `UNVERIFIED` instead of a number and exits nonzero.
+
+> **Honesty note on `G MAC/s` and `GOPS` vs. IEEE-754 `FLOPS`:** Ternary GEMM computes exact integer multiply-accumulates over `{-1, 0, +1}` using bitwise `AND`/`OR` and population counts (`POPCNT` / `VPOPCNTDQ`) with **zero hardware multipliers** and **zero rounding error** at any $K$ that fits in `int64`. It is not a 24-bit mantissa IEEE-754 FP32 FMA; its real-world advantage is **memory bandwidth and multiplier elimination** when weights or activations live in `{-1, 0, +1}`.
+
+### 1. Verified Intel Xeon Platinum 8481C (`ternary_bench` vs. Real NumPy BLAS FP32)
+
+Measured on Intel Xeon Platinum 8481C with AVX-512 `VPOPCNTDQ` (`tools/ternary_bench.cpp` vs. live NumPy BLAS FP32 baseline on the same host):
+
+| Kernel / Mode | Problem Size | Measured Throughput | Relative to BLAS FP32 | Notes |
+| :--- | :--- | ---: | ---: | :--- |
+| **NumPy BLAS FP32** (Baseline) | `n = 1024` | `111.12 G MAC/s` | `1.00×` | Real host BLAS FP32 reference |
+| **Pre-Packed 4×4 Ternary GEMM** | `n = 1024` | **`222.07 G MAC/s`** | **`2.00×`** | Register-blocked dual-rail micro-kernel (`TernaryMicroKernel.hpp`), exact `int64` |
+| **End-to-End Ternary GEMM** (Pack + GEMM) | `n = 1024` | **`145.61 G MAC/s`** | **`1.31×`** | Includes online dual-rail operand packing + GEMM |
+| **Packed Base-243 Ternary GEMM** | `n = 1024` | `61.34 G MAC/s` | `0.55×` | 1.6 bits/trit storage (**20× memory reduction** vs. FP32) |
+| **BitNet b1.58 Kernel** | `n = 256` | `16.04 G MAC/s` | — | Verified bit-exact against reference |
+
+### 2. Independent Reproduction — Apple M2 (`bench_gemm_dual_rail.cpp @ 281a407`)
+
+Independent 3-trial cross-check compiled on Apple M2 with `clang++ -std=c++20 -O3 -DNDEBUG -march=native` (`M=256, K=512, N=256`, **`[PASS] 100% Exact Equivalence Verified`**):
+
+| Kernel Variant | Median Time | Throughput | Speedup vs. Baseline |
+| :--- | ---: | ---: | ---: |
+| **INT8 NEON `vdotq_s32`** (Baseline) | `0.8078 ms` | `83.08 GOPS` | `1.00×` |
+| **Dual-Rail POPCNT (Kernel-Only)** | **`0.6379 ms`** | **`105.20 GOPS`** | **`1.27×`** |
+| **Dual-Rail POPCNT (End-to-End Pack+GEMM)** | **`0.6525 ms`** | **`102.84 GOPS`** | **`1.24×`** |
+| **Dual-Rail Harley-Seal CSA (Kernel-Only)** | `0.9193 ms` | `73.00 GOPS` | `0.88×` |
+| **Dual-Rail Harley-Seal CSA (End-to-End)** | `0.9342 ms` | `71.84 GOPS` | `0.86×` |
+
+**Concrete engineering takeaways from the Apple M2 reproduction:**
+1. **Fair baseline & clean packing accounting:** The INT8 NEON `vdotq_s32` baseline uses 2 accumulators processing 32 elements/iteration, while `pack_64_neon` accounts for only **~14.6 µs** (~2.3% of GEMM time, **~9.0 Gtrits/s**), so end-to-end throughput retains `1.24×` over `vdotq_s32`.
+2. **Clear remaining headroom in `gemm_dual_rail_popcnt`:** The current ARM64 kernel still uses scalar `uint64_t std::popcount` at 64 trits/iteration; moving the inner loop to 128-bit NEON `vcntq_u8 + vpadalq_u8` with deferred horizontal accumulation projects **~1.8×–2.3×** over `vdotq_s32` on M2.
+3. **Harley-Seal 3:2 CSA negative result reproduced:** Harley-Seal CSA lands at `0.86×–0.88×` on M2 — reproducing the same negative result observed on M5. Direct popcount wins decisively on Apple Silicon.
+
+---
+
+## Build & Verify in 60 Seconds
+
+```bash
+# Configure and build C++20 compiler, libtrium_sdk, and benchmark binaries
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# Run all 90 CTest targets
+ctest --test-dir build --output-on-failure
+
+# Run correctness-gated ternary GEMM benchmark
+./build/ternary_bench --check
+./build/ternary_bench --json bench_results.json
+
+# Unified Track 1 + Track 2 workflow CLI
+python3 tools/trium_workflow.py --help
 ```
 
 ---
 
-## Section 1: What This Project Is and Why We Built It
+## SDK Quickstart (Track 1)
 
-### 1.1 The Flaws of Binary Computing
+`libtrium_sdk` exposes a stable C ABI v1 (API 1.3) with zero hidden GPU/CPU fallbacks, checked `int39` and finite `BTFP<1..40>` arithmetic, and bit-sliced exact `int64` ternary GEMM across C, C++20, Python, and Rust.
 
-Every modern processor uses binary switches (`0` and `1`). Binary hardware is simple to manufacture in silicon factories, but it imposes three severe mathematical bottlenecks:
+### C (`include/Ternary/SDK/sdk.h`)
 
-1. **Expensive Sign Negation**: A binary bit has no negative state. To negate a number (e.g. $+5 \to -5$), a binary CPU must invert every bit and add $1$ (Two's Complement). This forces electrical carries to ripple across the entire 64-bit adder circuit.
-2. **Directional Rounding Drift**: When binary floating-point formats ([IEEE-754](https://en.wikipedia.org/wiki/IEEE_754)) truncate fractional bits, discarded remainders are asymmetric. Over millions of steps in physics simulations or AI training, this accumulates systematic numerical drift and forces the existence of two different zeros (`+0.0` and `-0.0`).
-3. **Power-Hungry Multiplier Circuits**: Multiplying binary numbers requires massive grids of transistor adders (Wallace trees). These multiplier arrays consume over 70% of an ALU's silicon area, memory bandwidth, and electrical power.
+```c
+#include "Ternary/SDK/sdk.h"
+#include <stdio.h>
 
-### 1.2 The Balanced Ternary Solution (`{-1, 0, +1}`)
+int main(void) {
+    char err[512];
+    bt_sdk_handle ctx = 0, mod = 0;
+    const char *src = "fn scale(x: int) -> int { return x * 3 + 1; }";
+    int64_t in[4] = {-2, 0, 1, 5}, out[4] = {0};
 
-Instead of an asymmetric two-state bit, **Balanced Ternary**—first proven in hardware on the 1958 Soviet [Setun computer](https://en.wikipedia.org/wiki/Setun)—uses a symmetric three-state digit called a **Trit** (`-1, 0, +1`) centered around zero:
+    if (bt_sdk_context_create(NULL, &ctx, err, sizeof err) != BT_SDK_OK) return 1;
+    if (bt_sdk_compile(ctx, src, 45, &mod, err, sizeof err) != BT_SDK_OK) return 1;
+    if (bt_sdk_map(mod, "scale", BT_SDK_CPU, in, 4, out, NULL, err, sizeof err) != BT_SDK_OK) return 1;
 
+    printf("out = [%lld, %lld, %lld, %lld]\n",
+           (long long)out[0], (long long)out[1], (long long)out[2], (long long)out[3]);
+
+    bt_sdk_release(mod, err, sizeof err);
+    bt_sdk_release(ctx, err, sizeof err);
+    return 0;
+}
 ```
-    [Left Pan: -1]          [Center: 0]          [Right Pan: +1]
-          ▲                      ▲                      ▲
-          │                      │                      │
-   Weight on Left          Left off scale         Weight on Right
-   (Negative Force)          (Neutral)           (Positive Force)
-```
 
-* **Zero-Cycle Negation**: To negate any balanced ternary number, you flip every $+1$ to $-1$ and every $-1$ to $+1$. **No addition or carry ripple occurs**.
-* **Zero Rounding Bias**: When fractional trits are truncated, discarded remainders are symmetrically distributed around zero. The statistical expected rounding error is **strictly $0.000000$**.
-* **Multiplier-Free Arithmetic**: Multiplying by a trit ($\{-1, 0, +1\}$) requires zero multiplier gates. It is either a sign swap ($-1$), a zero mask ($0$), or identity ($+1$).
-
-### 1.3 Overcoming the 70-Year Binary Bottleneck
-
-If balanced ternary is mathematically superior, why was it abandoned? Because global semiconductor foundries invested trillions into binary CMOS. When programmers tried to simulate ternary trits using `if (trit == 1) ... else if (trit == -1)` branches, branch predictors stalled and code ran **10x to 50x slower** than binary.
-
-**Our Core Principle**: We do not need to wait for ternary chip factories. By turning 64-bit binary registers sideways into **Dual-Rail Bitplanes** (storing 64 positive signs in register `P` and 64 negative signs in register `N`), our compiler turns a standard 64-bit binary CPU into a **64-lane parallel balanced ternary SIMD processor**.
-
-| Metric / Operation | Standard Binary (IEEE-754 FP32 / INT) | Trium-XBT Foundational Compiler (Balanced Ternary) | Practical Advantage | 
-| :--- | :--- | :--- | :--- | 
-| **Basic Digit Set** | `{0, 1}` (Asymmetric) | `{-1, 0, +1}` (Symmetric around 0) | Natural positive, neutral, and negative states | 
-| **Sign Negation (`-X`)** | Invert all bits + ripple-add `1` | Swap register pointers `{P ↔ N}` | **0 clock cycles** (instant wire swap / register rename) | 
-| **64-Element Dot Product** | 64 FP32 multiply-adds (Wallace trees) | 4 bitwise ops + 2 hardware `POPCNT` + 1 `SUB` | **Multiplier-Free** (0 hardware multipliers) | 
-| **Floating-Point Rounding Bias** | Directional drift; has `+0.0` and `-0.0` | Symmetric remainder cancellation; unique `0` | **Strictly 0.000000 mean error** | 
-| **Sparse Matrix Value Storage** | 32 bits (4 bytes) per non-zero weight | **1 bit** per non-zero weight (`0` for `-1`, `1` for `+1`) | **32x smaller value memory**; zero multipliers | 
-| **Reversible Trajectory Memory** | $O(N)$ RAM (stores all intermediate layers) | $O(1)$ **RAM** (stores only current phase state) | Bit-exact 100,000,000-step backward reconstruction | 
-
----
-
-## Section 2: Core Inventions and Breakthroughs
-
-### 2.1 Prior Art vs. Genuinely New Inventions in This Project
-
-We believe in rigorous scientific attribution. The table below clearly separates established prior art from the **six original inventions** developed in this project:
-
-| Layer / Technology | Status | Origin and What Is Newly Invented in This Repository | 
-| :--- | :--- | :--- | 
-| **Balanced Ternary & Dual-Rail (`P, N`) Encoding** | **Prior Art** | Balanced ternary dates to Thomas Fowler (1840) and Nikolay Brusentsov's [Setun](https://en.wikipedia.org/wiki/Setun) (1958). Dual-rail 2-bit encoding and SWAR tree concepts were formalized by [Douglas W. Jones](https://homepage.cs.uiowa.edu/~jones/ternary/arith.shtml) (2012–2016). | 
-| **Bit-Sliced `POPCNT` Dot Products & Base-243 Packing** | **Prior Art** | Using bitwise `AND`/`OR` + `POPCNT` for $\{-1, 0, +1\}$ dot products and packing 5 trits per byte ($3^5=243$) are known in Ternary Weight Networks, [BitNet b1.58](https://arxiv.org/abs/2402.17764), and [Microsoft T-MAC](https://arxiv.org/pdf/2407.00088). | 
-| **Invention 1: 7-State Monotone Semigroup Kogge-Stone Adder** | **New Invention** | Proves that radix-3 carry transfer functions form a **closed 7-state monotone semigroup** with **monotone lattice absorption** (`ternary_core.hpp`, `verify_z3_kogge_stone.py`). Resolves all 64 ternary carries in **6 branchless stages (~10.54 ns)** with zero boundary masks and zero `while` loops. | 
-| **Invention 2: $O(1)$ Power-of-3 Rounding & 3-Way Constant-Divisor `BT-FP32` Mul** | **New Invention** | Proves that $k$ sequential balanced divisions by 3 equal one offset division $\lfloor(|x| + (3^k-1)/2)/3^k\rfloor$, and proves that normalized mantissa products only land in **3 exponent buckets** ($W-2, W-1, W$). Compiles `BTFP32` multiplication into a **1-cycle `umulh` instruction (`0.56 ns`, 264x speedup)**. | 
-| **Invention 3: Multi-Word Balanced Ternary Symplectic Lattice Engine** | **New Invention** | Combines [Leapfrog integration](https://en.wikipedia.org/wiki/Leapfrog_integration) and palindromic Yoshida $(+1, -1, +1)$ steps with arbitrary-precision `TritBigInt` (`symplectic_ternary_engine.hpp`). Achieves **100% bit-exact time-reversibility** and exact momentum conservation in $O(1)$ **memory** without floating-point drift. | 
-| **Invention 4: Register-Direct Base-243 $\leftrightarrow$ Dual-Rail Transpose** | **New Invention** | Combines [Granlund–Montgomery](https://gmplib.org/~tege/divcnst-pldi94.pdf) magic multipliers `(171, 57, 19, 203)` with branchless bit extraction (`(d >> 1)` and `((2 - d) >> 1)`) to transpose 13 Base-243 bytes directly into 64-trit `TritWord64(P, N)` registers with zero lookup tables and zero heap allocations. | 
-| **Invention 5: 1-Bit Sign-Only `T-CSR` + 2-Level CoW Canonical-Zero Arena** | **New Invention** | Replaces sparse matrix value arrays with a **1-bit sign bitmap** (`0` for $-1$, `1` for $+1$) for multiplier-free SpMV (`ternary_sparse.hpp`), paired with a 2-level Copy-on-Write page directory (`ternary_memory_arena.hpp`) committing only **576 bytes of physical RAM** for a 1 GB virtual zero matrix. | 
-| **Invention 6: Full-Stack `.bt` Language + RISC-V `Xbt` ISA + Formal Proofs** | **New Synthesis** | Unifies a domain-specific `.bt` language, MLIR dialect schemas, an LLVM IR native JIT, a synthesizable RISC-V Custom-0 (`0x0B`) SystemVerilog ALU (`hw/riscv_xbt_extension.sv`), and machine-checked **Lean 4 / Rocq / Z3** proofs into one verified stack. | 
-
----
-
-### 2.2 Mathematical Engine Infographic: Multiplier-Free Dot Product
-
-The diagram below shows how two 64-trit vectors are multiplied and accumulated using pure Boolean logic and hardware population count:
-
-```
-  Vector A (64 trits):  [  P_A  (64 bits)  ]      [  N_A  (64 bits)  ]
-  Vector B (64 trits):  [  P_B  (64 bits)  ]      [  N_B  (64 bits)  ]
-                                │                           │
-                                ├───► (P_A & P_B) ──┐       ├───► (P_A & N_B) ──┐
-                                └───► (N_A & N_B) ──┴─► OR  └───► (N_A & P_B) ──┴─► OR
-                                                        │                           │
-                                            Positive Product (P_prod)    Negative Product (N_prod)
-                                                        │                           │
-                                                    POPCNT                      POPCNT
-                                                        │                           │
-                                                        └─────────► SUB ◄───────────┘
-                                                                     │
-                                                      Result: Signed Integer Dot Product
-                                                     (Completed in 7 CPU clock cycles!)
-```
+### C++20 (`include/Ternary/SDK/SDK.hpp`)
 
 ```cpp
-// Actual production implementation from ternary_core.hpp
-inline int64_t dot_product_64(TritWord64 a, TritWord64 b) noexcept {
-    uint64_t p_prod = (a.P & b.P) | (a.N & b.N); // (+ * + = +) OR (- * - = +)
-    uint64_t n_prod = (a.P & b.N) | (a.N & b.P); // (+ * - = -) OR (- * + = -)
-    return static_cast<int64_t>(std::popcount(p_prod)) - 
-           static_cast<int64_t>(std::popcount(n_prod));
+#include "Ternary/SDK/SDK.hpp"
+#include <vector>
+
+int main() {
+    // One-shot checked map over a .bt function
+    auto ys = bt::sdk::quick_map(
+        "fn affine(x: int) -> int { return x * 3 - 1; }",
+        "affine", {-1, 0, 1, 4});
+
+    // Ternary-aware matmul: automatically packs and dispatches to the bit-sliced
+    // AVX-512/AVX2/NEON micro-kernel when operands are in {-1, 0, +1}
+    std::vector<int64_t> A = {1, -1, 0,  0, 1, 1}; // 2x3
+    std::vector<int64_t> B = {1, 0,  -1, 1,  1, -1}; // 3x2
+    auto C = bt::sdk::ternary_matmul(A, B, /*m=*/2, /*k=*/3, /*n=*/2);
+    return (ys.size() == 4 && C.size() == 4) ? 0 : 1;
+}
+```
+
+### Python (`ffi/python/trium`)
+
+```python
+import trium
+
+# Convenience one-shot map
+ys, metrics = trium.quick_map(
+    "fn step(x: int) -> int { return x * 3 + 1; }",
+    "step",
+    [-1, 0, 1, 2],
+    backend="cpu",
+)
+
+# Context manager with exact ternary matmul + BTFP<20> arithmetic
+with trium.open() as ctx:
+    c = ctx.matmul([1, -1, 0, 1], [1, 0, -1, 1], m=2, k=2, n=2)
+    a = ctx.float_from_ratio(1, 3, width=20)
+    b = ctx.float_from_ratio(2, 3, width=20)
+    total = ctx.float_apply("add", a, b)  # exact 1.0 in radix-3
+```
+
+### Rust (`ffi/rust/src/sdk.rs`, crate `bt_runtime`)
+
+```rust
+use bt_runtime::sdk::{Backend, Context, encode_gemm, gemm_ternary};
+
+fn main() -> Result<(), bt_runtime::sdk::Error> {
+    let ctx = Context::new()?;
+    let module = ctx.compile("fn triple(x: int) -> int { return x * 3; }")?;
+    let ys = module.map("triple", &[-2, 0, 3], Backend::Cpu)?;
+
+    // Exact bit-sliced ternary GEMM (handles A row-major, B word-plane-major safely)
+    let a: &[&[i8]] = &[&[1, -1, 0, 1], &[0, 1, 1, -1]];
+    let bt: &[&[i8]] = &[&[1, 1, -1, 0], &[-1, 0, 1, 1]];
+    let (ap, an, bp, bn) = encode_gemm(a, bt, 4)?;
+    let c = gemm_ternary(&ap, &an, &bp, &bn, 2, 2, 4)?;
+    assert_eq!(ys, vec![-6, 0, 9]);
+    assert_eq!(c.len(), 4);
+    Ok(())
 }
 ```
 
 ---
 
-## Section 3: Deep Technical Foundations
+## Hardware Authoring Quickstart (Track 2)
 
-### 3.1 7-State Monotone Semigroup Kogge-Stone Adder (`kogge_stone_add64`)
+Adding a new ternary or RISC-V `Xbt` hardware target requires **zero compiler core edits** — author a declarative YAML description in `targets/`, regenerate the C++ target registry and conformance skeleton, and validate against the Golden Model and RTL testbenches (see [`docs/TARGET_AUTHORING.md`](docs/TARGET_AUTHORING.md) and [`docs/XBT_ISA_SPEC.md`](docs/XBT_ISA_SPEC.md)):
 
-Adding two trits $A + B$ yields $3 \cdot \text{Carry} + \text{Sum}$. In balanced ternary, carries can be $+1, 0, -1$, which previously required slow iterative `while` loops. 
-
-* **The Breakthrough**: We proved that carry transfer functions $f: \{-1, 0, +1\} \to \{-1, 0, +1\}$ form a **7-state monotone semigroup** $\mathcal{S}_7 = (f_{-1}^p, f_{-1}^n, f_0^p, f_0^n, f_{+1}^p, f_{+1}^n)$.
-* By folding the input carry $c_{\text{in}}$ directly into bit 0 at Stage 0, all masking logic is eliminated and Stage 5 (`shift=32`) is pruned.
-* The 64-trit adder resolves all carries in **strictly 6 branchless parallel prefix stages** (~10.54 ns on Apple Silicon).
-
-### 3.2 Unbiased Floating-Point (`BTFP32`) & Single-Rounding FMA
-
-Numbers are represented as $\text{Value} = M \times 3^E$:
-* **`BTFP16`**: 10-trit mantissa (~15.85 bits precision).
-* **`BTFP32`**: 20-trit mantissa (~31.70 bits precision, exceeding IEEE-754 FP32's 24-bit mantissa).
-* **Single-Rounding Fused Multiply-Add (`BTFP::fma`)**: Evaluates $a \cdot b + c$ with exact 128-bit intermediate arithmetic and applies **a single unbiased rounding**, eliminating the double-rounding drift that accumulates in binary physics engines.
-* **Dual-Radix Exact Rationals (`libbt.hpp`)**: `Matrix<Rational>` solves linear systems $Ax = b$ and inverts matrices with **$0.000\%$ roundoff error**, completely immune to catastrophic floating-point cancellation.
-
-### 3.3 Memory Arena: 1 GB Virtual Matrix in 576 Bytes DRAM
-
-```
-  Virtual Address Space (1 GB)
-       │
-       ▼
-  Level-1 Root Directory (64 entries, 512 bytes on stack)
-       │
-       ▼
-  Level-2 Page Tables (256 entries pointing to 64 KB blocks)
-       │
-       ├───► [Unwritten Block] ──┐
-       ├───► [Unwritten Block] ──┼───► Static CANONICAL_ZERO_BLOCK (64 KB shared)
-       ├───► [Unwritten Block] ──┘     (Committed Physical RAM: Only 576 Bytes!)
-       │
-       └───► [Written Block]   ──────► Private Copy-on-Write Physical Page (Allocated on demand)
-```
-
----
-
-## Section 4: Tri-Prover Formal Verification Suite
-
-To guarantee absolute mathematical correctness, every algebraic law in this system is machine-verified across three independent formal theorem provers:
-
-```
-                          ▲
-                         / \
-                        /   \
-                       / Rocq \          Rocq 9.2 (Coq): Dual-rail quotient ring isomorphism,
-                      /   9.2  \         0-gate negation, BTHA 6-gate soundness, BTFA carry
-                     /----------\        disjointness (0 axioms, 0 warnings).
-                    /   Lean 4   \       Lean 4.34.0: SWAR tree reduction, Kogge-Stone carry
-                   /    v4.34     \      associativity, Hamiltonian momentum conservation.
-                  /----------------\     Z3 SMT (QF_BV): Exhaustive bit-blasting verification
-                 /      Z3 SMT      \    across all 43,046,721 inputs (0 counterexamples).
-                /____________________\
-```
-
-### Verification Commands
 ```bash
-# 1. Lean 4 (v4.34.0) Proofs:
-lean BalancedTernary.lean
-lean HamiltonianTernary.lean
-lean TernaryAlgebraProofs.lean
-lean TernaryCompilerMath.lean
+# 1. Compile declarative YAML targets -> include/Ternary/Target/GeneratedTargets.hpp
+python3 tools/gen_targets.py
 
-# 2. Rocq 9.2 (Coq) Proofs:
-rocq compile proofs/rocq/BalancedTernaryFoundations.v
+# 2. Scaffold a compiling backend + failing conformance suite for a target
+python3 tools/gen_backend.py targets/riscv64-xbt.yaml
 
-# 3. Z3 SMT Automated Solvers:
-python3 verify_z3_kogge_stone.py
-python3 verify_z3_swar_bct.py
-python3 verify_z3_bigint_divmod.py
-python3 verify_z3_fp_fma.py
+# 3. Run the unified honest hardware verification & benchmark runner
+#    (Golden Model v1+v2 14,331 checks, POSIX-pipe ExternalSimulator, RTL sim, Yosys)
+python3 tools/run_hardware_benchmarks.py
 ```
+
+### Direct RTL Simulation & Yosys Synthesis Commands
+
+```bash
+# Verilator lint + binary simulation of riscv_xbt_alu (v1 + v2 ISA) & Kogge-Stone v2
+verilator --lint-only -Wall -Wno-DECLFILENAME hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv
+verilator --binary -Wall -Wno-DECLFILENAME hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv \
+  && ./obj_dir/Vtb_riscv_xbt_alu
+
+# Icarus Verilog simulation (IEEE 1800-2017 SystemVerilog)
+iverilog -g2012 -o tb_xbt hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv && vvp tb_xbt
+
+# Yosys CMOS-2 standard-cell synthesis & exact gate/cell statistics
+yosys -s hw/synth_xbt_yosys.ys
+```
+
+*Note: When `verilator`, `iverilog`, or `yosys` are absent on a machine, `tools/run_hardware_benchmarks.py` records those stages explicitly as `skipped` (`tool_not_installed`) rather than substituting analytical estimates. Pass `--require-eda` in CI to enforce EDA availability.*
+
+For SoC integration, `verification/chipyard/XbtRoCCAccelerator.scala` and `verification/chipyard/riscv_xbt_rocc_adapter.sv` provide the Chipyard `WithXbtRoCCAccelerator` RoCC wrapper for `riscv_xbt_alu`, alongside the 5-stage pipelined standalone core in `hw/trium_cpu_core.sv`.
 
 ---
 
-## Section 5: Measured Hardware Cycle-Accurate Benchmarks
+## Formal Verification Summary & Honest Maturity Matrix
 
-Microbenchmarks in `bench_cycle_accurate.cpp` measure timer deltas and operational throughput using memory clobber barriers (`asm volatile("" : "+r,m"(val) : : "memory")`) to guarantee real hardware execution. (Note: On ARM64/Apple Silicon, `cntvct_el0` registers measure architected virtual timer ticks at `cntfrq_el0`, representing elapsed time rather than core instruction retirements; cycle-level PMU counters require kernel-level access). Verified end-to-end evidence runs with full platform strings and environment details are archived under `docs/evidence/`.
+### Formal Verification & Automated Testing
 
-| Benchmark Kernel | Workload Size | Timer Ticks / Op | Ticks / Unit | Time / Op | Operational Throughput | 
-| :--- | :--- | :--- | :--- | :--- | :--- | 
-| **Planar Dot Product (1,024 trits)** | 1,024 trits | 9.95 ticks | 0.010 ticks / trit | 9.95 ns | **102.89 GTOPS** (timer-norm) | 
-| **Planar Dot Product (64 trits)** | 64 trits | 2.00 ticks | 0.031 ticks / trit | 2.00 ns | **32.07 GTOPS** | 
-| **Balanced Ternary Half-Adder (BTHA)** | 64 trits | 1.25 ticks | 0.020 ticks / trit | 1.25 ns | **51.15 GAdd/s** | 
-| **Base-243 Magic Reciprocal Unpack** | 5 trits / byte | 2.00 ticks | 0.401 ticks / trit | 2.00 ns | **2.50 GTrits/s** | 
-| **Block Base-243 → Dual-Rail 64t** | 64 trits (13 B) | 47.35 ticks | 0.740 ticks / trit | 47.35 ns | **1.35 GTrits/s** | 
-| **Kogge-Stone 64-Trit Prefix Add** | 64 trits (6-stage) | 13.18 ticks | 0.206 ticks / trit | 13.18 ns | **4.86 GTrits/s** | 
-| **Native Radix-3 FFT Butterfly** | 3-point complex | 0.95 ticks | 0.316 ticks / point | 0.95 ns | **35.91 GFLOPS** | 
-| **Multiplier-Free T-CSR SpMV** | 1,000 × 1,000 (52K NNZ) | 134,039 ticks | 2.549 ticks / NNZ | 134.0 μs | **0.39 G-NNZ/s** | 
-| **BT-FP32 Addition ($O(1)$ Fast Path)** | 20-trit mantissa | 17.48 ticks | 0.874 ticks / trit | 17.48 ns | **0.06 GAdd/s** | 
-| **BT-FP32 Multiplication ($O(1)$ Mul)** | 20-trit mantissa | 119.06 ticks | 5.953 ticks / trit | 119.06 ns | **0.01 GMul/s** | 
-
-### Head-to-Head: Standalone Trium-XBT CPU Core vs. USN REBEL-6
-
-Measured via direct live integration with the official USN REBEL-6 simulator (`Soppe/RV32IToREBEL`) and Trium cycle-accurate simulator on the `main` branch:
-
-| Benchmark / Capability | USN REBEL-6 (R2R) | Trium-XBT Core & Compiler | Architectural Implication |
+| Layer | Scope & Artifacts | Verified Count | Command |
 | :--- | :--- | :--- | :--- |
-| **768-Trit Vector Dot-Product** | 4,608 instructions (scalar loop) | **24 instructions (`xbt.dot64`)** | **192.0× instruction reduction** |
-| **Ternary Memory Decoding** | 44.8 µs (software `div`/`mod 3`) | **1.3 µs / 1 cycle (reciprocals)** | **34.5× faster 1-cycle Base-243 decode** |
-| **Dhrystone 2.1 Dynamic Power** | 2.70 flips/insn (-31.6% vs RV32I) | **2.54 flips/insn (-26.1% vs RV32I)** | **Validates balanced-ternary low-power physics** |
-| **Word Datapath Width** | 32 Trits (24-trit `Tint` in sim) | **64 Trits Native (128-bit dual-rail)** | **2.0× wider word bandwidth per register** |
-| **Host GEMM Throughput** | N/A (simulation only) | **113.10 G MAC/s** | **6.0× faster than Microsoft BitNet b1.58** |
-| **Formal Verification** | None | **4 Z3 SMT Formal Mathematical Proofs** | **Theorems 1–4 mathematically proven (`UNSAT`)** |
+| **Lean 4** | `BalancedTernary.lean`, `HamiltonianTernary.lean`, `TernaryAlgebraProofs.lean`, `TernaryCompilerMath.lean`, `TernaryPhase3Math.lean` | **5 files / 0 `sorry`** | `lean BalancedTernary.lean` (and sibling `.lean` files) |
+| **Rocq 9** | `proofs/rocq/BalancedTernaryFoundations.v`, `CoreMath.v`, `CoreLowering.v`, `ImplementationBridge.v` | **4 files / 66 theorems / 0 axioms** | `rocq compile proofs/rocq/BalancedTernaryFoundations.v` |
+| **Z3 SMT** | Root `verify_z3_*.py` solvers + `verification/` SMT suite (Kogge-Stone, SWAR, BigInt divmod, BTFP FMA, ISA, layouts, SDK contracts) | **14 root + 11 suite** | `python3 verify_z3_kogge_stone.py` |
+| **Golden Model** | `verification/golden_model/xbt_golden.py` (RISC-V Custom-0 `0x0B` v1 + v2 ISA) | **14,331 v1+v2 checks** (0 failures) | `python3 tools/run_hardware_benchmarks.py` |
+| **CTest Suite** | Unit, SDK, Core IR, GEMM layout, CodeGen, Target, and Simulator tests | **90 CTest targets** | `ctest --test-dir build --output-on-failure` |
 
-*For complete mathematical proofs, transistor-level DRC rules, and full reproduction instructions, see [docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md](docs/TRIUM_XBT_OFFICIAL_BENCHMARK_AND_ARCHITECTURE_REPORT.md).* 
+### Honest Maturity Matrix
+
+| Subsystem | Maturity | What Works Today | Known Boundaries / Not Yet Done |
+| :--- | :--- | :--- | :--- |
+| **Checked Core IR (`int39`, `BTFP<1..40>`)** | **Verified** | Exact semantics, overflow/underflow rejection, single-rounding BTFP math, formally bridged to Rocq/Z3 | CPU reference & LLVM native-v1 scalar paths; BTFP reductions capped at 4,096 elements |
+| **Bit-Sliced Ternary GEMM (`TernaryMicroKernel.hpp`)** | **Measured & Verified** | Bit-exact `int64` GEMM; `222.07 G MAC/s` on Xeon 8481C (`2.00×` BLAS FP32); `105.20 GOPS` (`1.27×` `vdotq_s32`) on Apple M2 | ARM64 dual-rail popcount still uses scalar `uint64_t` popcount (NEON `vcntq_u8 + vpadalq_u8` optimization is next) |
+| **`libtrium_sdk` (C, C++20, Python, Rust)** | **Stable ABI v1 (API 1.3)** | Parity-checked across C/C++/Python/Rust; explicit backends (`cpu`, `vulkan`, `native`), no silent fallbacks | Requires explicit `BT_SDK_LIBRARY` path for local source builds; no prebuilt PyPI/crates.io binaries yet |
+| **Vulkan / CUDA Map Kernels** | **Functional / Host-Dependent** | GLSL SPIR-V emission + Vulkan compute path (`include/Ternary/Kernel/Vulkan.hpp`); CUDA map runner (`tools/cuda_map.py`) | Requires host Vulkan/CUDA runtime; GEMM GPU dispatch remains under qualification (`docs/HARDWARE_GPU_QUALIFICATION.md`) |
+| **Declarative Targets & `XbtInstructionSelector`** | **Verified in Software** | `targets/*.yaml` schema validation, C++ codegen, rule-driven v1+v2 selection, real POSIX-pipe `ExternalSimulator` | Targets emit assembly/simulation contracts; no upstream binutils/LLVM MC binary linker yet |
+| **RISC-V `Xbt` RTL & Chipyard RoCC (`hw/`)** | **Pre-Silicon RTL** | Synthesizable IEEE 1800-2017 SystemVerilog (`riscv_xbt_extension.sv`, `trium_cpu_core.sv`), Verilator/Icarus TB, Yosys script, Chipyard `WithXbtRoCCAccelerator` | **Pre-silicon**: not yet taped out, place-and-routed to GDSII, or benchmarked on physical FPGA hardware |
 
 ---
 
-## Section 6: Complete Repository Map
+## Repository Map & Further Reading
 
-```
+```text
 .
-├── include/Ternary/              # MLIR TableGen schemas & C-ABI headers (ternary_c_abi.h)
-├── lib/Ternary/                  # MLIR Dialect & C-ABI shared library implementation
-├── tools/bt-opt/                 # Standalone MLIR optimizer tool (bt-opt.cpp)
-├── iree/                         # IREE compiler plugin & HAL target backends
-├── hw/                           # Synthesizable SystemVerilog RTL (riscv_xbt_extension.sv) & co-simulator
-├── ffi/                          # Multi-language bindings
-│   ├── python/                   # Python ctypes wrapper (bt_ffi.py)
-│   └── rust/                     # Safe Rust crate (ffi/rust/src/lib.rs)
-├── proofs/rocq/                  # Rocq 9.2 machine-checked formal proofs (.v)
-├── test/                         # 7-layer LLVM test suite
-│   ├── Unit/                     # Layer 1: Core, Dense, Memory, AST, MLIR, FP, BigInt, LibBT, Xbt
-│   ├── Regression/               # Layer 2: lit + FileCheck syntax tests
-│   ├── WholeProgram/             # Layer 3: Whole-program pipeline tests
-│   ├── Sanitizers/               # Layer 4: AddressSanitizer & UndefinedBehaviorSanitizer
-│   ├── CodeGen/                  # Layer 5: Target assembly & DWARF-5 tests
-│   ├── Dialect/                  # Layer 6: MLIR dialect & pass verification
-│   └── Sema/                     # Layer 7: Diagnostics & front-end syntax tests
-├── docs/                         # 9-chapter complete documentation guide
-├── ternary_core.hpp              # Dual-rail algebraic engine, Kogge-Stone, SWAR
-├── ternary_bigint.hpp            # Arbitrary-precision TritBigInt & Knuth Euclidean divmod
-├── ternary_dense_algebra.hpp     # Multi-trit GEMM, cache hierarchy autotuner
-├── ternary_fp.hpp                # BT-FP16 & BT-FP32 floating-point units & single-rounding FMA
-├── ternary_sparse.hpp            # 1-bit Ternary Compressed Sparse Row (T-CSR) engine
-├── ternary_frontend_ast.hpp      # Frontend lexer, AST, parser & semantic type checker
-├── ternary_llvm_codegen.hpp      # LLVM IR visitor, SSA intrinsics, DWARF-5 emitter
-├── ternary_jit_engine.hpp        # Dynamic in-memory AST interpreter & JIT engine
-├── libbt.hpp                     # Standard library (Rational, matrix inversion, Radix-3 FFT)
-├── bt_compiler.cpp               # Master compiler CLI driver
-└── run_all_tests.sh              # 7-layer master test suite harness
+├── docs/
+│   ├── Trium_XBT_Complete_Technical_Book.pdf   # Complete multi-chapter technical book
+│   ├── ARCHITECTURE_TRACKS.md                  # Track 1 vs Track 2 architectural specification
+│   ├── VISION_NEXT_GEN_HARDWARE.md             # Hardware roadmap and backend contract
+│   ├── TARGET_AUTHORING.md                     # Declarative YAML target authoring guide
+│   ├── XBT_ISA_SPEC.md                         # RISC-V Custom-0 (0x0B) v1 + v2 ISA specification
+│   └── LICENSE_BOUNDARIES.md                   # Component-level AGPL-3.0 vs Rust MIT boundary notes
+├── include/Ternary/
+│   ├── IR/                                     # Checked Core IR, LLVM/GLSL lowering, layout, optimizer
+│   ├── Blas/                                   # TernaryMicroKernel.hpp (AVX-512/AVX2/NEON GEMM)
+│   ├── Kernel/                                 # CPU map & Vulkan compute dispatch
+│   ├── SDK/                                    # sdk.h (C ABI v1 / API 1.3) & SDK.hpp (C++20)
+│   └── Target/                                 # GeneratedTargets.hpp, XbtInstructionSelector.hpp, Simulator.hpp
+├── ffi/
+│   ├── python/trium/                           # Python SDK package (`trium`)
+│   └── rust/                                   # Rust crate (`bt_runtime::sdk`)
+├── targets/                                    # Declarative YAML hardware descriptions
+├── hw/                                         # riscv_xbt_extension.sv, trium_cpu_core.sv, tb_riscv_xbt_alu.sv, synth_xbt_yosys.ys
+├── proofs/rocq/                                # 4 Rocq 9 formal proof files (66 theorems, 0 axioms)
+├── verification/                               # Golden model (14,331 checks), Z3 suite (11), Chipyard RoCC
+├── tools/                                      # trium_workflow.py, gen_targets.py, gen_backend.py, ternary_bench.cpp, run_hardware_benchmarks.py
+└── *.lean, verify_z3_*.py                      # 5 Lean 4 proof files (0 sorry) & 14 root Z3 SMT scripts
 ```
 
 ---
 
-## Quick Start: Build, Run, and Verify in 60 Seconds
+## Contributing & License Boundaries
 
-### 1. Prerequisites
-* C++20 compiler (Apple Clang $\ge 15.0$, Clang $\ge 16.0$, or GCC $\ge 13.0$)
-* Python 3.8+ (for LLVM lit runner and FFI)
+We welcome systems engineers, compiler hackers, formal-methods researchers, and RTL designers. See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for build, test, and PR guidelines.
 
-### 2. Run the Full 7-Layer Test Suite
-```bash
-# On macOS, export SDKROOT if needed:
-export SDKROOT=$(xcrun --show-sdk-path)
-
-# Execute the complete 7-layer verification suite under ASan + UBSan:
-./run_all_tests.sh
-```
-
-### 3. Build Compiler Executables & Runtime Library
-```bash
-# Build master compiler driver
-clang++ -O3 -std=c++20 bt_compiler.cpp -o bt-compiler
-
-# Build standalone MLIR optimizer
-clang++ -O3 -std=c++20 tools/bt-opt/bt-opt.cpp lib/Ternary/TernaryDialect.cpp lib/Ternary/TernaryPasses.cpp iree/TernaryIREEPlugin.cpp -I. -o bt-opt
-
-# Build C-ABI shared runtime library (libbt_runtime.dylib)
-clang++ -O3 -std=c++20 -shared -fPIC lib/Ternary/ternary_c_abi.cpp -I. -o libbt_runtime.dylib
-```
-
-### 4. Run Programs, Cross-Compile & Benchmark
-```bash
-# Execute a .bt program via Bare-Metal Clang JIT
-./bt-compiler run examples/01_arithmetic_spaceship.bt --native
-
-# Cross-compile to ARM64, x86_64, or RISC-V Xbt assembly
-./bt-compiler examples/02_select_branching.bt --target=aarch64 -S
-./bt-compiler examples/02_select_branching.bt --target=x86_64 -S
-./bt-compiler examples/02_select_branching.bt --target=riscv64-xbt -S
-
-# Run hardware cycle-accurate benchmarks
-clang++ -O3 -std=c++20 bench_cycle_accurate.cpp -o bench_cycle_runner
-./bench_cycle_runner
-```
-
-### 5. Multi-Language Usage (Python & Rust)
-
-**Python (`ffi/python/bt_ffi.py`)**:
-```python
-from ffi.python.bt_ffi import BtFp32, bt_radix3_convolve
-
-# Single-rounding FMA
-a = BtFp32.from_double(2.5)
-b = BtFp32.from_double(4.0)
-c = BtFp32.from_double(1.5)
-res = a.fma(b, c) # 2.5 * 4.0 + 1.5 = 11.5
-
-# Exact balanced square root
-root = BtFp32.from_double(49.0).sqrt() # 7.0
-```
-
-**Rust (`ffi/rust/src/lib.rs`)**:
-```rust
-use bt_runtime::BtFp32;
-
-let a = BtFp32::from_double(2.0);
-let b = BtFp32::from_double(3.0);
-let c = BtFp32::from_double(4.0);
-let res = a.fma(b, c); // 10.0
-```
-
----
-
-## Section 7: Our Open-Source Mission, Ending Computing Monopolies & Radical Honesty
-
-### 7.1 Why This Project Is 100% Open Source
-
-Today, advanced computing is locked behind massive hardware and software monopolies. Training frontier AI models, running large-scale physical simulations, or developing algorithms often requires millions of dollars in proprietary GPU clusters, closed vendor compilers, and massive energy budgets.
-
-We released the **Trium-XBT Foundational Compiler** under the **GNU Affero General Public License v3.0 (AGPL-3.0)** under **Ojas-Arya OPEN-FOUNDATION** to democratize high-performance computing:
-
-* **Running Frontier Math on Everyday Hardware**: By eliminating hardware multipliers in sparse matrix algebra (`T-CSR` reduces weight value memory by **32x**) and eliminating intermediate activation storage in reversible networks (`SymplecticLeapfrogEngine` reduces trajectory memory from $O(N)$ **to** $O(1)$), workloads that previously demanded an 80 GB data-center GPU can fit inside the cache and RAM of a standard laptop or edge device.
-* **Zero Vendor Lock-In**: Our compiler does not trap you inside one vendor's chip ecosystem. The exact same balanced ternary math runs across ARM64, x86_64, RISC-V, Apple Metal, and open Vulkan SPIR-V shaders.
-* **An Open Foundation for Future Domains**: Edge AI, drift-free orbital mechanics and quantum lattice simulations, 3-phase digital signal processing, and synthesizable open-source RISC-V FPGA soft-cores.
-
-### 7.2 Our Core Value: Radical Honesty and Scientific Trust
-
-In computer systems research, trust is everything. We want every user, professor, and contributor to know both **what works on bare metal today** and **what is currently a prototype or simulation**:
-
-* **Honesty on `GTOPS` vs. `FLOPS`**: **Ternary Operations** ($t_A \times t_B + \text{acc}$ over $\{-1, 0, +1\}$ using bitwise `AND`/`OR` and `POPCNT`) measure balanced ternary multiply-accumulate operations without hardware multipliers. It is **not** an arbitrary 24-bit IEEE-754 binary floating-point multiply-add (`FLOP`). A binary FP32 multiplier uses 20x to 50x more transistors to multiply arbitrary 24-bit mantissas; our engine wins when weights or signals live in $\{-1, 0, +1\}$ or use `BT-FP32`'s unbiased radix-3 representation. Measured performance figures in this repository reflect genuine benchmark evidence runs recorded in `docs/evidence/`.
-* **Honesty on Binary CMOS vs. Physical Tri-Voltage Silicon**: When you run this project on an Apple M-series MacBook or Intel/AMD PC, the physical transistors switch between binary voltages (`0V` and `1.2V`), executing balanced ternary via horizontal dual-rail bit-slicing (`P` and `N`). While `hw/riscv_xbt_extension.sv` is synthesizable SystemVerilog RTL verified by our cycle-exact C++ co-simulator (`hw/xbt_alu_model.hpp`), fabricating physical tri-level voltage or memristor chips remains a future hardware foundry step.
-
----
-
-## 🤝 Community & Contributing
-
-We warmly welcome researchers, systems programmers, and silicon designers! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, testing procedures, and coding standards.
-
----
-
-## 📜 License
-
-This project is open-sourced under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [LICENSE](LICENSE) for full details.
+- **Repository License:** This repository — including the compiler, `libtrium_sdk`, math headers, and RTL — is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE).
+- **Rust Crate Boundary Note:** `ffi/rust/Cargo.toml` currently declares `MIT` for the Rust wrapper crate, while the underlying native `libtrium_sdk` library and repository remain under root **AGPL-3.0** with no separate linking or runtime exception. Dynamic loading or FFI wrapping does not relicense `libtrium_sdk` under MIT. See **[`docs/LICENSE_BOUNDARIES.md`](docs/LICENSE_BOUNDARIES.md)** before redistributing or integrating into mixed-license or proprietary systems.
 
 &copy; 2026 **Ojas-Arya OPEN-FOUNDATION**. All rights reserved.

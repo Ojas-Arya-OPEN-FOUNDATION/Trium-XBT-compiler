@@ -132,7 +132,7 @@ extern "C" {
 uint32_t bt_sdk_abi_version(){return 1;}
 uint32_t bt_sdk_api_version(){return 0x00010003;}
 bt_sdk_status bt_sdk_info(char* output,size_t* bytes,char* err,size_t cap){return boundary(err,cap,[&]{
-    std::string text="{\"schema\":1,\"abi_major\":1,\"api_major\":1,\"api_minor\":2,\"finite_float_profile\":1,\"native_profile\":\"native-v1-loopfree\",\"native_compiler_candidate\":"+json(bt::sdk::native_compiler())+",\"vulkan_built\":";
+    std::string text="{\"schema\":1,\"abi_major\":1,\"api_major\":1,\"api_minor\":3,\"finite_float_profile\":1,\"native_profile\":\"native-v1-loopfree\",\"native_compiler_candidate\":"+json(bt::sdk::native_compiler())+",\"vulkan_built\":";
 #if defined(BT_SDK_HAS_VULKAN)
     text+="true";
 #else

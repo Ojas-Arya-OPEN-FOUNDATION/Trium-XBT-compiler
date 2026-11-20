@@ -154,9 +154,10 @@ void main() {
  */
 inline const char* ternary_gemm_glsl_portable() noexcept {
     return R"GLSL(#version 450
+#extension GL_ARB_gpu_shader_int64 : require
 //
 // Tiled ternary GEMM, 32-bit rails (two uint32 per 64-trit K-word).
-// Runs on any Vulkan 1.1 device - no shaderInt64 required.
+// Uses 32-bit input rails with int64_t output accumulation.
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(binding = 0) readonly  buffer BufAP  { uint a_p[];  };
@@ -300,9 +301,9 @@ inline GpuGemmPlan gpu_gemm_plan(uint32_t M, uint32_t N, uint32_t K,
     p.bytes_bt_p = words_bt * elem;
     p.bytes_bt_n = words_bt * elem;
     p.bytes_c    = size_t(M) * N * sizeof(int64_t);
-    // Four planes (A.P A.N BT.P BT.N) of tile x tkw words, two uint32 each
-    // on the portable path.
-    p.shared_bytes = 4u * size_t(p.tile) * p.tkw * elem * (p.use_native64 ? 1u : 2u);
+    // Four planes (A.P A.N BT.P BT.N) of tile x tkw words; elem is already
+    // 8 bytes on both paths (sizeof(uint64_t) native, 2*sizeof(uint32_t) portable).
+    p.shared_bytes = 4u * size_t(p.tile) * p.tkw * elem;
     return p;
 }
 
@@ -629,9 +630,11 @@ inline GpuPackedGemmPlan gpu_gemm_plan_packed(uint32_t M, uint32_t N, uint32_t K
     p.bytes_bt_p = words_bt * sizeof(uint64_t);
     p.bytes_bt_n = words_bt * sizeof(uint64_t);
     p.bytes_c    = size_t(M) * N * sizeof(int64_t);
-    // 4 dual-rail planes (A.P A.N BT.P BT.N) + the packed staging slab.
+    // 4 dual-rail planes (A.P A.N BT.P BT.N) + the uint32-packed staging slab
+    // (4 packed bytes per uint32 => PKT_U32 = (pkt + 3) / 4 words per row).
+    const size_t pkt_u32 = (size_t(p.pkt) + 3u) / 4u;
     p.shared_bytes = 4u * size_t(p.tile) * p.tkw * sizeof(uint64_t)
-                   + size_t(p.tile) * p.pkt;
+                   + size_t(p.tile) * pkt_u32 * sizeof(uint32_t);
     return p;
 }
 
@@ -704,6 +707,7 @@ inline std::vector<uint8_t> pack_weights_for_gpu(const std::vector<uint64_t>& Ap
  */
 inline const char* ternary_gemm_glsl_packed() noexcept {
     return R"GLSL(#version 450
+#extension GL_ARB_gpu_shader_int64 : require
 //
 // Tiled ternary GEMM with base-243 packed weights unpacked in shared memory.
 // Weights: 1.6 bits/trit (20x smaller than FP32). Activations: dual-rail.
@@ -721,9 +725,11 @@ layout(push_constant) uniform PC {
 const uint TILE = 32u;
 const uint TKW  = 8u;
 const uint PKT  = 104u;   // ceil(64*TKW/5) + 1
+const uint PKT_U32 = (PKT + 3u) / 4u;  // 26 uint32 words per row (4 bytes/uint)
 const uint PACKED_ENTRIES = 52u;  // TILE*PKT / 64, must divide exactly
+const uint PACKED_U32_ENTRIES = (TILE * PKT_U32) / 64u;  // 13 uint32/thread
 
-shared uint     sPacked[TILE][PKT];
+shared uint     sPacked[TILE][PKT_U32];
 shared uint64_t sAP[TILE][TKW];
 shared uint64_t sAN[TILE][TKW];
 shared uint64_t sBP[TILE][TKW];
@@ -760,12 +766,14 @@ void unpack_word(uint row, uint kw0, uint w, out uint64_t pp, out uint64_t nn) {
     pp = uint64_t(0); nn = uint64_t(0);
     uint d0, d1, d2, d3, d4;
     uint lastOff = 0xFFFFFFFFu;
+    const uint slabByte0 = (kw0 * 64u) / 5u;
     for (uint b = 0u; b < 64u; ++b) {
-        const uint t = 64u * w + b;
+        const uint t = 64u * (kw0 + w) + b;
         if (t >= pc.K) break;
-        const uint off = (t - kw0 * 64u) / 5u;
+        const uint off = (t / 5u) - slabByte0;
         if (off != lastOff) {
-            unpack5_digits(sPacked[row][off], d0, d1, d2, d3, d4);
+            const uint packedByte = (sPacked[row][off >> 2] >> ((off & 3u) * 8u)) & 0xFFu;
+            unpack5_digits(packedByte, d0, d1, d2, d3, d4);
             lastOff = off;
         }
         const uint slot = t % 5u;
@@ -789,16 +797,28 @@ void main() {
             acc[i][j] = int64_t(0);
 
     for (uint kw0 = 0u; kw0 < pc.wordsPerRow; kw0 += TKW) {
-        // Stage the packed weight bytes for this K slab. 64 threads x
-        // PACKED_ENTRIES entries must cover TILE x PKT exactly.
-        for (uint t = 0u; t < PACKED_ENTRIES; ++t) {
-            const uint idx = lid * PACKED_ENTRIES + t;
-            const uint row = idx / PKT;
-            const uint off = idx % PKT;
-            const uint tri = kw0 * 64u + off * 5u;
-            sPacked[row][off] = (tri < pc.K && (gx + row) < pc.M)
-                              ? a_packed[(gx + row) * pc.bytesPerRow + tri / 5u]
-                              : 0u;
+        // Stage the packed weight bytes for this K slab into uint32 words
+        // (4 bytes per uint32). 64 threads x PACKED_U32_ENTRIES = TILE x PKT_U32.
+        const uint slabByte0 = (kw0 * 64u) / 5u;
+        for (uint t = 0u; t < PACKED_U32_ENTRIES; ++t) {
+            const uint idx  = lid * PACKED_U32_ENTRIES + t;
+            const uint row  = idx / PKT_U32;
+            const uint widx = idx % PKT_U32;
+            const uint baseOff = widx * 4u;
+            uint packedWord = 0u;
+            if ((gx + row) < pc.M) {
+                const uint rowByteBase = (gx + row) * pc.bytesPerRow;
+                for (uint lane = 0u; lane < 4u; ++lane) {
+                    const uint off = baseOff + lane;
+                    const uint byteIdx = slabByte0 + off;
+                    if (off < PKT && byteIdx < pc.bytesPerRow) {
+                        const uint gByte = rowByteBase + byteIdx;
+                        const uint bVal = (a_packed[gByte >> 2] >> ((gByte & 3u) * 8u)) & 0xFFu;
+                        packedWord |= (bVal << (lane * 8u));
+                    }
+                }
+            }
+            sPacked[row][widx] = packedWord;
         }
         barrier();
 
@@ -879,9 +899,11 @@ inline std::vector<int64_t> emulate_gpu_gemm_packed(const GpuPackedOperands& op,
                                                     const GpuPackedGemmPlan& plan) {
     std::vector<int64_t> C(size_t(op.m) * op.n, 0);
     const uint32_t TILE = plan.tile, TKW = plan.tkw, BLK = plan.block;
-    const uint32_t PKT = plan.pkt, kwr = plan.words_per_row;
+    const uint32_t PKT = plan.pkt, PKT_U32 = (PKT + 3u) / 4u, kwr = plan.words_per_row;
+    const uint32_t threads = plan.local_x * plan.local_y;
+    const uint32_t pEntU32 = (TILE * PKT_U32) / threads;
 
-    std::vector<uint32_t> sPacked(size_t(TILE) * PKT);
+    std::vector<uint32_t> sPacked(size_t(TILE) * PKT_U32);
     std::vector<uint64_t> sAP(size_t(TILE) * TKW), sAN(size_t(TILE) * TKW);
     std::vector<uint64_t> sBP(size_t(TILE) * TKW), sBN(size_t(TILE) * TKW);
 
@@ -893,15 +915,24 @@ inline std::vector<int64_t> emulate_gpu_gemm_packed(const GpuPackedOperands& op,
 
         for (uint32_t kw0 = 0; kw0 < kwr; kw0 += TKW) {
             std::fill(sPacked.begin(), sPacked.end(), 0u);
-            const uint32_t pEnt = plan.packed_entries_per_thread;
-            for (uint32_t lid = 0; lid < plan.local_x * plan.local_y; ++lid)
-                for (uint32_t t = 0; t < pEnt; ++t) {
-                    const uint32_t idx = lid * pEnt + t;
-                    const uint32_t row = idx / PKT, off = idx % PKT;
-                    const uint32_t tri = kw0 * 64u + off * 5u;
-                    sPacked[size_t(row) * PKT + off] =
-                        (tri < op.k && (gx + row) < op.m)
-                        ? op.A_packed[size_t(gx + row) * op.bytes_per_row + tri / 5u] : 0u;
+            const uint32_t slabByte0 = (kw0 * 64u) / 5u;
+            for (uint32_t lid = 0; lid < threads; ++lid)
+                for (uint32_t t = 0; t < pEntU32; ++t) {
+                    const uint32_t idx  = lid * pEntU32 + t;
+                    const uint32_t row  = idx / PKT_U32, widx = idx % PKT_U32;
+                    const uint32_t baseOff = widx * 4u;
+                    uint32_t packedWord = 0u;
+                    if ((gx + row) < op.m) {
+                        const size_t rowByteBase = size_t(gx + row) * op.bytes_per_row;
+                        for (uint32_t lane = 0; lane < 4u; ++lane) {
+                            const uint32_t off = baseOff + lane;
+                            const uint32_t byteIdx = slabByte0 + off;
+                            if (off < PKT && byteIdx < op.bytes_per_row) {
+                                packedWord |= (uint32_t(op.A_packed[rowByteBase + byteIdx]) << (lane * 8u));
+                            }
+                        }
+                    }
+                    sPacked[size_t(row) * PKT_U32 + widx] = packedWord;
                 }
 
             const uint32_t wcount = std::min<uint32_t>(TKW, kwr - kw0);
@@ -915,11 +946,13 @@ inline std::vector<int64_t> emulate_gpu_gemm_packed(const GpuPackedOperands& op,
                     // Byte b holds trits 5b..5b+4 globally, so locate each
                     // trit by its absolute index; re-decode only on change.
                     for (uint32_t b = 0; b < 64u; ++b) {
-                        const uint32_t t = 64u * w + b;
+                        const uint32_t t = 64u * (kw0 + w) + b;
                         if (t >= op.k) break;
-                        const uint32_t off = (t - kw0 * 64u) / 5u;
+                        const uint32_t off = (t / 5u) - slabByte0;
                         if (off != lastOff) {
-                            gpu_unpack5_digits(sPacked[size_t(row) * PKT + off], d);
+                            const uint32_t packedByte =
+                                (sPacked[size_t(row) * PKT_U32 + (off >> 2)] >> ((off & 3u) * 8u)) & 0xFFu;
+                            gpu_unpack5_digits(packedByte, d);
                             lastOff = off;
                         }
                         const uint32_t slot = t % 5u;

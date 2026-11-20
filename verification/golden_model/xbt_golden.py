@@ -182,7 +182,7 @@ def xbt_kogge_stone_adder64_v2(a_p: int, a_n: int, b_p: int, b_n: int,
         f0_p[s + 1] = u64(fm_p[s] | (f0_p[s] & ~l_f0_n) | (fp_p[s] & l_f0_p))
         f0_n[s + 1] = u64(fp_n[s] | (f0_n[s] & ~l_f0_p) | (fm_n[s] & l_f0_n))
         fp_p[s + 1] = u64(fm_p[s] | (f0_p[s] & ~l_fp_n) | (fp_p[s] & l_fp_p))
-        fp_n[s + 1] = u64(fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fm_n))
+        fp_n[s + 1] = u64(fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fp_n))
 
     # Stage 5
     final_cout_p = u64(fm_p[5] | (f0_p[5] & ~(u64(f0_n[5] << 32))) | (fp_p[5] & (u64(f0_p[5] << 32))))
@@ -284,8 +284,23 @@ def xbt_base243_decoder(packed_byte: int) -> Tuple[int, int]:
 
 
 # -----------------------------------------------------------------------------
+# 4b. Ternary Word Sign Priority Encoder Helper
+# -----------------------------------------------------------------------------
+def _ternary_word_sign(w_p: int, w_n: int) -> int:
+    """Return sign of 64-trit word in {-1, 0, +1} (most significant non-zero trit)."""
+    w_p = u64(w_p)
+    w_n = u64(w_n)
+    for i in range(63, -1, -1):
+        if (w_p >> i) & 1:
+            return 1
+        if (w_n >> i) & 1:
+            return -1
+    return 0
+
+
+# -----------------------------------------------------------------------------
 # 5. Top-Level RISC-V Xbt Execution Unit (riscv_xbt_alu)
-#    Matches hw/riscv_xbt_extension.sv lines 503-613
+#    Matches hw/riscv_xbt_extension.sv (v1 + v2 complete parity)
 # -----------------------------------------------------------------------------
 OPCODE_CUSTOM0 = 0x0B
 
@@ -293,9 +308,11 @@ OPCODE_CUSTOM0 = 0x0B
 def riscv_xbt_alu(opcode: int, funct3: int, funct7: int,
                   rs1_p: int, rs1_n: int,
                   rs2_p: int, rs2_n: int,
-                  rs1_scalar: int = 0) -> Tuple[int, int, int, int, int, bool]:
+                  rs1_scalar: int = 0,
+                  rd_p_in: int = 0, rd_n_in: int = 0,
+                  imm12: int = 0) -> Tuple[int, int, int, int, int, bool]:
     """
-    Top-level ALU execution unit.
+    Top-level ALU execution unit (v1 + v2).
     Returns: (rd_p, rd_n, rd_aux_p, rd_aux_n, rd_scalar, valid_out)
     """
     opcode = opcode & 0x7F
@@ -305,7 +322,10 @@ def riscv_xbt_alu(opcode: int, funct3: int, funct7: int,
     rs1_n = u64(rs1_n)
     rs2_p = u64(rs2_p)
     rs2_n = u64(rs2_n)
+    rd_p_in = u64(rd_p_in)
+    rd_n_in = u64(rd_n_in)
     rs1_scalar = u64(rs1_scalar)
+    imm12 = imm12 & 0xFFF
 
     rd_p = 0
     rd_n = 0
@@ -336,27 +356,77 @@ def riscv_xbt_alu(opcode: int, funct3: int, funct7: int,
         elif funct3 == 0b100:  # XBT.NEG (0-gate wire swap)
             rd_p = rs1_n
             rd_n = rs1_p
-        elif funct3 == 0b101:  # XBT.CSAMAC
+        elif funct3 == 0b101:  # XBT.CSAMAC: rd_in + (rs1 * rs2)
             prod_p = u64((rs1_p & rs2_p) | (rs1_n & rs2_n))
             prod_n = u64((rs1_p & rs2_n) | (rs1_n & rs2_p))
-            rd_p = u64(((prod_p ^ rs1_p) & ~(prod_n | rs1_n)) | (prod_n & rs1_n))
-            rd_n = u64(((prod_n ^ rs1_n) & ~(prod_p | rs1_p)) | (prod_p & rs1_p))
-            rd_aux_p = u64(prod_p & rs1_p)
-            rd_aux_n = u64(prod_n & rs1_n)
-        elif funct3 == 0b110:  # GROUP2 extended ops
-            if funct7 == 0x01:  # MUL (per-lane AOI22 product)
+            rd_p = u64(((prod_p ^ rd_p_in) & ~(prod_n | rd_n_in)) | (prod_n & rd_n_in))
+            rd_n = u64(((prod_n ^ rd_n_in) & ~(prod_p | rd_p_in)) | (prod_p & rd_p_in))
+            rd_aux_p = u64(prod_p & rd_p_in)
+            rd_aux_n = u64(prod_n & rd_n_in)
+        elif funct3 == 0b110:  # GROUP2 extended ops (v2)
+            if funct7 == 0x00:  # BTFA: sum(rs1, rs2, rd_in)
+                sp, sn, cp, cn = xbt_systolic_btfa_unit(
+                    rs1_p, rs1_n, rs2_p, rs2_n, rd_p_in, rd_n_in
+                )
+                rd_p = sp
+                rd_n = sn
+                rd_aux_p = cp
+                rd_aux_n = cn
+            elif funct7 == 0x01:  # MUL (per-lane AOI22 product)
                 rd_p = u64((rs1_p & rs2_p) | (rs1_n & rs2_n))
                 rd_n = u64((rs1_p & rs2_n) | (rs1_n & rs2_p))
+            elif funct7 == 0x02:  # PACK243: rs1[4:0] -> base-243 byte in rd_scalar
+                val = 121
+                place = 1
+                for k in range(5):
+                    if (rs1_p >> k) & 1:
+                        val += place
+                    elif (rs1_n >> k) & 1:
+                        val -= place
+                    place *= 3
+                rd_scalar = val
             elif funct7 == 0x03:  # SIGN priority encoder
-                for i in range(63, -1, -1):
-                    p = (rs1_p >> i) & 1
-                    n = (rs1_n >> i) & 1
-                    if p or n:
-                        if p:
-                            rd_p = 1
-                        else:
-                            rd_n = 1
-                        break
+                sgn = _ternary_word_sign(rs1_p, rs1_n)
+                if sgn > 0:
+                    rd_p = 1
+                elif sgn < 0:
+                    rd_n = 1
+            elif funct7 == 0x04:  # CMOVZ: if sign(rs1) == 0 then rs2 else rd_in
+                if _ternary_word_sign(rs1_p, rs1_n) == 0:
+                    rd_p, rd_n = rs2_p, rs2_n
+                else:
+                    rd_p, rd_n = rd_p_in, rd_n_in
+            elif funct7 == 0x05:  # CMOVP: if sign(rs1) > 0 then rs2 else rd_in
+                if _ternary_word_sign(rs1_p, rs1_n) > 0:
+                    rd_p, rd_n = rs2_p, rs2_n
+                else:
+                    rd_p, rd_n = rd_p_in, rd_n_in
+            elif funct7 == 0x06:  # CMOVN: if sign(rs1) < 0 then rs2 else rd_in
+                if _ternary_word_sign(rs1_p, rs1_n) < 0:
+                    rd_p, rd_n = rs2_p, rs2_n
+                else:
+                    rd_p, rd_n = rd_p_in, rd_n_in
+            elif funct7 == 0x07:  # SHL3: shift left by imm12[4:0] trits; refuse overflow
+                shamt = imm12 & 0x1F
+                if shamt == 0:
+                    rd_p, rd_n = rs1_p, rs1_n
+                else:
+                    keep = M64 >> shamt
+                    if (rs1_p & ~keep) or (rs1_n & ~keep):
+                        valid_out = False
+                        rd_p, rd_n = 0, 0
+                    else:
+                        rd_p = u64(rs1_p << shamt)
+                        rd_n = u64(rs1_n << shamt)
+            else:
+                valid_out = False
+        elif funct3 == 0b111:  # XBT.LI5: (imm12[7:0] - 121) * 3^(5 * imm12[10:8])
+            byte_field = imm12 & 0xFF
+            chunk = (imm12 >> 8) & 0x7
+            shamt = 5 * chunk
+            up, un = xbt_base243_decoder(byte_field)
+            rd_p = u64(up << shamt)
+            rd_n = u64(un << shamt)
         else:
             valid_out = False
 

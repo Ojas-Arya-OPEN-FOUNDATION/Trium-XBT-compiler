@@ -95,17 +95,18 @@ module trium_branch_unit (
     always_comb begin
         a_gt_b = 1'b0;
         a_lt_b = 1'b0;
-        for (int i = 63; i >= 0; i--) begin
+        for (int i = 0; i < 64; i++) begin
             if (op_a_p[i] != op_b_p[i] || op_a_n[i] != op_b_n[i]) begin
-                // Trit A is +1, B is 0 or -1 -> A > B
                 if (op_a_p[i] && !op_b_p[i]) begin
                     a_gt_b = 1'b1;
+                    a_lt_b = 1'b0;
                 end else if (!op_a_n[i] && op_b_n[i]) begin
                     a_gt_b = 1'b1;
+                    a_lt_b = 1'b0;
                 end else begin
+                    a_gt_b = 1'b0;
                     a_lt_b = 1'b1;
                 end
-                break;
             end
         end
     end
@@ -231,6 +232,7 @@ module trium_cpu_core (
     logic [31:0] id_imm;
     logic [2:0]  id_alu_op;
     logic        id_mem_read, id_mem_write, id_reg_write, id_is_branch, id_is_jump;
+    logic        id_use_imm;
     logic [2:0]  id_branch_type;
     logic        id_is_xbt_dot;
 
@@ -241,14 +243,18 @@ module trium_cpu_core (
     logic [63:0] ex_rdata2_p, ex_rdata2_n;
     logic [2:0]  ex_alu_op;
     logic        ex_mem_read, ex_mem_write, ex_reg_write, ex_is_branch, ex_is_jump;
+    logic        ex_use_imm;
     logic [2:0]  ex_branch_type;
     logic        ex_is_xbt_dot;
 
     logic [1:0]  forward_a, forward_b;
     logic [63:0] alu_in_a_p, alu_in_a_n;
+    logic [63:0] fwd_b_p, fwd_b_n;
+    logic [63:0] imm_b_p, imm_b_n;
     logic [63:0] alu_in_b_p, alu_in_b_n;
     logic [63:0] alu_res_p, alu_res_n;
     logic [31:0] ex_branch_target;
+    logic        bu_branch_taken;
     logic        branch_taken;
     logic [1:0]  branch_sign;
 
@@ -317,6 +323,7 @@ module trium_cpu_core (
         id_reg_write   = 1'b0;
         id_is_branch   = 1'b0;
         id_is_jump     = 1'b0;
+        id_use_imm     = 1'b0;
         id_branch_type = 3'b000;
         id_is_xbt_dot  = 1'b0;
         id_imm         = 32'd0;
@@ -330,16 +337,19 @@ module trium_cpu_core (
             end
             7'b0010011: begin // I-type arithmetic (addi)
                 id_reg_write = 1'b1;
+                id_use_imm   = 1'b1;
                 id_alu_op    = 3'b000;
                 id_imm       = {{20{id_inst[31]}}, id_inst[31:20]};
             end
             7'b0000011: begin // Loads (lw, lb)
                 id_reg_write = 1'b1;
                 id_mem_read  = 1'b1;
+                id_use_imm   = 1'b1;
                 id_imm       = {{20{id_inst[31]}}, id_inst[31:20]};
             end
             7'b0100011: begin // Stores (sw, sb)
                 id_mem_write = 1'b1;
+                id_use_imm   = 1'b1;
                 id_imm       = {{20{id_inst[31]}}, id_inst[31:25], id_inst[11:7]};
             end
             7'b1100011: begin // Branches (beq, bne, blt, bge)
@@ -409,6 +419,7 @@ module trium_cpu_core (
             ex_reg_write   <= 1'b0;
             ex_is_branch   <= 1'b0;
             ex_is_jump     <= 1'b0;
+            ex_use_imm     <= 1'b0;
             ex_branch_type <= 3'd0;
             ex_is_xbt_dot  <= 1'b0;
         end else begin
@@ -427,6 +438,7 @@ module trium_cpu_core (
             ex_reg_write   <= id_reg_write;
             ex_is_branch   <= id_is_branch;
             ex_is_jump     <= id_is_jump;
+            ex_use_imm     <= id_use_imm;
             ex_branch_type <= id_branch_type;
             ex_is_xbt_dot  <= id_is_xbt_dot;
         end
@@ -455,52 +467,79 @@ module trium_cpu_core (
         endcase
     end
 
-    // Operand B Multiplexing
+    // Operand B Forwarding & Immediate Multiplexing (I-type / S-type)
     always_comb begin
         case (forward_b)
-            2'b10:   {alu_in_b_p, alu_in_b_n} = {mem_alu_res_p, mem_alu_res_n};
-            2'b01:   {alu_in_b_p, alu_in_b_n} = {wb_wdata_p, wb_wdata_n};
-            default: {alu_in_b_p, alu_in_b_n} = {ex_rdata2_p, ex_rdata2_n};
+            2'b10:   {fwd_b_p, fwd_b_n} = {mem_alu_res_p, mem_alu_res_n};
+            2'b01:   {fwd_b_p, fwd_b_n} = {wb_wdata_p, wb_wdata_n};
+            default: {fwd_b_p, fwd_b_n} = {ex_rdata2_p, ex_rdata2_n};
         endcase
+
+        if (ex_imm[31]) begin
+            imm_b_p = 64'd0;
+            imm_b_n = {32'd0, (~ex_imm + 32'd1)};
+        end else begin
+            imm_b_p = {32'd0, ex_imm};
+            imm_b_n = 64'd0;
+        end
+
+        alu_in_b_p = ex_use_imm ? imm_b_p : fwd_b_p;
+        alu_in_b_n = ex_use_imm ? imm_b_n : fwd_b_n;
     end
 
-    // 1-Cycle 3-Way Branch Unit
+    // 1-Cycle 3-Way Branch Unit (gated by ex_is_branch || ex_is_jump)
     trium_branch_unit bu_inst (
         .op_a_p       (alu_in_a_p),
         .op_a_n       (alu_in_a_n),
-        .op_b_p       (alu_in_b_p),
-        .op_b_n       (alu_in_b_n),
+        .op_b_p       (fwd_b_p),
+        .op_b_n       (fwd_b_n),
         .branch_type  (ex_branch_type),
-        .branch_taken (branch_taken),
+        .branch_taken (bu_branch_taken),
         .sign_out     (branch_sign)
     );
 
+    assign branch_taken     = (ex_is_branch || ex_is_jump) && bu_branch_taken;
     assign ex_branch_target = ex_pc + ex_imm;
 
     // ALU Arithmetic (Kogge-Stone 64-trit CLA + Dot64)
     logic [63:0] ks_sum_p, ks_sum_n;
+    logic        ks_cout_p, ks_cout_n;
     logic [63:0] ks_b_p, ks_b_n;
     // For subtraction, 0-gate wire-swap: b_p <-> b_n
     assign ks_b_p = (ex_alu_op == 3'b001) ? alu_in_b_n : alu_in_b_p;
     assign ks_b_n = (ex_alu_op == 3'b001) ? alu_in_b_p : alu_in_b_n;
 
     xbt_kogge_stone_adder64 ks_adder (
-        .a_p   (alu_in_a_p),
-        .a_n   (alu_in_a_n),
-        .b_p   (ks_b_p),
-        .b_n   (ks_b_n),
-        .sum_p (ks_sum_p),
-        .sum_n (ks_sum_n)
+        .a_p    (alu_in_a_p),
+        .a_n    (alu_in_a_n),
+        .b_p    (ks_b_p),
+        .b_n    (ks_b_n),
+        .sum_p  (ks_sum_p),
+        .sum_n  (ks_sum_n),
+        .cout_p (ks_cout_p),
+        .cout_n (ks_cout_n)
     );
 
-    logic [63:0] dot_res_p, dot_res_n;
+    // Planar Dot64 produces signed scalar in [-64, +64]; encode cleanly to
+    // 5-trit balanced ternary dual-rail via base-243 decoder (dot + 121 in [57, 185]).
+    logic signed [63:0] dot_res_scalar;
+    logic [7:0]         dot_res_biased;
+    logic [63:0]        dot_res_p, dot_res_n;
+
     xbt_planar_dot64 dot_inst (
         .a_p     (alu_in_a_p),
         .a_n     (alu_in_a_n),
         .b_p     (alu_in_b_p),
         .b_n     (alu_in_b_n),
-        .accum_p (dot_res_p),
-        .accum_n (dot_res_n)
+        .dot_out (dot_res_scalar)
+    );
+
+    assign dot_res_biased = dot_res_scalar[7:0] + 8'd121;
+
+    xbt_base243_decoder dot_enc_inst (
+        .packed_byte (dot_res_biased),
+        .out_p       (dot_res_p),
+        .out_n       (dot_res_n)
     );
 
     always_comb begin
@@ -531,8 +570,8 @@ module trium_cpu_core (
             mem_rd        <= ex_rd;
             mem_alu_res_p <= alu_res_p;
             mem_alu_res_n <= alu_res_n;
-            mem_wdata_p   <= alu_in_b_p;
-            mem_wdata_n   <= alu_in_b_n;
+            mem_wdata_p   <= fwd_b_p;
+            mem_wdata_n   <= fwd_b_n;
             mem_read      <= ex_mem_read;
             mem_write     <= ex_mem_write;
             mem_reg_write <= ex_reg_write;
@@ -571,17 +610,36 @@ module trium_cpu_core (
     // =========================================================================
     // Performance & Dynamic Power Hardware Counters
     // =========================================================================
+    logic [63:0] prev_wb_p, prev_wb_n;
+    logic [63:0] wb_flip_mask;
+    logic [6:0]  wb_flip_cnt;
+
+    always_comb begin
+        wb_flip_mask = (wb_wdata_p ^ prev_wb_p) | (wb_wdata_n ^ prev_wb_n);
+        wb_flip_cnt  = 7'd0;
+        for (int i = 0; i < 64; i++) begin
+            wb_flip_cnt = wb_flip_cnt + {6'd0, wb_flip_mask[i]};
+        end
+    end
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cycle_count    <= 64'd0;
             instret_count  <= 64'd0;
             tritflip_count <= 64'd0;
+            prev_wb_p      <= 64'd0;
+            prev_wb_n      <= 64'd0;
         end else begin
             cycle_count <= cycle_count + 64'd1;
             if (wb_reg_write && (wb_rd != 5'd0)) begin
-                instret_count <= instret_count + 64'd1;
+                instret_count  <= instret_count + 64'd1;
+                tritflip_count <= tritflip_count + {57'd0, wb_flip_cnt};
+                prev_wb_p      <= wb_wdata_p;
+                prev_wb_n      <= wb_wdata_n;
             end
         end
     end
 
 endmodule
+
+`default_nettype wire

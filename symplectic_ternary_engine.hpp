@@ -465,23 +465,25 @@ public:
 
     /**
      * @brief Palindromic Multi-Stage Yoshida Symmetric Forward Composition (in-place):
-     * Applies a symmetric sequence of KDK sub-steps with palindromic integer weights (1, -1, 1)
-     * or custom symmetric stage weights, preserving both exact reversibility and total momentum.
+     * Applies a non-canceling symmetric sequence of KDK sub-steps with palindromic
+     * integer weights (+2, -1, +2) (net weight +3, avoiding the (+1, -1, +1) identity
+     * cancellation), preserving exact bit-for-bit reversibility and total momentum.
      */
     template <typename ForceFieldFn>
     inline void step_yoshida_symmetric_forward(ForceFieldFn&& force_fn) noexcept {
-        // Stage 1: Forward KDK with weight +1
-        step_forward(force_fn);
-        // Stage 2: Central symmetric sub-step with negated force/drift weight (-1)
-        {
+        auto step_pos2 = [&]() noexcept {
             LatticeVec f1 = force_fn(Q);
-            for (size_t i = 0; i < Sites; ++i) P[i] -= f1[i];
-            for (size_t i = 0; i < Sites; ++i) Q[i] -= P[i];
+            for (size_t i = 0; i < Sites; ++i) P[i] += (f1[i] + f1[i]);
+            for (size_t i = 0; i < Sites; ++i) Q[i] += (P[i] + P[i]);
             LatticeVec f2 = force_fn(Q);
-            for (size_t i = 0; i < Sites; ++i) P[i] -= f2[i];
-        }
-        // Stage 3: Forward KDK with weight +1 (palindromic closure)
-        step_forward(force_fn);
+            for (size_t i = 0; i < Sites; ++i) P[i] += (f2[i] + f2[i]);
+        };
+        // Stage 1: Forward KDK with weight +2
+        step_pos2();
+        // Stage 2: Central symmetric sub-step with weight -1
+        step_backward(force_fn);
+        // Stage 3: Forward KDK with weight +2 (palindromic closure)
+        step_pos2();
     }
 
     inline void step_yoshida_symmetric_forward() noexcept {
@@ -493,18 +495,19 @@ public:
      */
     template <typename ForceFieldFn>
     inline void step_yoshida_symmetric_backward(ForceFieldFn&& force_fn) noexcept {
-        // Undo Stage 3:
-        step_backward(force_fn);
-        // Undo Stage 2:
-        {
+        auto undo_pos2 = [&]() noexcept {
             LatticeVec f2 = force_fn(Q);
-            for (size_t i = 0; i < Sites; ++i) P[i] += f2[i];
-            for (size_t i = 0; i < Sites; ++i) Q[i] += P[i];
+            for (size_t i = 0; i < Sites; ++i) P[i] -= (f2[i] + f2[i]);
+            for (size_t i = 0; i < Sites; ++i) Q[i] -= (P[i] + P[i]);
             LatticeVec f1 = force_fn(Q);
-            for (size_t i = 0; i < Sites; ++i) P[i] += f1[i];
-        }
-        // Undo Stage 1:
-        step_backward(force_fn);
+            for (size_t i = 0; i < Sites; ++i) P[i] -= (f1[i] + f1[i]);
+        };
+        // Undo Stage 3 (+2):
+        undo_pos2();
+        // Undo Stage 2 (-1):
+        step_forward(force_fn);
+        // Undo Stage 1 (+2):
+        undo_pos2();
     }
 
     inline void step_yoshida_symmetric_backward() noexcept {

@@ -207,7 +207,7 @@ public:
 
     explicit InstructionSelector(int available_regs = 16)
         : available_(available_regs) {
-        if (available_ < 4 || available_ >= REG_COUNT)
+        if (available_ < 4 || available_ > REG_COUNT)
             throw std::invalid_argument("xbt: register count out of range");
         register_default_rules();
     }
@@ -215,16 +215,26 @@ public:
     /**
      * @brief Construct for a specific target.
      *
-     * Target capability drives rule availability -- that is the whole point of
-     * describing hardware as data. Today it selects between a native scalar
-     * multiply and the shift-add lowering.
+     * Target capability drives rule availability, register budget, and
+     * immediate width -- that is the whole point of describing hardware as
+     * data.
      */
     explicit InstructionSelector(const bt::target::MachineDescription& m,
-                                 int available_regs = 16)
-        : available_(available_regs), machine_(&m) {
-        if (available_ < 4 || available_ >= REG_COUNT)
+                                 int available_regs = 0)
+        : available_(derive_available_regs(m, available_regs)), machine_(&m) {
+        if (available_ < 4 || available_ > REG_COUNT)
             throw std::invalid_argument("xbt: register count out of range");
         register_default_rules();
+    }
+
+    /** Effective register pool limit driven by MachineDescription or constructor. */
+    int available_regs() const { return available_; }
+
+    /** Maximum immediate width in trits driven by MachineDescription (default 5). */
+    int max_immediate_trits() const {
+        if (machine_ && machine_->max_immediate_trits > 0)
+            return static_cast<int>(machine_->max_immediate_trits);
+        return TRITS_PER_BYTE;
     }
 
     /** The target this selector was built for, or nullptr if unspecified. */
@@ -350,7 +360,16 @@ private:
     void lower_statements(const std::vector<ir::Statement>& body,
                           LoweredFunction& out);
 
-    std::vector<Insn> materialise(int64_t value, int dst) const;
+    static int derive_available_regs(const bt::target::MachineDescription& m,
+                                     int requested) {
+        if (requested > 0) return requested;
+        if (m.ternary_registers == 0) return 16;
+        int regs = static_cast<int>(m.ternary_registers);
+        if (regs > REG_COUNT) regs = REG_COUNT;
+        return regs;
+    }
+
+    std::vector<Insn> materialise(int64_t value, int dst);
 
     static uint32_t pack_digits(const std::vector<int>& dig, int trit_offset);
 
@@ -821,7 +840,14 @@ inline uint32_t InstructionSelector::pack_digits(const std::vector<int>& dig,
 }
 
 inline std::vector<Insn> InstructionSelector::materialise(int64_t value,
-                                                          int dst) const {
+                                                          int dst) {
+    if (max_immediate_trits() < TRITS_PER_BYTE) {
+        throw std::runtime_error(
+            "xbt: target max_immediate_trits (" +
+            std::to_string(max_immediate_trits()) +
+            ") is smaller than LI5 chunk width (" +
+            std::to_string(TRITS_PER_BYTE) + ")");
+    }
     std::vector<Insn> code;
     std::vector<int> trits;
     int64_t v = value;
@@ -839,8 +865,13 @@ inline std::vector<Insn> InstructionSelector::materialise(int64_t value,
     }
     while (trits.size() % TRITS_PER_BYTE != 0) trits.push_back(0);
 
-    bool first = true;
+    const bool multi_chunk = (trits.size() > static_cast<size_t>(TRITS_PER_BYTE));
     int tmp = -1;
+    if (multi_chunk) {
+        tmp = alloc_reg();
+    }
+
+    bool first = true;
     for (size_t base = 0; base < trits.size(); base += TRITS_PER_BYTE) {
         std::vector<int> dig(TRITS_PER_BYTE);
         for (int k = 0; k < TRITS_PER_BYTE; ++k) dig[k] = trits[base + k] + 1;
@@ -848,7 +879,7 @@ inline std::vector<Insn> InstructionSelector::materialise(int64_t value,
         int target = first ? dst : tmp;
         // A single-chunk constant is just the value itself, so print it; only
         // multi-chunk materialisations need the digit-offset annotation.
-        std::string shown = (trits.size() == static_cast<size_t>(TRITS_PER_BYTE))
+        std::string shown = !multi_chunk
                                 ? std::to_string(value)
                                 : "digits@" + std::to_string(base);
         code.push_back(make_i(Funct3::LI5, target, 0, imm,
@@ -860,6 +891,9 @@ inline std::vector<Insn> InstructionSelector::materialise(int64_t value,
                                   std::to_string(target)));
         }
         first = false;
+    }
+    if (tmp > REG_ZERO) {
+        free_reg(tmp);
     }
     return code;
 }
@@ -897,7 +931,10 @@ inline LoweringResult lower_program_to_assembly(const ir::Program& program,
     out.assembly += "// balanced-ternary arithmetic: see verification/verify_isa.py\n";
     out.assembly += "\n";
 
-    InstructionSelector sel(available_regs);
+    const MachineDescription* m = bt::target::find_machine("riscv64-xbt");
+    InstructionSelector sel = m
+        ? InstructionSelector(*m, available_regs)
+        : InstructionSelector(available_regs);
     for (const auto& f : program.functions) {
         ++out.functions;
         try {

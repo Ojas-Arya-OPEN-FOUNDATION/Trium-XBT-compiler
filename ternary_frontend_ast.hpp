@@ -1784,10 +1784,9 @@ private:
         if (match({TokenType::KwVar})) {
             return parse_var_decl();
         }
-        if (match({TokenType::KwSparseMatrix})) {
-            if (check(TokenType::Ident)) {
-                return parse_sparse_matrix_decl();
-            }
+        if (check(TokenType::KwSparseMatrix) && peek(1).type == TokenType::Ident) {
+            advance();
+            return parse_sparse_matrix_decl();
         }
         return parse_statement();
     }
@@ -2486,8 +2485,8 @@ class TypeChecker : public ASTVisitor {
         return n == "print" || n == "print_matrix" || n == "matmul" || n == "csa_reduce" ||
             n == "transpose" || n == "zeros" || n == "ones" || n == "rand_matrix" ||
             n == "matrix_init" || n == "vector_init" || n == "fma" || n == "sqrt" ||
-            n == "abs" || n == "planar_dot64" || n == "btha_sum_p" || n == "btha_sum_n" ||
-            n == "btha_carry_p" || n == "btha_carry_n";
+            n == "abs" || n == "to_int" || n == "planar_dot64" || n == "btha_sum_p" ||
+            n == "btha_sum_n" || n == "btha_carry_p" || n == "btha_carry_n";
     }
 public:
     explicit TypeChecker(bool native_backend = false) : native_(native_backend) {}
@@ -2654,6 +2653,10 @@ public:
         if (f == "fma" || f == "sqrt" || f == "abs") {
             arity(n, f == "fma" ? 3 : 1); all_scalar();
             current_type_ = f == "abs" ? args[0] : BTType::Float; return;
+        }
+        if (f == "to_int") {
+            arity(n, 1); all_scalar();
+            current_type_ = BTType::Int; return;
         }
         if (f == "planar_dot64" || f == "btha_sum_p" || f == "btha_sum_n" || f == "btha_carry_p" || f == "btha_carry_n") {
             arity(n, 4); all_integral(); current_type_ = BTType::Int; return;

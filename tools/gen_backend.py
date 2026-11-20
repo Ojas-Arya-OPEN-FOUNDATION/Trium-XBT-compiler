@@ -168,18 +168,14 @@ def render_source(t: dict) -> str:
 
 #include <memory>
 
-namespace bt::target::{sym} {{
-
-// Declared in this header so callers can force registration of a backend
-// that would otherwise be dropped by the linker.
-void register_{sym}_backend();
+namespace bt::target {{
 
 namespace {{
 
 struct Registrar {{
     Registrar() {{
         BackendRegistry::instance().register_backend(
-            std::make_unique<{cls}>());
+            std::make_unique<{sym}::{cls}>());
     }}
 }};
 
@@ -189,6 +185,8 @@ struct Registrar {{
 // call, so the registry would stay empty until something explicitly poked it.
 const Registrar kRegistrar{{}};
 
+}}  // namespace
+
 void register_{sym}_backend() {{
     // Referenced from the header. When this backend ships as a static library,
     // a namespace-scope object in an unreferenced TU can be dropped by the
@@ -196,9 +194,7 @@ void register_{sym}_backend() {{
     (void)kRegistrar;
 }}
 
-}}  // namespace
-
-}}  // namespace bt::target::{sym}
+}}  // namespace bt::target
 '''
 
 

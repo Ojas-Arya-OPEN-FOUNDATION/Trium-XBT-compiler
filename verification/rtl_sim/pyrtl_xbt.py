@@ -129,7 +129,7 @@ def build_xbt_alu_block() -> Tuple[pyrtl.Block, pyrtl.Simulation]:
       3'b010: DOT64
       3'b011: UNPACK243
       3'b100: NEG
-      3'b101: CSAMAC
+      3'b101: CSAMAC (rd_in + rs1 * rs2)
     """
     block = pyrtl.Block()
     with pyrtl.set_working_block(block):
@@ -140,6 +140,8 @@ def build_xbt_alu_block() -> Tuple[pyrtl.Block, pyrtl.Simulation]:
         rs1_n = pyrtl.Input(64, 'rs1_n')
         rs2_p = pyrtl.Input(64, 'rs2_p')
         rs2_n = pyrtl.Input(64, 'rs2_n')
+        rd_p_in = pyrtl.Input(64, 'rd_p_in')
+        rd_n_in = pyrtl.Input(64, 'rd_n_in')
         rs1_scalar = pyrtl.Input(64, 'rs1_scalar')
 
         rd_p = pyrtl.Output(64, 'rd_p')
@@ -234,13 +236,13 @@ def build_xbt_alu_block() -> Tuple[pyrtl.Block, pyrtl.Simulation]:
         neg_p = rs1_n
         neg_n = rs1_p
 
-        # Sub-unit 6: CSAMAC
+        # Sub-unit 6: CSAMAC (rd_in + rs1 * rs2)
         csa_pp = (rs1_p & rs2_p) | (rs1_n & rs2_n)
         csa_pn = (rs1_p & rs2_n) | (rs1_n & rs2_p)
-        csa_sp = ((csa_pp ^ rs1_p) & ~(csa_pn | rs1_n)) | (csa_pn & rs1_n)
-        csa_sn = ((csa_pn ^ rs1_n) & ~(csa_pp | rs1_p)) | (csa_pp & rs1_p)
-        csa_cp = csa_pp & rs1_p
-        csa_cn = csa_pn & rs1_n
+        csa_sp = ((csa_pp ^ rd_p_in) & ~(csa_pn | rd_n_in)) | (csa_pn & rd_n_in)
+        csa_sn = ((csa_pn ^ rd_n_in) & ~(csa_pp | rd_p_in)) | (csa_pp & rd_p_in)
+        csa_cp = csa_pp & rd_p_in
+        csa_cn = csa_pn & rd_n_in
 
         # Output MUX based on funct3
         f0 = (funct3 == pyrtl.Const(0, 3))

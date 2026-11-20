@@ -4,11 +4,15 @@
 //              "Xbt" (Balanced Ternary) Custom-0 Hardware Extension (0x0B).
 //
 // Modules:
-//   1. xbt_btha64              - 64-Trit Dual-Rail Balanced Ternary Half-Adder
-//   2. xbt_kogge_stone_adder64 - 6-Stage Parallel-Prefix Kogge-Stone Ternary CLA
-//   3. xbt_planar_dot64        - 64-Trit Dual-Rail Dot Product Unit (Popcount Tree)
-//   4. xbt_base243_decoder     - Division-Free Base-243 Hardware Unpacker
-//   5. riscv_xbt_alu           - Top-Level RISC-V RoCC / Custom-0 Execution Unit
+//   1. xbt_btha64                 - 64-Trit Dual-Rail Balanced Ternary Half-Adder
+//   2. xbt_kogge_stone_adder64    - 6-Stage Parallel-Prefix Kogge-Stone Ternary CLA
+//   2b. xbt_kogge_stone_adder64_v2- Upgraded Monotone Lattice Kogge-Stone Adder
+//   3. xbt_planar_dot64           - 64-Trit Dual-Rail Dot Product Unit (Popcount Tree)
+//   3b. xbt_aoi22_planar_dot64    - CMOS Compound AOI22 Planar Dot Product Unit
+//   3c. xbt_regfile32x128         - 32x128-bit Dual-Rail Ternary Register File
+//   3d. xbt_systolic_btfa_unit    - Pipelined Systolic BTFA Compressor Unit
+//   4. xbt_base243_decoder        - Division-Free Base-243 Hardware Unpacker
+//   5. riscv_xbt_alu              - Top-Level RISC-V RoCC / Custom-0 Execution Unit (v1 + v2)
 // =============================================================================
 
 `default_nettype none
@@ -198,7 +202,7 @@ module xbt_kogge_stone_adder64_v2 (
                 f0_p[s+1] = fm_p[s] | (f0_p[s] & ~l_f0_n) | (fp_p[s] & l_f0_p);
                 f0_n[s+1] = fp_n[s] | (f0_n[s] & ~l_f0_p) | (fm_n[s] & l_f0_n);
                 fp_p[s+1] = fm_p[s] | (f0_p[s] & ~l_fp_n) | (fp_p[s] & l_fp_p);
-                fp_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fm_n);
+                fp_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fp_n);
             end
         end
     endgenerate
@@ -245,7 +249,7 @@ module xbt_planar_dot64 (
             cnt_n = cnt_n + {6'd0, prod_n[i]};
         end
 
-        dot_out = 64'(signed'({1'b0, cnt_p})) - 64'(signed'({1'b0, cnt_n}));
+        dot_out = $signed({57'd0, cnt_p}) - $signed({57'd0, cnt_n});
     end
 endmodule
 
@@ -285,7 +289,7 @@ module xbt_aoi22_planar_dot64 (
             cnt_n = cnt_n + {6'd0, prod_n[i]};
         end
 
-        dot_out = 64'(signed'({1'b0, cnt_p})) - 64'(signed'({1'b0, cnt_n}));
+        dot_out = $signed({57'd0, cnt_p}) - $signed({57'd0, cnt_n});
     end
 endmodule
 
@@ -316,12 +320,11 @@ module xbt_regfile32x128 (
 );
     logic [63:0] mem_p [0:31];
     logic [63:0] mem_n [0:31];
+    logic [63:0] raw1_p, raw1_n;
+    logic [63:0] raw2_p, raw2_n;
 
     // Asynchronous read ports with 0-gate wire-swap negation bypass
     always_comb begin
-        logic [63:0] raw1_p, raw1_n;
-        logic [63:0] raw2_p, raw2_n;
-
         raw1_p = (rs1_addr == 5'd0) ? 64'd0 : mem_p[rs1_addr];
         raw1_n = (rs1_addr == 5'd0) ? 64'd0 : mem_n[rs1_addr];
 
@@ -493,12 +496,23 @@ endmodule
 // -----------------------------------------------------------------------------
 // 5. Top-Level RISC-V "Xbt" Custom-0 (0x0B) Execution Unit (riscv_xbt_alu)
 //    Opcode: 7'b0001011 (0x0B)
-//    funct3 dispatch:
+//    funct3 dispatch (v1 + v2):
 //      3'b000 (XBT.BTHA)      : 1-cycle 64-trit BTHA step
 //      3'b001 (XBT.KSADD)     : 1-cycle 64-trit Kogge-Stone addition
 //      3'b010 (XBT.DOT64)     : 1-cycle 64-trit Planar Dot Product -> rd_scalar
 //      3'b011 (XBT.UNPACK243) : 1-cycle Base-243 Byte -> Dual-Rail unpack
 //      3'b100 (XBT.NEG)       : 0-gate wire-swapped negation
+//      3'b101 (XBT.CSAMAC)    : 1-cycle Fused Carry-Save MAC: rd_in + (rs1 * rs2)
+//      3'b110 (XBT.GROUP2)    : v2 R-type extended group (dispatched by funct7):
+//        7'h00 (BTFA)         : rd = sum(rs1, rs2, rd_in); carry -> rd_aux
+//        7'h01 (MUL)          : per-lane AOI22 product rd[i] = rs1[i] * rs2[i]
+//        7'h02 (PACK243)      : rd_scalar = base-243 byte from rs1[4:0]
+//        7'h03 (SIGN)         : rd = sign(rs1) in {-1, 0, +1} (priority encoder)
+//        7'h04 (CMOVZ)        : if sign(rs1) == 0 then rd = rs2 else rd_in
+//        7'h05 (CMOVP)        : if sign(rs1) >  0 then rd = rs2 else rd_in
+//        7'h06 (CMOVN)        : if sign(rs1) <  0 then rd = rs2 else rd_in
+//        7'h07 (SHL3)         : rd = rs1 << imm12[4:0] (valid_out=0 on overflow)
+//      3'b111 (XBT.LI5)       : I-type 5-trit constant at chunk offset 5*imm12[10:8]
 // -----------------------------------------------------------------------------
 module riscv_xbt_alu (
     input  logic [6:0]         opcode,
@@ -508,7 +522,10 @@ module riscv_xbt_alu (
     input  logic [63:0]        rs1_n,
     input  logic [63:0]        rs2_p,
     input  logic [63:0]        rs2_n,
+    input  logic [63:0]        rd_p_in,
+    input  logic [63:0]        rd_n_in,
     input  logic [63:0]        rs1_scalar,
+    input  logic [11:0]        imm12,
     output logic [63:0]        rd_p,
     output logic [63:0]        rd_n,
     output logic [63:0]        rd_aux_p,
@@ -519,10 +536,22 @@ module riscv_xbt_alu (
     localparam logic [6:0] OPCODE_CUSTOM0 = 7'b0001011;
 
     logic [63:0] btha_sum_p, btha_sum_n, btha_carry_p, btha_carry_n;
+    logic [63:0] btfa_sum_p, btfa_sum_n, btfa_c2_p, btfa_c2_n;
+    logic [63:0] btfa_carry_p, btfa_carry_n;
     logic [63:0] ks_sum_p, ks_sum_n;
     logic        ks_cout_p, ks_cout_n;
     logic signed [63:0] dot64_res;
+    logic [7:0]  unpack_byte_in;
     logic [63:0] unpack_p, unpack_n;
+
+    // Shared combinational helpers for v1/v2 ops
+    logic [63:0] prod_p, prod_n;
+    logic        sign_p, sign_n;
+    logic signed [63:0] pack243_val;
+    logic [4:0]  shl3_shamt;
+    logic [63:0] shl3_keep;
+    logic        shl3_ovf;
+    logic [5:0]  li5_shamt;
 
     xbt_btha64 u_btha (
         .a_p     (rs1_p),
@@ -533,6 +562,17 @@ module riscv_xbt_alu (
         .sum_n   (btha_sum_n),
         .carry_p (btha_carry_p),
         .carry_n (btha_carry_n)
+    );
+
+    xbt_btha64 u_btfa_stage2 (
+        .a_p     (btha_sum_p),
+        .a_n     (btha_sum_n),
+        .b_p     (rd_p_in),
+        .b_n     (rd_n_in),
+        .sum_p   (btfa_sum_p),
+        .sum_n   (btfa_sum_n),
+        .carry_p (btfa_c2_p),
+        .carry_n (btfa_c2_n)
     );
 
     xbt_kogge_stone_adder64 u_ksadd (
@@ -554,13 +594,54 @@ module riscv_xbt_alu (
         .dot_out (dot64_res)
     );
 
+    assign unpack_byte_in = (funct3 == 3'b111) ? imm12[7:0] : rs1_scalar[7:0];
+
     xbt_base243_decoder u_unpack243 (
-        .packed_byte (rs1_scalar[7:0]),
+        .packed_byte (unpack_byte_in),
         .out_p       (unpack_p),
         .out_n       (unpack_n)
     );
 
     always_comb begin
+        // BTFA carry rail combination
+        btfa_carry_p = (btha_carry_p | btfa_c2_p) & ~(btha_carry_n | btfa_c2_n);
+        btfa_carry_n = (btha_carry_n | btfa_c2_n) & ~(btha_carry_p | btfa_c2_p);
+
+        // Per-lane AOI22 product (shared by CSAMAC and GROUP2.MUL)
+        prod_p = (rs1_p & rs2_p) | (rs1_n & rs2_n);
+        prod_n = (rs1_p & rs2_n) | (rs1_n & rs2_p);
+
+        // Priority encoder for sign(rs1) (ascending scan: MSB non-zero trit wins)
+        sign_p = 1'b0;
+        sign_n = 1'b0;
+        for (int i = 0; i < 64; i++) begin
+            if (rs1_p[i]) begin
+                sign_p = 1'b1;
+                sign_n = 1'b0;
+            end else if (rs1_n[i]) begin
+                sign_p = 1'b0;
+                sign_n = 1'b1;
+            end
+        end
+
+        // Base-243 pack of rs1[4:0]: 121 + sum_{k=0..4} trit(k) * 3^k
+        pack243_val = 64'sd121
+            + (rs1_p[0] ? 64'sd1  : (rs1_n[0] ? -64'sd1  : 64'sd0))
+            + (rs1_p[1] ? 64'sd3  : (rs1_n[1] ? -64'sd3  : 64'sd0))
+            + (rs1_p[2] ? 64'sd9  : (rs1_n[2] ? -64'sd9  : 64'sd0))
+            + (rs1_p[3] ? 64'sd27 : (rs1_n[3] ? -64'sd27 : 64'sd0))
+            + (rs1_p[4] ? 64'sd81 : (rs1_n[4] ? -64'sd81 : 64'sd0));
+
+        // SHL3 shift amount (from rs2 field = imm12[4:0]) & overflow check
+        shl3_shamt = imm12[4:0];
+        shl3_keep  = 64'hFFFF_FFFF_FFFF_FFFF >> shl3_shamt;
+        shl3_ovf   = (shl3_shamt != 5'd0) &&
+                     (((rs1_p & ~shl3_keep) != 64'd0) || ((rs1_n & ~shl3_keep) != 64'd0));
+
+        // LI5 trit shift = 5 * imm12[10:8] (0..35)
+        li5_shamt  = {1'b0, imm12[10:8], 2'b00} + {3'b000, imm12[10:8]};
+
+        // Output dispatch
         rd_p      = 64'd0;
         rd_n      = 64'd0;
         rd_aux_p  = 64'd0;
@@ -569,7 +650,7 @@ module riscv_xbt_alu (
         valid_out = (opcode == OPCODE_CUSTOM0);
 
         if (opcode == OPCODE_CUSTOM0) begin
-            unique case (funct3)
+            case (funct3)
                 3'b000: begin // XBT.BTHA
                     rd_p     = btha_sum_p;
                     rd_n     = btha_sum_n;
@@ -593,16 +674,76 @@ module riscv_xbt_alu (
                     rd_p = rs1_n;
                     rd_n = rs1_p;
                 end
-                3'b101: begin // XBT.CSAMAC (single-cycle Carry-Save MAC)
-                    // Fused product: prod = rs1 * rs2
-                    logic [63:0] prod_p, prod_n;
-                    prod_p = (rs1_p & rs2_p) | (rs1_n & rs2_n);
-                    prod_n = (rs1_p & rs2_n) | (rs1_n & rs2_p);
-                    // Single-cycle BTFA accumulation into (rd_p/n, rd_aux_p/n)
-                    rd_p     = ((prod_p ^ rs1_p) & ~(prod_n | rs1_n)) | (prod_n & rs1_n);
-                    rd_n     = ((prod_n ^ rs1_n) & ~(prod_p | rs1_p)) | (prod_p & rs1_p);
-                    rd_aux_p = (prod_p & rs1_p);
-                    rd_aux_n = (prod_n & rs1_n);
+                3'b101: begin // XBT.CSAMAC: rd_in + (rs1 * rs2)
+                    rd_p     = ((prod_p ^ rd_p_in) & ~(prod_n | rd_n_in)) | (prod_n & rd_n_in);
+                    rd_n     = ((prod_n ^ rd_n_in) & ~(prod_p | rd_p_in)) | (prod_p & rd_p_in);
+                    rd_aux_p = prod_p & rd_p_in;
+                    rd_aux_n = prod_n & rd_n_in;
+                end
+                3'b110: begin // XBT.GROUP2 (v2 extended operations)
+                    case (funct7)
+                        7'h00: begin // XBT.BTFA: sum(rs1, rs2, rd_in)
+                            rd_p     = btfa_sum_p;
+                            rd_n     = btfa_sum_n;
+                            rd_aux_p = btfa_carry_p;
+                            rd_aux_n = btfa_carry_n;
+                        end
+                        7'h01: begin // XBT.MUL: per-lane AOI22 product
+                            rd_p = prod_p;
+                            rd_n = prod_n;
+                        end
+                        7'h02: begin // XBT.PACK243: rs1[4:0] -> base-243 byte in rd_scalar
+                            rd_scalar = pack243_val;
+                        end
+                        7'h03: begin // XBT.SIGN: priority encoder -> {-1, 0, +1}
+                            rd_p = {63'd0, sign_p};
+                            rd_n = {63'd0, sign_n};
+                        end
+                        7'h04: begin // XBT.CMOVZ: if sign(rs1) == 0 then rs2 else rd_in
+                            if (!sign_p && !sign_n) begin
+                                rd_p = rs2_p;
+                                rd_n = rs2_n;
+                            end else begin
+                                rd_p = rd_p_in;
+                                rd_n = rd_n_in;
+                            end
+                        end
+                        7'h05: begin // XBT.CMOVP: if sign(rs1) > 0 then rs2 else rd_in
+                            if (sign_p) begin
+                                rd_p = rs2_p;
+                                rd_n = rs2_n;
+                            end else begin
+                                rd_p = rd_p_in;
+                                rd_n = rd_n_in;
+                            end
+                        end
+                        7'h06: begin // XBT.CMOVN: if sign(rs1) < 0 then rs2 else rd_in
+                            if (sign_n) begin
+                                rd_p = rs2_p;
+                                rd_n = rs2_n;
+                            end else begin
+                                rd_p = rd_p_in;
+                                rd_n = rd_n_in;
+                            end
+                        end
+                        7'h07: begin // XBT.SHL3: shift left by imm12[4:0] trits; refuse overflow
+                            if (shl3_ovf) begin
+                                valid_out = 1'b0;
+                                rd_p      = 64'd0;
+                                rd_n      = 64'd0;
+                            end else begin
+                                rd_p = rs1_p << shl3_shamt;
+                                rd_n = rs1_n << shl3_shamt;
+                            end
+                        end
+                        default: begin
+                            valid_out = 1'b0;
+                        end
+                    endcase
+                end
+                3'b111: begin // XBT.LI5: (imm12[7:0] - 121) * 3^(5 * imm12[10:8])
+                    rd_p = unpack_p << li5_shamt;
+                    rd_n = unpack_n << li5_shamt;
                 end
                 default: begin
                     valid_out = 1'b0;

@@ -8,6 +8,7 @@
 #include <memory>
 #include <atomic>
 #include <variant>
+#include <limits>
 namespace bt::sdk {
 struct Error:std::runtime_error{int code;Error(int c,const char* m):std::runtime_error(m),code(c){}};
 inline void check(int status,const char* message){if(status)throw Error(status,message);}
@@ -83,8 +84,6 @@ public:
     std::string cache_info()const{return query([&](char* p,size_t* n,char* e,size_t c){return bt_sdk_cache_info((state?state->id.load():0),p,n,e,c);});}
     Module compile(const std::string& source)const {bt_sdk_handle m;char err[4096];check(bt_sdk_compile((state?state->id.load():0),source.data(),source.size(),&m,err,sizeof err),err);return Module(m,state);}
 };
-}
-#endif
 
 /** Fast ternary GEMM: C[m,n] = A[m,k] * B[k,n], exact int64 result.
  *
@@ -106,9 +105,8 @@ inline void gemm_ternary(const std::vector<uint64_t>& Ap,
                          uint64_t m, uint64_t n, uint64_t k) {
     C.assign(size_t(m) * n, 0);
     char err[4096];
-    // Qualified: this helper is appended after `namespace bt::sdk` closes.
-    bt::sdk::check(bt_sdk_gemm_ternary(Ap.data(), An.data(), Bp.data(), Bn.data(),
-                                       C.data(), m, n, k, err, sizeof err), err);
+    check(bt_sdk_gemm_ternary(Ap.data(), An.data(), Bp.data(), Bn.data(),
+                              C.data(), m, n, k, err, sizeof err), err);
 }
 
 /** True if the loaded library exports the fast GEMM (API >= 1.3). An older
@@ -208,6 +206,66 @@ inline void matmul(const int64_t* a, uint64_t na,
     }
     C.assign(size_t(m) * n, 0);
     char err[4096];
-    bt::sdk::check(bt_sdk_matmul(a, na, b, nb, C.data(), C.size(),
-                                 m, k, n, err, sizeof err), err);
+    check(bt_sdk_matmul(a, na, b, nb, C.data(), C.size(),
+                        m, k, n, err, sizeof err), err);
 }
+
+// ---------------------------------------------------------------------------
+// Modern C++20 ergonomic helpers
+// ---------------------------------------------------------------------------
+
+/** Return the loaded SDK API version formatted as "major.minor" (e.g. "1.3"). */
+inline std::string version_string() {
+    const uint32_t ver = bt_sdk_api_version();
+    return std::to_string((ver >> 16) & 0xFFFFu) + "." + std::to_string(ver & 0xFFFFu);
+}
+
+/** Query the raw JSON metadata string from bt_sdk_info() via query(...). */
+inline std::string info_json() {
+    return query([](char* p, size_t* n, char* e, size_t c) {
+        return bt_sdk_info(p, n, e, c);
+    });
+}
+
+/** One-call compile + map using RAII Context and Module handles. */
+inline std::vector<int64_t> quick_map(const std::string& source,
+                                      const std::string& export_name,
+                                      const std::vector<int64_t>& input,
+                                      uint32_t backend = BT_SDK_CPU) {
+    Context ctx;
+    Module mod = ctx.compile(source);
+    return mod.map(export_name, input, backend);
+}
+
+/** Ergonomic wrapper for C[m,n] = A[m,k] * B[k,n] with automatic ternary bit-sliced routing. */
+inline std::vector<int64_t> ternary_matmul(const std::vector<int64_t>& a,
+                                           const std::vector<int64_t>& b,
+                                           size_t m, size_t k, size_t n) {
+    if ((k > 0 && m > std::numeric_limits<size_t>::max() / k) ||
+        (n > 0 && k > std::numeric_limits<size_t>::max() / n)) {
+        throw Error(BT_SDK_INVALID, "matrix dimension overflow");
+    }
+    if (a.size() != m * k || b.size() != k * n) {
+        throw Error(BT_SDK_INVALID, "matrix shapes/storage mismatch");
+    }
+    std::vector<int64_t> out;
+    matmul(a.data(), static_cast<uint64_t>(a.size()),
+           b.data(), static_cast<uint64_t>(b.size()),
+           out,
+           static_cast<uint64_t>(m),
+           static_cast<uint64_t>(n),
+           static_cast<uint64_t>(k));
+    return out;
+}
+} // namespace bt::sdk
+
+// Backward-compatible global aliases for existing unqualified callers.
+using bt::sdk::DualRail;
+using bt::sdk::pack_matrix_a;
+using bt::sdk::pack_matrix_b;
+using bt::sdk::is_ternary;
+using bt::sdk::can_use_ternary_gemm;
+using bt::sdk::gemm_ternary;
+using bt::sdk::has_gemm_ternary;
+using bt::sdk::matmul;
+#endif // TRIUM_SDK_HPP

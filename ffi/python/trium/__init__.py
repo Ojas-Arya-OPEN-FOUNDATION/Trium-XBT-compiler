@@ -117,6 +117,32 @@ class Context:
     def info(self):return _query(self.lib,'info')
     @property
     def cache_info(self):return _query(self.lib,'cache_info',self.handle)
+    def summary(self):
+        """Return a concise human-readable dict of SDK version, cache status, and available backends."""
+        ver=self.lib._api_version
+        version=f'{ver>>16}.{ver&0xFFFF}'
+        backends=['cpu']
+        cache=None
+        if ver>=0x10001:
+            info=self.info
+            version=f"{info.get('api_major',ver>>16)}.{info.get('api_minor',ver&0xFFFF)}"
+            if info.get('native_compiler_candidate'):backends.append('native')
+            if info.get('vulkan_built'):backends.append('vulkan')
+            ci=self.cache_info
+            cache={
+                'generation':ci.get('generation',0),
+                'source_entries':ci.get('source_entries',0),
+                'source_bytes':ci.get('source_bytes',0),
+                'source_hits':ci.get('source_hits',0),
+                'source_misses':ci.get('source_misses',0),
+            }
+        return {
+            'sdk_version':version,
+            'abi_major':1,
+            'has_gemm_ternary':ver>=0x10003,
+            'backends':backends,
+            'cache':cache,
+        }
     def clear_cache(self):
         if self.lib._api_version<0x10001:raise Error(4,'cache control requires API 1.1')
         _check(self.lib,'cache_clear',self.handle)
@@ -355,3 +381,19 @@ class Module:
     def __del__(self):
         try:self.close()
         except Exception:pass
+
+def open(library=None,**kwargs):
+    """Open a Trium SDK Context (supports `with trium.open(...) as ctx:`)."""
+    return Context(library=library,**kwargs)
+
+def quick_map(source,export,values,backend='cpu',library=None,**kwargs):
+    """One-call compile and map over an int64 sequence using a managed Context."""
+    with Context(library=library,**kwargs) as ctx:
+        with ctx.compile(source) as mod:
+            out,_metrics=mod.map(export,values,backend=backend)
+            return out
+
+def ternary_matmul(a,b,m,k,n,library=None):
+    """One-call C[m,n] = A[m,k] * B[k,n] with automatic ternary bit-sliced routing."""
+    with Context(library=library) as ctx:
+        return ctx.matmul(a,b,m,k,n)

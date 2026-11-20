@@ -778,9 +778,13 @@ public:
         ss << "      %k0_plus_tile = arith.addi %k0, %tileK : index\n";
         ss << "      %k_end = arith.minui %k0_plus_tile, %K : index\n";
         ss << "      scf.for %i0 = %c0 to %M step %tileM {\n";
+        ss << "        %i0_plus_tile = arith.addi %i0, %tileM : index\n";
+        ss << "        %i_end = arith.minui %i0_plus_tile, %M : index\n";
         ss << "        scf.for %j0 = %c0 to %N step %tileN {\n";
-        ss << "          scf.for %i = %i0 to %tileM step %c1 {\n";
-        ss << "            scf.for %j = %j0 to %tileN step %c1 {\n";
+        ss << "          %j0_plus_tile = arith.addi %j0, %tileN : index\n";
+        ss << "          %j_end = arith.minui %j0_plus_tile, %N : index\n";
+        ss << "          scf.for %i = %i0 to %i_end step %c1 {\n";
+        ss << "            scf.for %j = %j0 to %j_end step %c1 {\n";
         ss << "              scf.for %w = %k0 to %k_end step %c1 {\n";
         ss << "                %ap = memref.load %A_P[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
         ss << "                %an = memref.load %A_N[%i, %w] : memref<" << M << "x" << K_words << "xi64>\n";
