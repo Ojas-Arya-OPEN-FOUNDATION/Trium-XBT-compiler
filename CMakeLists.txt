@@ -738,4 +738,7 @@ if(BT_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME FPGA_Arty_A7_Bringup
              COMMAND ${Python3_EXECUTABLE} -m verification.benchmarks.fpga_arty_a7_bringup
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME REBEL6_Comparison_Bench
+             COMMAND ${Python3_EXECUTABLE} -m verification.benchmarks.rebel6_comparison_bench
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
