@@ -721,3 +721,21 @@ if(BT_BUILD_TESTS AND BT_BUILD_SDK)
         set_property(TEST SDK_Relocated_Consumers APPEND PROPERTY ENVIRONMENT "LD_PRELOAD=${BT_ASAN_RUNTIME}:${BT_CXX_ABI_RUNTIME}" "ASAN_OPTIONS=detect_leaks=0")
     endif()
 endif()
+
+if(BT_BUILD_TESTS AND Python3_FOUND)
+    add_test(NAME RTL_Simulation_Diff
+             COMMAND ${Python3_EXECUTABLE} -m verification.rtl_sim.test_rtl_vs_golden
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME RTL_Transistor_DRC_Check
+             COMMAND ${Python3_EXECUTABLE} -m verification.rtl_sim.transistor_cross_check
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME ForgeBench_ML_Hardware
+             COMMAND ${Python3_EXECUTABLE} -m verification.benchmarks.forgebench_xbt
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME EPFL_Combinational_Benchmarks
+             COMMAND ${Python3_EXECUTABLE} -m verification.epfl.epfl_benchmark
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME FPGA_Arty_A7_Bringup
+             COMMAND ${Python3_EXECUTABLE} -m verification.benchmarks.fpga_arty_a7_bringup
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
