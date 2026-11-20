@@ -741,4 +741,10 @@ if(BT_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME REBEL6_Comparison_Bench
              COMMAND ${Python3_EXECUTABLE} -m verification.benchmarks.rebel6_comparison_bench
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME Trium_CPU_Core_Z3_Proof
+             COMMAND ${Python3_EXECUTABLE} verification/verify_cpu_core.py
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME Trium_CPU_Dhrystone_Benchmark
+             COMMAND ${Python3_EXECUTABLE} verification/benchmarks/trium_cpu_benchmark.py
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

@@ -4,6 +4,7 @@ llvmlite==0.50.0
 pyyaml>=6.0
 jsonschema>=4.0
 pyrtl>=0.11
+pycparser>=2.20
 
 
 

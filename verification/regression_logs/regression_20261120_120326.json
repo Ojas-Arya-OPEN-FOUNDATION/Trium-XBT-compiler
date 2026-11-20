@@ -1,0 +1,89 @@
+{
+  "timestamp": "2026-11-20T12:03:22.180299+05:30",
+  "platform": "Darwin arm64",
+  "python_version": "3.9.6",
+  "git_commit": "d43bee9 (main)",
+  "total_vectors": 34412,
+  "total_passed": 34412,
+  "total_failed": 0,
+  "modules": {
+    "BTHA": {
+      "mode": "exhaustive",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "BTFA": {
+      "mode": "exhaustive",
+      "total": 27,
+      "passed": 27,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "NEG": {
+      "mode": "exhaustive",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "CSAMAC": {
+      "mode": "exhaustive",
+      "total": 27,
+      "passed": 27,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "UNPACK243": {
+      "mode": "exhaustive",
+      "total": 256,
+      "passed": 256,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "KSADD": {
+      "mode": "adversarial",
+      "total": 12384,
+      "passed": 12384,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "DOT64": {
+      "mode": "adversarial",
+      "total": 12384,
+      "passed": 12384,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "NEG_WORD": {
+      "mode": "adversarial",
+      "total": 118,
+      "passed": 118,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "BTHA_WORD": {
+      "mode": "adversarial",
+      "total": 3068,
+      "passed": 3068,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "BTFA_WORD": {
+      "mode": "adversarial",
+      "total": 3068,
+      "passed": 3068,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "CSAMAC_WORD": {
+      "mode": "adversarial",
+      "total": 3068,
+      "passed": 3068,
+      "failed": 0,
+      "status": "PASS"
+    }
+  },
+  "elapsed_seconds": 4.595
+}
