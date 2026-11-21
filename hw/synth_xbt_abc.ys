@@ -1,0 +1,87 @@
+# =============================================================================
+# File: hw/synth_xbt_abc.ys
+# Description: Yosys CMOS-2 Standard-Cell Synthesis WITH ABC Boolean Minimization
+#              and Longest Topological Path (ltp) Logic Depth Reporting.
+#
+# Compares Kogge-Stone v1, Kogge-Stone v2, and Area-Optimized Brent-Kung adders
+# alongside BTHA, Planar Dot64, Base-243 Decoder, and Top-Level riscv_xbt_alu.
+#
+# Run:
+#   yosys -s hw/synth_xbt_abc.ys
+# =============================================================================
+
+read_verilog -sv hw/riscv_xbt_extension.sv
+design -save xbt_rtl
+
+# 1. xbt_btha64 (64-Trit Balanced Ternary Half-Adder)
+log "=== ABC CMOS-2: xbt_btha64 ==="
+design -load xbt_rtl
+synth -top xbt_btha64
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 2. xbt_kogge_stone_adder64 (v1 6-Stage Kogge-Stone Adder)
+log "=== ABC CMOS-2: xbt_kogge_stone_adder64 ==="
+design -load xbt_rtl
+synth -top xbt_kogge_stone_adder64
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 3. xbt_kogge_stone_adder64_v2 (v2 Monotone Lattice Kogge-Stone Adder)
+log "=== ABC CMOS-2: xbt_kogge_stone_adder64_v2 ==="
+design -load xbt_rtl
+synth -top xbt_kogge_stone_adder64_v2
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 4. xbt_brent_kung_adder64 (Area-Optimized Brent-Kung Prefix Adder)
+log "=== ABC CMOS-2: xbt_brent_kung_adder64 ==="
+design -load xbt_rtl
+synth -top xbt_brent_kung_adder64
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 5. xbt_planar_dot64 (64-Trit Planar Dot Product Unit)
+log "=== ABC CMOS-2: xbt_planar_dot64 ==="
+design -load xbt_rtl
+synth -top xbt_planar_dot64
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 6. xbt_base243_decoder (Division-Free Base-243 Unpacker)
+log "=== ABC CMOS-2: xbt_base243_decoder ==="
+design -load xbt_rtl
+synth -top xbt_base243_decoder
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 7. riscv_xbt_alu (Speed-Optimized Kogge-Stone v2 Configuration)
+log "=== ABC CMOS-2: riscv_xbt_alu (Kogge-Stone) ==="
+design -load xbt_rtl
+synth -top riscv_xbt_alu -flatten
+abc -g cmos2
+opt_clean -purge
+stat
+ltp
+
+# 8. riscv_xbt_alu (Area-Optimized Brent-Kung Configuration)
+log "=== ABC CMOS-2: riscv_xbt_alu (Brent-Kung) ==="
+design -load xbt_rtl
+chparam -set USE_BRENT_KUNG 1 riscv_xbt_alu
+synth -top riscv_xbt_alu -flatten
+abc -g cmos2
+opt_clean -purge
+stat
+ltp

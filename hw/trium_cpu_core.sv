@@ -296,7 +296,10 @@ module trium_cpu_core (
 
     // IF/ID Pipeline Register
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n || flush_id) begin
+        if (!rst_n) begin
+            id_pc   <= 32'd0;
+            id_inst <= 32'h0000_0013; // NOP (addi x0, x0, 0)
+        end else if (flush_id) begin
             id_pc   <= 32'd0;
             id_inst <= 32'h0000_0013; // NOP (addi x0, x0, 0)
         end else if (!stall_id) begin
@@ -404,7 +407,26 @@ module trium_cpu_core (
 
     // ID/EX Pipeline Register
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n || flush_ex) begin
+        if (!rst_n) begin
+            ex_pc          <= 32'd0;
+            ex_rs1         <= 5'd0;
+            ex_rs2         <= 5'd0;
+            ex_rd          <= 5'd0;
+            ex_rdata1_p    <= 64'd0;
+            ex_rdata1_n    <= 64'd0;
+            ex_rdata2_p    <= 64'd0;
+            ex_rdata2_n    <= 64'd0;
+            ex_imm         <= 32'd0;
+            ex_alu_op      <= 3'd0;
+            ex_mem_read    <= 1'b0;
+            ex_mem_write   <= 1'b0;
+            ex_reg_write   <= 1'b0;
+            ex_is_branch   <= 1'b0;
+            ex_is_jump     <= 1'b0;
+            ex_use_imm     <= 1'b0;
+            ex_branch_type <= 3'd0;
+            ex_is_xbt_dot  <= 1'b0;
+        end else if (flush_ex) begin
             ex_pc          <= 32'd0;
             ex_rs1         <= 5'd0;
             ex_rs2         <= 5'd0;

@@ -448,3 +448,75 @@ def xbt_systolic_btfa_unit(a_p: int, a_n: int, b_p: int, b_n: int, c_p: int, c_n
     carry_n = u64((c1_n | c2_n) & ~(c1_p | c2_p))
 
     return sum_p, sum_n, carry_p, carry_n
+
+
+def xbt_brent_kung_adder64(
+    a_p: int, a_n: int, b_p: int, b_n: int, cin_p: int = 0, cin_n: int = 0
+) -> Tuple[int, int, int, int]:
+    """
+    Bit-exact Python golden model of hw/riscv_xbt_extension.sv::xbt_brent_kung_adder64.
+    120-node Brent-Kung parallel-prefix tree over Sigma-7 monotone carry-transfer semigroup.
+    """
+    a_p, a_n, b_p, b_n = u64(a_p), u64(a_n), u64(b_p), u64(b_n)
+    cin_p, cin_n = cin_p & 1, cin_n & 1
+    d_p, d_n, c1_p, c1_n = xbt_btha64(a_p, a_n, b_p, b_n)
+
+    d0_p, d0_n = d_p & 1, d_n & 1
+    bit0_cp = d0_p & cin_p
+    bit0_cn = d0_n & cin_n
+    bit0_sp = ((d0_p ^ cin_p) & (~(d0_n | cin_n) & 1)) | bit0_cn
+    bit0_sn = ((d0_n ^ cin_n) & (~(d0_p | cin_p) & 1)) | bit0_cp
+
+    s1_p = (d_p & ~1) | bit0_sp
+    s1_n = (d_n & ~1) | bit0_sn
+
+    f0_p_w = (c1_p & ~1) | (((c1_p & 1) | bit0_cp) & (~((c1_n & 1) | bit0_cn) & 1))
+    f0_n_w = (c1_n & ~1) | (((c1_n & 1) | bit0_cn) & (~((c1_p & 1) | bit0_cp) & 1))
+    fp_p_w = u64((a_p | b_p) & ~(a_n | b_n))
+    fm_n_w = u64((a_n | b_n) & ~(a_p | b_p))
+
+    fm_p = [0] * 64
+    fm_n = [(fm_n_w >> i) & 1 for i in range(64)]
+    f0_p = [(f0_p_w >> i) & 1 for i in range(64)]
+    f0_n = [(f0_n_w >> i) & 1 for i in range(64)]
+    fp_p = [(fp_p_w >> i) & 1 for i in range(64)]
+    fp_n = [0] * 64
+
+    def compose_at(idx: int, low: int) -> None:
+        h_fmp, h_fmn = fm_p[idx], fm_n[idx]
+        h_f0p, h_f0n = f0_p[idx], f0_n[idx]
+        h_fpp, h_fpn = fp_p[idx], fp_n[idx]
+        l_fmp, l_fmn = fm_p[low], fm_n[low]
+        l_f0p, l_f0n = f0_p[low], f0_n[low]
+        l_fpp, l_fpn = fp_p[low], fp_n[low]
+
+        fm_p[idx] = h_fmp | (h_f0p & (1 - l_fmn)) | (h_fpp & l_fmp)
+        fm_n[idx] = h_fpn | (h_f0n & (1 - l_fmp)) | (h_fmn & l_fmn)
+        f0_p[idx] = h_fmp | (h_f0p & (1 - l_f0n)) | (h_fpp & l_f0p)
+        f0_n[idx] = h_fpn | (h_f0n & (1 - l_f0p)) | (h_fmn & l_f0n)
+        fp_p[idx] = h_fmp | (h_f0p & (1 - l_fpn)) | (h_fpp & l_fpp)
+        fp_n[idx] = h_fpn | (h_f0n & (1 - l_fpp)) | (h_fmn & l_fpn)
+
+    # Up-sweep (63 nodes)
+    for k in range(6):
+        step = 1 << (k + 1)
+        half = 1 << k
+        for idx in range(step - 1, 64, step):
+            compose_at(idx, idx - half)
+
+    # Down-sweep (57 nodes)
+    for k in range(4, -1, -1):
+        step = 1 << (k + 1)
+        half = 1 << k
+        for idx in range(step + half - 1, 64, step):
+            compose_at(idx, idx - half)
+
+    cout_p = f0_p[63]
+    cout_n = f0_n[63]
+    f0p_mask = sum(f0_p[i] << i for i in range(64))
+    f0n_mask = sum(f0_n[i] << i for i in range(64))
+    c_in_p = u64(f0p_mask << 1)
+    c_in_n = u64(f0n_mask << 1)
+    sum_p = u64(((s1_p ^ c_in_p) & ~(s1_n | c_in_n)) | (s1_n & c_in_n))
+    sum_n = u64(((s1_n ^ c_in_n) & ~(s1_p | c_in_p)) | (s1_p & c_in_p))
+    return sum_p, sum_n, cout_p, cout_n

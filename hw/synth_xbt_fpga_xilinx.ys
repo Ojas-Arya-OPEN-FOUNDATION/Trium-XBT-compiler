@@ -1,0 +1,57 @@
+# =============================================================================
+# File: hw/synth_xbt_fpga_xilinx.ys
+# Description: Yosys Xilinx 7-Series (Artix-7 / Arty A7 xc7) FPGA LUT & FF
+#              Utilization Benchmark Script for Trium-XBT Hardware Modules.
+#
+# Reports exact LUT1..LUT6, FDRE, CARRY4, and MUXF7/F8 counts for each block.
+#
+# Run:
+#   yosys -s hw/synth_xbt_fpga_xilinx.ys
+# =============================================================================
+
+read_verilog -sv hw/riscv_xbt_extension.sv
+read_verilog -sv hw/trium_cpu_core.sv
+design -save xbt_fpga_rtl
+
+# 1. xbt_btha64
+log "=== FPGA xc7 LUT/FF: xbt_btha64 ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top xbt_btha64
+stat
+
+# 2. xbt_kogge_stone_adder64_v2
+log "=== FPGA xc7 LUT/FF: xbt_kogge_stone_adder64_v2 ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top xbt_kogge_stone_adder64_v2
+stat
+
+# 3. xbt_brent_kung_adder64
+log "=== FPGA xc7 LUT/FF: xbt_brent_kung_adder64 ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top xbt_brent_kung_adder64
+stat
+
+# 4. xbt_planar_dot64
+log "=== FPGA xc7 LUT/FF: xbt_planar_dot64 ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top xbt_planar_dot64
+stat
+
+# 5. xbt_base243_decoder
+log "=== FPGA xc7 LUT/FF: xbt_base243_decoder ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top xbt_base243_decoder
+stat
+
+# 6. riscv_xbt_alu (Brent-Kung Area-Optimized)
+log "=== FPGA xc7 LUT/FF: riscv_xbt_alu (Brent-Kung) ==="
+design -load xbt_fpga_rtl
+chparam -set USE_BRENT_KUNG 1 riscv_xbt_alu
+synth_xilinx -family xc7 -top riscv_xbt_alu
+stat
+
+# 7. trium_cpu_core (5-Stage Pipelined Core)
+log "=== FPGA xc7 LUT/FF: trium_cpu_core ==="
+design -load xbt_fpga_rtl
+synth_xilinx -family xc7 -top trium_cpu_core
+stat

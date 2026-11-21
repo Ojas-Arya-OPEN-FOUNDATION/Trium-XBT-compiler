@@ -1,47 +1,129 @@
 {
   "schema_version": 1,
-  "timestamp_utc": "2026-11-21T06:53:10.114221+00:00",
+  "timestamp_utc": "2026-11-21T08:55:43.310169+00:00",
   "platform": "Darwin arm64",
   "python": "3.9.6",
   "tools_detected": {
     "verilator": true,
-    "iverilog": false,
+    "iverilog": true,
     "yosys": true,
     "g++": true
   },
   "suites": {
     "golden_model_v1_v2": {
       "status": "pass",
-      "checks": 14331,
+      "checks": 16331,
       "failures": 0,
-      "elapsed_ms": 656.15,
-      "dot64_10k_ms": 473.57,
+      "elapsed_ms": 951.62,
+      "dot64_10k_ms": 453.57,
       "dot64_checksum": 39
     },
     "external_simulator_pipe": {
       "status": "pass",
-      "elapsed_ms": 1430.53,
+      "elapsed_ms": 1566.61,
       "result": "2/2"
     },
     "rtl_testbench": {
       "status": "pass",
       "tool": "verilator",
       "returncode": 0,
-      "elapsed_ms": 9771.51,
-      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 276 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:496: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01\n- Verilator: $finish at 519ns; walltime 0.000 s; speed 2.019 ms/s\n- Verilator: cpu 0.000 s on 1 threads; allocated 2 MB\n",
+      "elapsed_ms": 10376.27,
+      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 280 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:548: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.055 devel\n- Verilator: $finish at 523ns; walltime 0.001 s; speed 826.224 us/s\n- Verilator: cpu 0.001 s on 1 threads; allocated 2 MB\n",
       "stderr_tail": ""
     },
     "yosys_synthesis": {
       "status": "pass",
       "tool": "yosys",
-      "elapsed_ms": 5986.34,
+      "elapsed_ms": 3538.57,
       "module_cell_counts": {
         "xbt_btha64": 1664,
         "xbt_kogge_stone_adder64": 19192,
         "xbt_kogge_stone_adder64_v2": 16128,
+        "xbt_brent_kung_adder64": 5526,
         "xbt_planar_dot64": 2738,
         "xbt_base243_decoder": 2033,
         "riscv_xbt_alu": 14635
+      }
+    },
+    "yosys_abc_synthesis": {
+      "status": "pass",
+      "tool": "yosys+abc",
+      "elapsed_ms": 20539.17,
+      "modules": {
+        "xbt_btha64": {
+          "cells": 768,
+          "logic_depth_ltp": 5
+        },
+        "xbt_kogge_stone_adder64": {
+          "cells": 13150,
+          "logic_depth_ltp": 28
+        },
+        "xbt_kogge_stone_adder64_v2": {
+          "cells": 9405,
+          "logic_depth_ltp": 28
+        },
+        "xbt_brent_kung_adder64": {
+          "cells": 4051,
+          "logic_depth_ltp": 45
+        },
+        "xbt_planar_dot64": {
+          "cells": 2197,
+          "logic_depth_ltp": 58
+        },
+        "xbt_base243_decoder": {
+          "cells": 726,
+          "logic_depth_ltp": 30
+        },
+        "riscv_xbt_alu (Kogge-Stone)": {
+          "cells": 19979,
+          "logic_depth_ltp": 134
+        },
+        "riscv_xbt_alu (Brent-Kung)": {
+          "cells": 15327,
+          "logic_depth_ltp": 134
+        }
+      }
+    },
+    "yosys_fpga_xilinx": {
+      "status": "pass",
+      "tool": "yosys_xilinx",
+      "elapsed_ms": 70264.66,
+      "modules": {
+        "xbt_btha64": {
+          "cells": 768,
+          "luts": 512,
+          "ffs": 0
+        },
+        "xbt_kogge_stone_adder64_v2": {
+          "cells": 3571,
+          "luts": 3183,
+          "ffs": 0
+        },
+        "xbt_brent_kung_adder64": {
+          "cells": 1509,
+          "luts": 1121,
+          "ffs": 0
+        },
+        "xbt_planar_dot64": {
+          "cells": 662,
+          "luts": 678,
+          "ffs": 0
+        },
+        "xbt_base243_decoder": {
+          "cells": 212,
+          "luts": 124,
+          "ffs": 0
+        },
+        "riscv_xbt_alu (Brent-Kung)": {
+          "cells": 7202,
+          "luts": 5622,
+          "ffs": 0
+        },
+        "trium_cpu_core": {
+          "cells": 14859,
+          "luts": 9061,
+          "ffs": 5119
+        }
       }
     }
   },

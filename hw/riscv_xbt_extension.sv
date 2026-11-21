@@ -214,6 +214,124 @@ module xbt_kogge_stone_adder64_v2 (
 endmodule
 
 // -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// 2c. 64-Trit Area-Optimized Brent-Kung Parallel-Prefix Adder (Sigma-7 Lattice)
+//     Uses the exact same associative monotone carry-transfer semigroup Sigma-7
+//     as xbt_kogge_stone_adder64_v2, but with a Brent-Kung up-sweep / down-sweep
+//     tree: 120 prefix compose nodes instead of Kogge-Stone's 321 (-62.6% nodes).
+// -----------------------------------------------------------------------------
+module xbt_brent_kung_adder64 (
+    input  logic [63:0] a_p,
+    input  logic [63:0] a_n,
+    input  logic [63:0] b_p,
+    input  logic [63:0] b_n,
+    input  logic        cin_p,
+    input  logic        cin_n,
+    output logic [63:0] sum_p,
+    output logic [63:0] sum_n,
+    output logic        cout_p,
+    output logic        cout_n
+);
+    logic [63:0] d_p, d_n, c1_p, c1_n;
+    xbt_btha64 u_btha_bk (
+        .a_p(a_p), .a_n(a_n), .b_p(b_p), .b_n(b_n),
+        .sum_p(d_p), .sum_n(d_n), .carry_p(c1_p), .carry_n(c1_n)
+    );
+
+    // 12 pipeline-free combinational prefix layers:
+    //   Layer 0     : Initial Sigma-7 transfer functions (bit 0 includes cin)
+    //   Layers 1..6 : Brent-Kung up-sweep reduction (63 compose nodes)
+    //   Layers 7..11: Brent-Kung down-sweep distribution (57 compose nodes)
+    //   Total       : 120 compose nodes vs. Kogge-Stone's 321 (-62.6%)
+    logic [63:0] fm_p [0:11], fm_n [0:11];
+    logic [63:0] f0_p [0:11], f0_n [0:11];
+    logic [63:0] fp_p [0:11], fp_n [0:11];
+    logic [63:0] s1_p, s1_n;
+
+    logic bit0_sp, bit0_sn, bit0_cp, bit0_cn;
+    always_comb begin
+        bit0_cp = d_p[0] & cin_p;
+        bit0_cn = d_n[0] & cin_n;
+        bit0_sp = ((d_p[0] ^ cin_p) & ~(d_n[0] | cin_n)) | bit0_cn;
+        bit0_sn = ((d_n[0] ^ cin_n) & ~(d_p[0] | cin_p)) | bit0_cp;
+
+        s1_p = {d_p[63:1], bit0_sp};
+        s1_n = {d_n[63:1], bit0_sn};
+    end
+
+    assign f0_p[0] = {c1_p[63:1], (c1_p[0] | bit0_cp) & ~(c1_n[0] | bit0_cn)};
+    assign f0_n[0] = {c1_n[63:1], (c1_n[0] | bit0_cn) & ~(c1_p[0] | bit0_cp)};
+    assign fp_p[0] = (a_p | b_p) & ~(a_n | b_n);
+    assign fp_n[0] = 64'd0;
+    assign fm_p[0] = 64'd0;
+    assign fm_n[0] = (a_n | b_n) & ~(a_p | b_p);
+
+    genvar k, i;
+    generate
+        // Up-sweep reduction tree (k = 0..5 -> layers 1..6)
+        for (k = 0; k < 6; k = k + 1) begin : gen_bk_up
+            localparam int STEP = 1 << (k + 1);
+            localparam int HALF = 1 << k;
+            for (i = 0; i < 64; i = i + 1) begin : gen_up_bit
+                if (((i + 1) % STEP) == 0) begin : gen_compose
+                    assign fm_p[k+1][i] = fm_p[k][i] | (f0_p[k][i] & ~fm_n[k][i-HALF]) | (fp_p[k][i] & fm_p[k][i-HALF]);
+                    assign fm_n[k+1][i] = fp_n[k][i] | (f0_n[k][i] & ~fm_p[k][i-HALF]) | (fm_n[k][i] & fm_n[k][i-HALF]);
+                    assign f0_p[k+1][i] = fm_p[k][i] | (f0_p[k][i] & ~f0_n[k][i-HALF]) | (fp_p[k][i] & f0_p[k][i-HALF]);
+                    assign f0_n[k+1][i] = fp_n[k][i] | (f0_n[k][i] & ~f0_p[k][i-HALF]) | (fm_n[k][i] & f0_n[k][i-HALF]);
+                    assign fp_p[k+1][i] = fm_p[k][i] | (f0_p[k][i] & ~fp_n[k][i-HALF]) | (fp_p[k][i] & fp_p[k][i-HALF]);
+                    assign fp_n[k+1][i] = fp_n[k][i] | (f0_n[k][i] & ~fp_p[k][i-HALF]) | (fm_n[k][i] & fp_n[k][i-HALF]);
+                end else begin : gen_pass
+                    assign fm_p[k+1][i] = fm_p[k][i];
+                    assign fm_n[k+1][i] = fm_n[k][i];
+                    assign f0_p[k+1][i] = f0_p[k][i];
+                    assign f0_n[k+1][i] = f0_n[k][i];
+                    assign fp_p[k+1][i] = fp_p[k][i];
+                    assign fp_n[k+1][i] = fp_n[k][i];
+                end
+            end
+        end
+
+        // Down-sweep distribution tree (d = 0..4, k = 4..0 -> layers 7..11)
+        for (k = 0; k < 5; k = k + 1) begin : gen_bk_dn
+            localparam int LEVEL = 4 - k;
+            localparam int STEP  = 1 << (LEVEL + 1);
+            localparam int HALF  = 1 << LEVEL;
+            localparam int SRC   = 6 + k;
+            localparam int DST   = 7 + k;
+            for (i = 0; i < 64; i = i + 1) begin : gen_dn_bit
+                if ((i >= (STEP + HALF - 1)) && (((i + 1 - HALF) % STEP) == 0)) begin : gen_compose
+                    assign fm_p[DST][i] = fm_p[SRC][i] | (f0_p[SRC][i] & ~fm_n[SRC][i-HALF]) | (fp_p[SRC][i] & fm_p[SRC][i-HALF]);
+                    assign fm_n[DST][i] = fp_n[SRC][i] | (f0_n[SRC][i] & ~fm_p[SRC][i-HALF]) | (fm_n[SRC][i] & fm_n[SRC][i-HALF]);
+                    assign f0_p[DST][i] = fm_p[SRC][i] | (f0_p[SRC][i] & ~f0_n[SRC][i-HALF]) | (fp_p[SRC][i] & f0_p[SRC][i-HALF]);
+                    assign f0_n[DST][i] = fp_n[SRC][i] | (f0_n[SRC][i] & ~f0_p[SRC][i-HALF]) | (fm_n[SRC][i] & f0_n[SRC][i-HALF]);
+                    assign fp_p[DST][i] = fm_p[SRC][i] | (f0_p[SRC][i] & ~fp_n[SRC][i-HALF]) | (fp_p[SRC][i] & fp_p[SRC][i-HALF]);
+                    assign fp_n[DST][i] = fp_n[SRC][i] | (f0_n[SRC][i] & ~fp_p[SRC][i-HALF]) | (fm_n[SRC][i] & fp_n[SRC][i-HALF]);
+                end else begin : gen_pass
+                    assign fm_p[DST][i] = fm_p[SRC][i];
+                    assign fm_n[DST][i] = fm_n[SRC][i];
+                    assign f0_p[DST][i] = f0_p[SRC][i];
+                    assign f0_n[DST][i] = f0_n[SRC][i];
+                    assign fp_p[DST][i] = fp_p[SRC][i];
+                    assign fp_n[DST][i] = fp_n[SRC][i];
+                end
+            end
+        end
+    endgenerate
+
+    logic [63:0] c_in_vec_p, c_in_vec_n;
+    always_comb begin
+        cout_p = f0_p[11][63];
+        cout_n = f0_n[11][63];
+
+        c_in_vec_p = f0_p[11] << 1;
+        c_in_vec_n = f0_n[11] << 1;
+        sum_p = ((s1_p ^ c_in_vec_p) & ~(s1_n | c_in_vec_n)) | (s1_n & c_in_vec_n);
+        sum_n = ((s1_n ^ c_in_vec_n) & ~(s1_p | c_in_vec_p)) | (s1_p & c_in_vec_p);
+    end
+endmodule
+
+// -----------------------------------------------------------------------------
 // 3. 64-Trit Dual-Rail Planar Dot Product Unit
 //    Computes prod_p = (a_p & b_p) | (a_n & b_n),
 //             prod_n = (a_p & b_n) | (a_n & b_p),
@@ -505,7 +623,9 @@ endmodule
 //        7'h07 (SHL3)         : rd = rs1 << imm12[4:0] (valid_out=0 on overflow)
 //      3'b111 (XBT.LI5)       : I-type 5-trit constant at chunk offset 5*imm12[10:8]
 // -----------------------------------------------------------------------------
-module riscv_xbt_alu (
+module riscv_xbt_alu #(
+    parameter bit USE_BRENT_KUNG = 1'b0
+) (
     input  logic [6:0]         opcode,
     input  logic [2:0]         funct3,
     input  logic [6:0]         funct7,
@@ -567,16 +687,35 @@ module riscv_xbt_alu (
         .carry_n (btfa_c2_n)
     );
 
-    xbt_kogge_stone_adder64 u_ksadd (
-        .a_p    (rs1_p),
-        .a_n    (rs1_n),
-        .b_p    (rs2_p),
-        .b_n    (rs2_n),
-        .sum_p  (ks_sum_p),
-        .sum_n  (ks_sum_n),
-        .cout_p (ks_cout_p),
-        .cout_n (ks_cout_n)
-    );
+    generate
+        if (USE_BRENT_KUNG) begin : gen_adder_bk
+            xbt_brent_kung_adder64 u_ksadd (
+                .a_p    (rs1_p),
+                .a_n    (rs1_n),
+                .b_p    (rs2_p),
+                .b_n    (rs2_n),
+                .cin_p  (1'b0),
+                .cin_n  (1'b0),
+                .sum_p  (ks_sum_p),
+                .sum_n  (ks_sum_n),
+                .cout_p (ks_cout_p),
+                .cout_n (ks_cout_n)
+            );
+        end else begin : gen_adder_ks
+            xbt_kogge_stone_adder64_v2 u_ksadd (
+                .a_p    (rs1_p),
+                .a_n    (rs1_n),
+                .b_p    (rs2_p),
+                .b_n    (rs2_n),
+                .cin_p  (1'b0),
+                .cin_n  (1'b0),
+                .sum_p  (ks_sum_p),
+                .sum_n  (ks_sum_n),
+                .cout_p (ks_cout_p),
+                .cout_n (ks_cout_n)
+            );
+        end
+    endgenerate
 
     xbt_planar_dot64 u_dot64 (
         .a_p     (rs1_p),

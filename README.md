@@ -305,18 +305,54 @@ iverilog -g2012 -o tb_xbt hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv && vv
 
 # Yosys CMOS-2 standard-cell synthesis & exact gate/cell statistics (hw/cmos2_map.v)
 yosys -s hw/synth_xbt_yosys.ys
+
+# Yosys ABC CMOS-2 boolean minimization & longest topological path (ltp) logic depth
+yosys -s hw/synth_xbt_abc.ys
+
+# Yosys Xilinx 7-Series (Artix-7 xc7) FPGA LUT & Flip-Flop synthesis
+yosys -s hw/synth_xbt_fpga_xilinx.ys
 ```
 
-#### Synthesized CMOS-2 Standard-Cell Gate Counts (Yosys 0.71, unminimized `-noabc` + `hw/cmos2_map.v`)
+#### 1. Synthesized CMOS-2 Standard-Cell Gate Counts (Yosys 0.71, unminimized `-noabc` + `hw/cmos2_map.v`)
 
 | RTL Module | CMOS-2 Cell Count | Description |
 | :--- | :--- | :--- |
 | `xbt_btha64` | **1,664 cells** | 64-trit Dual-Rail Balanced Ternary Half-Adder |
 | `xbt_kogge_stone_adder64` | **19,192 cells** | 64-trit 6-Stage Parallel-Prefix Adder (v1) |
 | `xbt_kogge_stone_adder64_v2` | **16,128 cells** | 64-trit Monotone Lattice Prefix Adder (v2, **16.0% smaller**) |
+| `xbt_brent_kung_adder64` | **5,526 cells** | 64-trit Area-Optimized Brent-Kung Prefix Adder (**65.7% smaller** than KS-v2) |
 | `xbt_planar_dot64` | **2,738 cells** | 64-trit Planar Dot Product & Hamming Accumulator |
 | `xbt_base243_decoder` | **2,033 cells** | 5-trit Base-243 Compressed Stream Decoder |
 | `riscv_xbt_alu` | **14,635 cells** (local) / **43,590 cells** (hierarchical) | Complete RISC-V Custom-0 (0x0B) Execution Unit |
+
+#### 2. ABC CMOS-2 Synthesis & Logic Depth (`hw/synth_xbt_abc.ys`, `abc -g cmos2`)
+
+Evaluates post-minimization standard-cell counts and longest topological path (`ltp`) gate depths:
+
+| RTL Module | ABC Minimized CMOS-2 Gates | Logic Depth (`ltp`) | Architectural Characteristics |
+| :--- | ---: | ---: | :--- |
+| `xbt_btha64` | **768 gates** | **5 gates** | 0-ripple dual-rail half-adder, single logic stage |
+| `xbt_kogge_stone_adder64` (v1) | **13,150 gates** | **28 gates** | 6-stage Kogge-Stone prefix tree (321 prefix nodes) |
+| `xbt_kogge_stone_adder64_v2` (v2) | **9,405 gates** | **28 gates** | Monotone lattice semigroup reduction (−28.5% gates vs v1) |
+| `xbt_brent_kung_adder64` | **4,051 gates** | **45 gates** | Area-optimized 120 prefix nodes (**−56.9% gates** vs KS-v2, **−69.2%** vs KS-v1) |
+| `xbt_planar_dot64` | **2,197 gates** | **58 gates** | 64-trit bit-sliced planar dot product |
+| `xbt_base243_decoder` | **726 gates** | **30 gates** | Division-free reciprocal 5-trit base-243 unpacker |
+| `riscv_xbt_alu (Kogge-Stone)` | **19,979 gates** | **134 gates** | Maximum-frequency execution unit (`USE_BRENT_KUNG = 0`) |
+| `riscv_xbt_alu (Brent-Kung)` | **15,327 gates** | **134 gates** | Area-optimized execution unit (**−23.3% ALU size savings**, `USE_BRENT_KUNG = 1`) |
+
+#### 3. Xilinx 7-Series FPGA (Artix-7 xc7 / Arty A7-100T) Utilization (`hw/synth_xbt_fpga_xilinx.ys`)
+
+Synthesized with Yosys `synth_xilinx -family xc7` and mapped directly to 6-input LUTs and D-flip-flops (timing/pinout constraints defined in `hw/arty_a7_100mhz.xdc`):
+
+| RTL Module | 7-Series LUTs | Flip-Flops (FFs) | Total Primitives | FPGA Resource Profile |
+| :--- | ---: | ---: | ---: | :--- |
+| `xbt_btha64` | **512 LUTs** | 0 | 768 cells | 128 LUT2 + 128 LUT4 (pure combinational half-adder) |
+| `xbt_kogge_stone_adder64_v2` | **3,183 LUTs** | 0 | 3,571 cells | 630 LUT2 + 486 LUT3 + 875 LUT4 + 744 LUT5 + 448 LUT6 |
+| `xbt_brent_kung_adder64` | **1,121 LUTs** | 0 | 1,509 cells | **64.8% fewer LUTs** than KS-v2 (278 LUT2 + 68 LUT3 + 427 LUT4 + 208 LUT5 + 140 LUT6) |
+| `xbt_planar_dot64` | **678 LUTs** | 0 | 662 cells | 23 LUT2 + 18 LUT3 + 142 LUT4 + 68 LUT5 + 88 LUT6 + 2 CARRY4 + 1 MUXF7 |
+| `xbt_base243_decoder` | **124 LUTs** | 0 | 212 cells | 32 LUT2 + 14 LUT3 + 9 LUT4 + 5 LUT5 + 2 LUT6 + 8 CARRY4 + 5 DSP48E1 |
+| `riscv_xbt_alu (Brent-Kung)` | **5,622 LUTs** | 0 | 7,202 cells | Area-optimized execution unit (697 LUT2 + 759 LUT3 + 1322 LUT4 + 1858 LUT5 + 986 LUT6) |
+| `trium_cpu_core` | **9,061 LUTs** | **5,119 FFs** | 14,859 cells | Complete 5-stage core with 32x128 register file, branch & forwarding units, 90 CARRY4 |
 
 *Note: When `verilator`, `iverilog`, or `yosys` are absent on a machine, `tools/run_hardware_benchmarks.py` records those stages explicitly as `skipped` (`tool_not_installed`) rather than substituting analytical estimates. Pass `--require-eda` in CI to enforce EDA availability.*
 

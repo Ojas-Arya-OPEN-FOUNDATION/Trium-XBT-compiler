@@ -38,6 +38,7 @@ from verification.golden_model.xbt_golden import (  # noqa: E402
     riscv_xbt_alu,
     xbt_base243_decoder,
     xbt_kogge_stone_adder64,
+    xbt_brent_kung_adder64,
     xbt_kogge_stone_adder64_v2,
     xbt_planar_dot64,
 )
@@ -67,8 +68,11 @@ def run_golden_model_suite() -> Dict[str, Any]:
         bp, bn = _rand_word(rng)
         s1p, s1n, c1p, c1n = xbt_kogge_stone_adder64(ap, an, bp, bn)
         s2p, s2n, c2p, c2n = xbt_kogge_stone_adder64_v2(ap, an, bp, bn)
-        checks += 1
+        sbkp, sbkn, cbkp, cbkn = xbt_brent_kung_adder64(ap, an, bp, bn)
+        checks += 2
         if (s1p, s1n, c1p, c1n) != (s2p, s2n, c2p, c2n) or (s2p & s2n) != 0:
+            failures += 1
+        if (sbkp, sbkn, cbkp, cbkn) != (s2p, s2n, c2p, c2n) or (sbkp & sbkn) != 0:
             failures += 1
 
     # 2. CSAMAC with distinct rd != rs1 (all 27 1-trit triples)
@@ -249,6 +253,124 @@ def run_yosys_synthesis() -> Dict[str, Any]:
     }
 
 
+
+
+def run_yosys_abc_synthesis() -> Dict[str, Any]:
+    yosys = shutil.which("yosys")
+    script = REPO_ROOT / "hw" / "synth_xbt_abc.ys"
+    if not yosys:
+        return {
+            "status": "skipped",
+            "reason": "tool_not_installed",
+            "missing_tools": ["yosys"],
+        }
+
+    t0 = time.perf_counter()
+    r = subprocess.run(
+        [yosys, "-s", str(script)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1e3
+    if r.returncode != 0:
+        return {
+            "status": "fail",
+            "tool": "yosys+abc",
+            "returncode": r.returncode,
+            "elapsed_ms": round(elapsed_ms, 2),
+            "stderr_tail": r.stderr[-2000:],
+        }
+
+    modules: Dict[str, Dict[str, Any]] = {}
+    sections = re.findall(r"=== ABC CMOS-2:\s+(.+?)\s+===(.*?)(?==== ABC CMOS-2:|\Z)", r.stdout, re.DOTALL)
+    for name, body in sections:
+        name = name.strip()
+        stat_blocks = list(re.finditer(r"Printing statistics\.(.*?)(\n\s*\n\s*\n|\Z)", body, re.DOTALL))
+        cells = 0
+        if stat_blocks:
+            last_stat = stat_blocks[-1].group(1)
+            target_text = last_stat.split("=== design hierarchy ===")[-1] if "=== design hierarchy ===" in last_stat else last_stat
+            for line in target_text.splitlines():
+                m_c = re.search(r"^\s*(\d+)\s+cells", line) or re.search(r"Number of cells:\s+(\d+)", line)
+                if m_c:
+                    cells = int(m_c.group(1))
+
+        ltp_matches = re.findall(r"Longest topological path in [^\s]+ \(length=(\d+)\):", body)
+        ltp = int(ltp_matches[0]) if ltp_matches else 0
+        modules[name] = {"cells": cells, "logic_depth_ltp": ltp}
+
+    return {
+        "status": "pass",
+        "tool": "yosys+abc",
+        "elapsed_ms": round(elapsed_ms, 2),
+        "modules": modules,
+    }
+
+
+def run_yosys_fpga_xilinx() -> Dict[str, Any]:
+    yosys = shutil.which("yosys")
+    script = REPO_ROOT / "hw" / "synth_xbt_fpga_xilinx.ys"
+    if not yosys:
+        return {
+            "status": "skipped",
+            "reason": "tool_not_installed",
+            "missing_tools": ["yosys"],
+        }
+
+    t0 = time.perf_counter()
+    r = subprocess.run(
+        [yosys, "-s", str(script)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1e3
+    if r.returncode != 0:
+        return {
+            "status": "fail",
+            "tool": "yosys_xilinx",
+            "returncode": r.returncode,
+            "elapsed_ms": round(elapsed_ms, 2),
+            "stderr_tail": r.stderr[-2000:],
+        }
+
+    modules: Dict[str, Dict[str, int]] = {}
+    sections = re.findall(r"=== FPGA xc7 LUT/FF:\s+(.+?)\s+===(.*?)(?==== FPGA xc7 LUT/FF:|\Z)", r.stdout, re.DOTALL)
+    for name, body in sections:
+        name = name.strip()
+        stat_blocks = list(re.finditer(r"Printing statistics\.(.*?)(\n\s*\n\s*\n|\Z)", body, re.DOTALL))
+        if not stat_blocks:
+            continue
+        last_stat = stat_blocks[-1].group(1)
+        target_text = last_stat.split("=== design hierarchy ===")[-1] if "=== design hierarchy ===" in last_stat else last_stat
+
+        cells = 0
+        luts = 0
+        ffs = 0
+        for line in target_text.splitlines():
+            m_c = re.search(r"^\s*(\d+)\s+cells", line) or re.search(r"Number of cells:\s+(\d+)", line)
+            if m_c:
+                cells = int(m_c.group(1))
+            m_lut = re.search(r"^\s*(\d+)\s+LUT[1-6]", line)
+            if m_lut:
+                luts += int(m_lut.group(1))
+            m_ff = re.search(r"^\s*(\d+)\s+FD[A-Z0-9]+", line)
+            if m_ff:
+                ffs += int(m_ff.group(1))
+
+        modules[name] = {"cells": cells, "luts": luts, "ffs": ffs}
+
+    return {
+        "status": "pass",
+        "tool": "yosys_xilinx",
+        "elapsed_ms": round(elapsed_ms, 2),
+        "modules": modules,
+    }
+
+
 def run_external_simulator_check() -> Dict[str, Any]:
     cxx = shutil.which("g++") or shutil.which("clang++")
     if not cxx:
@@ -333,6 +455,8 @@ def main() -> int:
             "external_simulator_pipe": run_external_simulator_check(),
             "rtl_testbench": run_rtl_testbench(),
             "yosys_synthesis": run_yosys_synthesis(),
+            "yosys_abc_synthesis": run_yosys_abc_synthesis(),
+            "yosys_fpga_xilinx": run_yosys_fpga_xilinx(),
         },
     }
 

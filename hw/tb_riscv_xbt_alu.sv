@@ -57,6 +57,8 @@ module tb_riscv_xbt_alu;
     logic        ks1_cout_p, ks1_cout_n;
     logic [63:0] ks2_sum_p, ks2_sum_n;
     logic        ks2_cout_p, ks2_cout_n;
+    logic [63:0] bk_sum_p, bk_sum_n;
+    logic        bk_cout_p, bk_cout_n;
 
     xbt_kogge_stone_adder64 dut_ks1 (
         .a_p    (ks_a_p),
@@ -80,6 +82,19 @@ module tb_riscv_xbt_alu;
         .sum_n  (ks2_sum_n),
         .cout_p (ks2_cout_p),
         .cout_n (ks2_cout_n)
+    );
+
+    xbt_brent_kung_adder64 dut_bk (
+        .a_p    (ks_a_p),
+        .a_n    (ks_a_n),
+        .b_p    (ks_b_p),
+        .b_n    (ks_b_n),
+        .cin_p  (ks_cin_p),
+        .cin_n  (ks_cin_n),
+        .sum_p  (bk_sum_p),
+        .sum_n  (bk_sum_n),
+        .cout_p (bk_cout_p),
+        .cout_n (bk_cout_n)
     );
 
     int pass_count;
@@ -487,6 +502,43 @@ module tb_riscv_xbt_alu;
         end
 
         // ---------------------------------------------------------------------
+        
+        // 15. xbt_brent_kung_adder64 vs xbt_kogge_stone_adder64_v2 (4 corner cases)
+        ks_cin_p = 1'b0; ks_cin_n = 1'b0;
+        ks_a_p = 64'h0000_0000_0000_0000; ks_a_n = 64'hFFFF_FFFF_FFFF_FFFF;
+        ks_b_p = 64'h0000_0000_0000_0000; ks_b_n = 64'h0000_0000_0000_0001;
+        #1;
+        if (bk_sum_p !== ks2_sum_p || bk_sum_n !== ks2_sum_n ||
+            bk_cout_p !== ks2_cout_p || bk_cout_n !== ks2_cout_n) begin
+            $display("[FAIL] BK_neg_ripple mismatch"); fail_count++;
+        end else pass_count++;
+
+        ks_a_p = 64'h5555_0F0F_AAAA_3333; ks_a_n = 64'h2222_F0F0_1111_4444;
+        ks_b_p = 64'h1111_3333_5555_00FF; ks_b_n = 64'h4444_4444_2222_FF00;
+        #1;
+        if (bk_sum_p !== ks2_sum_p || bk_sum_n !== ks2_sum_n ||
+            bk_cout_p !== ks2_cout_p || bk_cout_n !== ks2_cout_n) begin
+            $display("[FAIL] BK_mixed mismatch"); fail_count++;
+        end else pass_count++;
+
+        ks_a_p = 64'hFFFF_FFFF_FFFF_FFFF; ks_a_n = 64'd0;
+        ks_b_p = 64'd0; ks_b_n = 64'd0;
+        ks_cin_p = 1'b1; ks_cin_n = 1'b0;
+        #1;
+        if (bk_sum_p !== ks2_sum_p || bk_sum_n !== ks2_sum_n ||
+            bk_cout_p !== ks2_cout_p || bk_cout_n !== ks2_cout_n) begin
+            $display("[FAIL] BK_cin_pos mismatch"); fail_count++;
+        end else pass_count++;
+
+        ks_a_p = 64'd0; ks_a_n = 64'hFFFF_FFFF_FFFF_FFFF;
+        ks_b_p = 64'd0; ks_b_n = 64'd0;
+        ks_cin_p = 1'b0; ks_cin_n = 1'b1;
+        #1;
+        if (bk_sum_p !== ks2_sum_p || bk_sum_n !== ks2_sum_n ||
+            bk_cout_p !== ks2_cout_p || bk_cout_n !== ks2_cout_n) begin
+            $display("[FAIL] BK_cin_neg mismatch"); fail_count++;
+        end else pass_count++;
+
         // Summary
         // ---------------------------------------------------------------------
         $display("=== tb_riscv_xbt_alu summary: %0d passed, %0d failed ===", pass_count, fail_count);

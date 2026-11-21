@@ -38,6 +38,15 @@ techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
+
+# 3b. xbt_brent_kung_adder64 (Area-Optimized Brent-Kung Prefix Adder)
+log "=== Synthesizing xbt_brent_kung_adder64 ==="
+design -load xbt_rtl
+synth -top xbt_brent_kung_adder64 -noabc
+techmap -map hw/cmos2_map.v
+opt_clean -purge
+stat
+
 # 4. xbt_planar_dot64 (64-Trit Planar Dot Product Unit)
 log "=== Synthesizing xbt_planar_dot64 ==="
 design -load xbt_rtl
