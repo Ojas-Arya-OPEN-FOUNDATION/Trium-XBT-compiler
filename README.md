@@ -307,7 +307,7 @@ iverilog -g2012 -o tb_xbt hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv && vv
 yosys -s hw/synth_xbt_yosys.ys
 ```
 
-#### Synthesized CMOS-2 Standard-Cell Gate Counts (Yosys 0.71)
+#### Synthesized CMOS-2 Standard-Cell Gate Counts (Yosys 0.71, unminimized `-noabc` + `hw/cmos2_map.v`)
 
 | RTL Module | CMOS-2 Cell Count | Description |
 | :--- | :--- | :--- |

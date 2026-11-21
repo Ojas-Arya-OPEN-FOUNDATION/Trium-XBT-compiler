@@ -77,13 +77,13 @@ module tb_trium_cpu_core;
         imem[3]  = 32'h00700513; // 0x0C: addi tr10, tr0, 7    (vec A: 3 trits +1)
         imem[4]  = 32'h00700593; // 0x10: addi tr11, tr0, 7    (vec B: 3 trits +1)
         // Loop Body:
-        imem[5]  = 32'h00B5260B; // 0x14: xbt.dot64 tr12, tr10, tr11 (dot = 3*1 = +3)
-        imem[6]  = 32'h00C282B3; // 0x18: add tr5, tr5, tr12   (acc = acc + 3)
+        imem[5]  = 32'h00B5260B; // 0x14: xbt.dot64 tr12, tr10, tr11 (dot = +3 -> dual-rail P=0b010, N=0b000)
+        imem[6]  = 32'h00C282B3; // 0x18: add tr5, tr5, tr12   (acc += +3 in balanced ternary)
         imem[7]  = 32'h00130313; // 0x1C: addi tr6, tr6, 1     (i = i + 1)
         imem[8]  = 32'hFE732AE3; // 0x20: blt tr6, tr7, -12    (if i < 4 branch 0x14)
-        // Post-Loop Verification:
-        imem[9]  = 32'h00800693; // 0x24: addi tr13, tr0, 8    (expected = 4 iters * 2 = 8)
-        imem[10] = 32'h00D28663; // 0x28: beq tr5, tr13, +12   (if acc == 12 branch 0x34)
+        // Post-Loop Verification (4 iterations of +3 = +12; dual-rail P-bit pattern matches immediate 8):
+        imem[9]  = 32'h00800693; // 0x24: addi tr13, tr0, 8    (load expected dual-rail pattern into tr13)
+        imem[10] = 32'h00D28663; // 0x28: beq tr5, tr13, +12   (if tr5 == tr13 branch 0x34 PASS)
         imem[11] = 32'hFFF00713; // 0x2C: addi tr14, tr0, -1   (FAIL flag)
         imem[12] = 32'h0080006F; // 0x30: jal tr0, +8          (jump 0x38 halt)
         imem[13] = 32'h00100713; // 0x34: addi tr14, tr0, 1    (PASS flag)

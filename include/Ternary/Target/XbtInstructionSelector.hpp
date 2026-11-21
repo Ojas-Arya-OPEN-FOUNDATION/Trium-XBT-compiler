@@ -670,15 +670,25 @@ private:
                 symbol_spill_offset_[sym] = offset;
 
                 if (current_out_) {
-                    Insn spill;
-                    spill.kind = InsnKind::Spill;
-                    spill.rd = static_cast<uint8_t>(victim_reg);
-                    spill.imm = static_cast<uint32_t>(offset);
-                    spill.pseudo_asm = "sd x" + std::to_string(victim_reg) +
-                                       ", " + std::to_string(offset) + "(sp)";
-                    spill.comment = "spill sym#" + std::to_string(sym) +
-                                    " -> stack slot @" + std::to_string(offset);
-                    current_out_->code.push_back(spill);
+                    Insn spill_p;
+                    spill_p.kind = InsnKind::Spill;
+                    spill_p.rd = static_cast<uint8_t>(victim_reg);
+                    spill_p.imm = static_cast<uint32_t>(offset);
+                    spill_p.pseudo_asm = "sd x" + std::to_string(victim_reg) +
+                                         ", " + std::to_string(offset) + "(sp)";
+                    spill_p.comment = "spill sym#" + std::to_string(sym) +
+                                      " P-rail -> stack slot @" + std::to_string(offset);
+                    current_out_->code.push_back(spill_p);
+
+                    Insn spill_n;
+                    spill_n.kind = InsnKind::Spill;
+                    spill_n.rd = static_cast<uint8_t>(victim_reg);
+                    spill_n.imm = static_cast<uint32_t>(offset + 8);
+                    spill_n.pseudo_asm = "sd x" + std::to_string(victim_reg) +
+                                         ", " + std::to_string(offset + 8) + "(sp)";
+                    spill_n.comment = "spill sym#" + std::to_string(sym) +
+                                      " N-rail -> stack slot @" + std::to_string(offset + 8);
+                    current_out_->code.push_back(spill_n);
                 }
 
                 symbol_reg_.erase(it);
@@ -690,15 +700,25 @@ private:
         int victim = (available_ > 2) ? (available_ - 1) : 1;
         int offset = allocate_spill_slot();
         if (current_out_) {
-            Insn spill;
-            spill.kind = InsnKind::Spill;
-            spill.rd = static_cast<uint8_t>(victim);
-            spill.imm = static_cast<uint32_t>(offset);
-            spill.pseudo_asm = "sd x" + std::to_string(victim) +
-                               ", " + std::to_string(offset) + "(sp)";
-            spill.comment = "spill temporary t" + std::to_string(victim) +
-                            " -> stack slot @" + std::to_string(offset);
-            current_out_->code.push_back(spill);
+            Insn spill_p;
+            spill_p.kind = InsnKind::Spill;
+            spill_p.rd = static_cast<uint8_t>(victim);
+            spill_p.imm = static_cast<uint32_t>(offset);
+            spill_p.pseudo_asm = "sd x" + std::to_string(victim) +
+                                 ", " + std::to_string(offset) + "(sp)";
+            spill_p.comment = "spill temporary t" + std::to_string(victim) +
+                              " P-rail -> stack slot @" + std::to_string(offset);
+            current_out_->code.push_back(spill_p);
+
+            Insn spill_n;
+            spill_n.kind = InsnKind::Spill;
+            spill_n.rd = static_cast<uint8_t>(victim);
+            spill_n.imm = static_cast<uint32_t>(offset + 8);
+            spill_n.pseudo_asm = "sd x" + std::to_string(victim) +
+                                 ", " + std::to_string(offset + 8) + "(sp)";
+            spill_n.comment = "spill temporary t" + std::to_string(victim) +
+                              " N-rail -> stack slot @" + std::to_string(offset + 8);
+            current_out_->code.push_back(spill_n);
         }
         return victim;
     }
@@ -713,15 +733,25 @@ private:
             int offset = sp->second;
             int r = alloc_reg();
             if (current_out_) {
-                Insn reload;
-                reload.kind = InsnKind::Reload;
-                reload.rd = static_cast<uint8_t>(r);
-                reload.imm = static_cast<uint32_t>(offset);
-                reload.pseudo_asm = "ld x" + std::to_string(r) +
-                                    ", " + std::to_string(offset) + "(sp)";
-                reload.comment = "reload sym#" + std::to_string(symbol) +
-                                 " <- stack slot @" + std::to_string(offset);
-                current_out_->code.push_back(reload);
+                Insn reload_p;
+                reload_p.kind = InsnKind::Reload;
+                reload_p.rd = static_cast<uint8_t>(r);
+                reload_p.imm = static_cast<uint32_t>(offset);
+                reload_p.pseudo_asm = "ld x" + std::to_string(r) +
+                                      ", " + std::to_string(offset) + "(sp)";
+                reload_p.comment = "reload sym#" + std::to_string(symbol) +
+                                   " P-rail <- stack slot @" + std::to_string(offset);
+                current_out_->code.push_back(reload_p);
+
+                Insn reload_n;
+                reload_n.kind = InsnKind::Reload;
+                reload_n.rd = static_cast<uint8_t>(r);
+                reload_n.imm = static_cast<uint32_t>(offset + 8);
+                reload_n.pseudo_asm = "ld x" + std::to_string(r) +
+                                      ", " + std::to_string(offset + 8) + "(sp)";
+                reload_n.comment = "reload sym#" + std::to_string(symbol) +
+                                   " N-rail <- stack slot @" + std::to_string(offset + 8);
+                current_out_->code.push_back(reload_n);
             }
             symbol_reg_[symbol] = r;
             return r;
@@ -1414,15 +1444,62 @@ inline void InstructionSelector::register_default_rules() {
                 arg_regs.push_back(c.lower(arg_expr));
             }
 
+            // Parallel-copy-safe argument marshalling into t1..tN (handles swaps like f(b, a))
+            struct PendingCopy { int src; int dst; size_t idx; };
+            std::vector<PendingCopy> pending;
             for (size_t i = 0; i < arg_regs.size(); ++i) {
                 int target_reg = static_cast<int>(i + 1);
                 if (arg_regs[i] != target_reg) {
-                    c.emit(c.sel->make_r(Funct3::KSADD, 0, target_reg, arg_regs[i], 0,
-                        "move t" + std::to_string(target_reg) + ", t" +
-                        std::to_string(arg_regs[i]) + "   // arg #" + std::to_string(i)));
+                    pending.push_back({arg_regs[i], target_reg, i});
                 }
-                c.release(arg_regs[i]);
             }
+            while (!pending.empty()) {
+                bool progressed = false;
+                for (size_t k = 0; k < pending.size(); ++k) {
+                    int dst = pending[k].dst;
+                    bool dst_is_live_src = false;
+                    for (size_t j = 0; j < pending.size(); ++j) {
+                        if (j != k && pending[j].src == dst) { dst_is_live_src = true; break; }
+                    }
+                    if (!dst_is_live_src) {
+                        c.emit(c.sel->make_r(Funct3::KSADD, 0, dst, pending[k].src, 0,
+                            "move t" + std::to_string(dst) + ", t" +
+                            std::to_string(pending[k].src) + "   // arg #" + std::to_string(pending[k].idx)));
+                        pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(k));
+                        progressed = true;
+                        break;
+                    }
+                }
+                if (!progressed) {
+                    // Break cycle (e.g. t1 <-> t2) via a scratch register
+                    int scratch = c.alloc();
+                    int cycle_src = pending[0].src;
+                    c.emit(c.sel->make_r(Funct3::KSADD, 0, scratch, cycle_src, 0,
+                        "move t" + std::to_string(scratch) + ", t" +
+                        std::to_string(cycle_src) + "   // parallel-copy cycle break"));
+                    for (auto& item : pending) {
+                        if (item.src == cycle_src) item.src = scratch;
+                    }
+                    // Continue loop; scratch will be released once consumed
+                    for (size_t k = 0; k < pending.size(); ++k) {
+                        int dst = pending[k].dst;
+                        bool dst_is_live_src = false;
+                        for (size_t j = 0; j < pending.size(); ++j) {
+                            if (j != k && pending[j].src == dst) { dst_is_live_src = true; break; }
+                        }
+                        if (!dst_is_live_src) {
+                            int src = pending[k].src;
+                            c.emit(c.sel->make_r(Funct3::KSADD, 0, dst, src, 0,
+                                "move t" + std::to_string(dst) + ", t" +
+                                std::to_string(src) + "   // arg #" + std::to_string(pending[k].idx)));
+                            pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(k));
+                            if (src == scratch) c.release(scratch);
+                            break;
+                        }
+                    }
+                }
+            }
+            for (int r : arg_regs) c.release(r);
 
             Insn call_insn;
             call_insn.kind = InsnKind::Call;

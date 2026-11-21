@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-21T05:25:27Z",
+  "timestamp_utc": "2026-11-21T06:53:33Z",
   "host": {
     "platform": "macOS-27.2-arm64-arm-64bit",
     "python_version": "3.9.6"
@@ -8,7 +8,7 @@
   "cpp_codegen_benchmark": {
     "suite": "trium_xbt_codegen_and_coprocessor_bench",
     "all_verified": true,
-    "elapsed_ms": 3.4287,
+    "elapsed_ms": 3.9862,
     "dot_product": {
       "dot64": {
         "width_trits": 64,
@@ -117,8 +117,8 @@
         }
       ]
     },
-    "compile_ms": 10126.447,
-    "wall_run_ms": 319.859
+    "compile_ms": 6541.433,
+    "wall_run_ms": 314.859
   },
   "trium_cc_verification": {
     "status": "passed",

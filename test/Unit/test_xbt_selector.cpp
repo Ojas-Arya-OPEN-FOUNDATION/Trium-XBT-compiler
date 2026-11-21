@@ -486,6 +486,33 @@ void test_call() {
     check(lowered.metrics.function_calls == 1, "metrics record 1 function call");
 }
 
+void test_call_parallel_copy_swap() {
+    std::printf("  function call argument parallel copy swap (t1 <-> t2)\n");
+    auto call_expr = std::make_shared<ir::Expr>();
+    call_expr->op = ir::Op::Call;
+    call_expr->name = "swap_target";
+    call_expr->type = ir::Type::Int39;
+    call_expr->operands = {param(2), param(1)}; // swaps arguments: t1 <-> t2 cycle!
+
+    ir::Function f;
+    f.name = "caller_swap";
+    f.result = ir::Type::Int39;
+    f.parameters.push_back({1, ir::Type::Int39});
+    f.parameters.push_back({2, ir::Type::Int39});
+    ir::Statement ret;
+    ret.kind = ir::StatementKind::Return;
+    ret.type = ir::Type::Int39;
+    ret.value = call_expr;
+    f.body.push_back(ret);
+
+    bt::target::xbt::InstructionSelector sel;
+    auto lowered = sel.lower_function(f);
+    check(!lowered.code.empty(), "call with swapped args lowered successfully");
+    std::string asm_text = bt::target::xbt::emit_assembly(lowered);
+    check(asm_text.find("call swap_target") != std::string::npos, "assembly contains call swap_target");
+    check(asm_text.find("parallel-copy cycle break") != std::string::npos, "cycle break triggered");
+}
+
 void test_runtime_multiply() {
     std::printf("  runtime-by-runtime scalar multiply (Op::Mul)\n");
     ir::Function f;
@@ -541,6 +568,8 @@ void test_stack_spilling() {
     std::string asm_text = bt::target::xbt::emit_assembly(lowered);
     check(asm_text.find("sd x") != std::string::npos, "assembly contains stack store (sd)");
     check(asm_text.find("ld x") != std::string::npos, "assembly contains stack load (ld)");
+    check(asm_text.find("P-rail") != std::string::npos, "assembly contains P-rail spill/reload");
+    check(asm_text.find("N-rail") != std::string::npos, "assembly contains N-rail spill/reload");
     check(asm_text.find("addi sp, sp, -") != std::string::npos, "prologue allocates stack frame");
     check(asm_text.find("addi sp, sp, ") != std::string::npos, "epilogue frees stack frame");
 }
@@ -563,6 +592,7 @@ int main() {
     test_assembly_output();
     test_refuses_unsupported();
     test_call();
+    test_call_parallel_copy_swap();
     test_runtime_multiply();
     test_stack_spilling();
 

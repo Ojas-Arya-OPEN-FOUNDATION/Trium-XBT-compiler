@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "timestamp_utc": "2026-11-21T05:24:55.089774+00:00",
+  "timestamp_utc": "2026-11-21T06:53:10.114221+00:00",
   "platform": "Darwin arm64",
   "python": "3.9.6",
   "tools_detected": {
@@ -14,27 +14,27 @@
       "status": "pass",
       "checks": 14331,
       "failures": 0,
-      "elapsed_ms": 632.45,
-      "dot64_10k_ms": 453.78,
+      "elapsed_ms": 656.15,
+      "dot64_10k_ms": 473.57,
       "dot64_checksum": 39
     },
     "external_simulator_pipe": {
       "status": "pass",
-      "elapsed_ms": 1320.71,
+      "elapsed_ms": 1430.53,
       "result": "2/2"
     },
     "rtl_testbench": {
       "status": "pass",
       "tool": "verilator",
       "returncode": 0,
-      "elapsed_ms": 10197.61,
-      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 276 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:496: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01\n- Verilator: $finish at 519ns; walltime 0.000 s; speed 2.227 ms/s\n- Verilator: cpu 0.000 s on 1 threads; allocated 2 MB\n",
+      "elapsed_ms": 9771.51,
+      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 276 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:496: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01\n- Verilator: $finish at 519ns; walltime 0.000 s; speed 2.019 ms/s\n- Verilator: cpu 0.000 s on 1 threads; allocated 2 MB\n",
       "stderr_tail": ""
     },
     "yosys_synthesis": {
       "status": "pass",
       "tool": "yosys",
-      "elapsed_ms": 6131.22,
+      "elapsed_ms": 5986.34,
       "module_cell_counts": {
         "xbt_btha64": 1664,
         "xbt_kogge_stone_adder64": 19192,
