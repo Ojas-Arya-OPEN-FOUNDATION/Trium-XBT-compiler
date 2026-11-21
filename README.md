@@ -33,7 +33,7 @@ Balanced ternary (`{-1, 0, +1}`) eliminates hardware multipliers for ternary wei
 | Track | Focus | Core Components | Current Status |
 | :--- | :--- | :--- | :--- |
 | **Track 1 — Present-Day Hardware Compiler & SDK** | High-throughput balanced ternary execution on commodity x86_64, ARM64, Vulkan, and CUDA | Checked scalar Core IR (`int39`, `BTFP<1..40>`), AVX-512/AVX2/NEON bit-sliced ternary GEMM (`include/Ternary/Blas/TernaryMicroKernel.hpp`), Vulkan/CUDA map kernels, `libtrium_sdk` (C, C++20, Python `trium`, Rust `bt_runtime::sdk`), unified `tools/trium_workflow.py` | **Measured & verified on bare-metal CPUs** (90 CTest targets; Xeon Platinum 8481C & Apple M2 reproductions) |
-| **Track 2 — Next-Generation Ternary & RISC-V `Xbt` Hardware Compiler** | Target-agnostic backend authoring, ISA selection, co-simulation, and synthesizable RTL | Declarative YAML targets (`targets/*.yaml` → `tools/gen_targets.py` → `tools/gen_backend.py`), rule-driven `XbtInstructionSelector` (v1+v2 Custom-0 `0x0B`), POSIX-pipe `ExternalSimulator`, `hw/riscv_xbt_extension.sv`, 5-stage `hw/trium_cpu_core.sv`, `hw/tb_riscv_xbt_alu.sv`, `hw/synth_xbt_yosys.ys`, Chipyard `WithXbtRoCCAccelerator`, `tools/run_hardware_benchmarks.py` | **Pre-silicon RTL & conformance verified** (14,331 Golden Model v1+v2 checks; EDA scripts ready; not yet taped out or FPGA-measured) |
+| **Track 2 — Next-Generation Ternary & RISC-V `Xbt` Hardware Compiler** | Target-agnostic backend authoring, ISA selection, co-simulation, and synthesizable RTL | Declarative YAML targets (`targets/*.yaml` → `tools/gen_targets.py` → `tools/gen_backend.py`), rule-driven `XbtInstructionSelector` (v1+v2 Custom-0 `0x0B`), POSIX-pipe `ExternalSimulator`, `hw/riscv_xbt_extension.sv`, 5-stage `hw/trium_cpu_core.sv`, `hw/tb_riscv_xbt_alu.sv`, `hw/synth_xbt_yosys.ys`, Chipyard `WithXbtRoCCAccelerator`, `tools/run_hardware_benchmarks.py` | **Pre-silicon RTL & conformance verified** (16,331 Golden Model v1+v2 checks; EDA scripts ready; not yet taped out or FPGA-measured) |
 
 ```mermaid
 flowchart TD
@@ -53,7 +53,7 @@ flowchart TD
     subgraph Track2 ["Track 2 — Next-Gen Ternary & RISC-V Xbt Hardware Compiler"]
         YAML["Declarative Targets\ntargets/*.yaml → gen_targets.py → gen_backend.py"] --> ISEL["Rule-Driven XbtInstructionSelector\nRISC-V Custom-0 (0x0B) v1 + v2"]
         IR --> ISEL
-        ISEL --> SIM["POSIX-Pipe ExternalSimulator\nConformance Runner & Golden Model (14,331 checks)"]
+        ISEL --> SIM["POSIX-Pipe ExternalSimulator\nConformance Runner & Golden Model (16,331 checks)"]
         ISEL --> RTL["Synthesizable SystemVerilog RTL\nhw/riscv_xbt_extension.sv • hw/trium_cpu_core.sv"]
         RTL --> EDA["Verilator / Icarus (tb_riscv_xbt_alu.sv • tb_trium_cpu_core.sv)\nYosys (synth_xbt_yosys.ys) • Chipyard WithXbtRoCCAccelerator"]
     end
@@ -283,7 +283,7 @@ python3 tools/gen_targets.py
 python3 tools/gen_backend.py targets/riscv64-xbt.yaml
 
 # 3. Run the unified honest hardware verification & benchmark runner
-#    (Golden Model v1+v2 14,331 checks, POSIX-pipe ExternalSimulator, RTL sim, Yosys)
+#    (Golden Model v1+v2 16,331 checks, POSIX-pipe ExternalSimulator, RTL sim, Yosys)
 python3 tools/run_hardware_benchmarks.py
 ```
 
@@ -346,11 +346,11 @@ Synthesized with Yosys `synth_xilinx -family xc7` and mapped directly to 6-input
 
 | RTL Module | 7-Series LUTs | Flip-Flops (FFs) | Total Primitives | FPGA Resource Profile |
 | :--- | ---: | ---: | ---: | :--- |
-| `xbt_btha64` | **512 LUTs** | 0 | 768 cells | 128 LUT2 + 128 LUT4 (pure combinational half-adder) |
+| `xbt_btha64` | **256 LUTs** | 0 | 768 cells | 128 LUT2 + 128 LUT4 (pure combinational half-adder) |
 | `xbt_kogge_stone_adder64_v2` | **3,183 LUTs** | 0 | 3,571 cells | 630 LUT2 + 486 LUT3 + 875 LUT4 + 744 LUT5 + 448 LUT6 |
 | `xbt_brent_kung_adder64` | **1,121 LUTs** | 0 | 1,509 cells | **64.8% fewer LUTs** than KS-v2 (278 LUT2 + 68 LUT3 + 427 LUT4 + 208 LUT5 + 140 LUT6) |
-| `xbt_planar_dot64` | **678 LUTs** | 0 | 662 cells | 23 LUT2 + 18 LUT3 + 142 LUT4 + 68 LUT5 + 88 LUT6 + 2 CARRY4 + 1 MUXF7 |
-| `xbt_base243_decoder` | **124 LUTs** | 0 | 212 cells | 32 LUT2 + 14 LUT3 + 9 LUT4 + 5 LUT5 + 2 LUT6 + 8 CARRY4 + 5 DSP48E1 |
+| `xbt_planar_dot64` | **339 LUTs** | 0 | 662 cells | 23 LUT2 + 18 LUT3 + 142 LUT4 + 68 LUT5 + 88 LUT6 + 2 CARRY4 + 1 MUXF7 |
+| `xbt_base243_decoder` | **62 LUTs** | 0 | 212 cells | 32 LUT2 + 14 LUT3 + 9 LUT4 + 5 LUT5 + 2 LUT6 + 8 CARRY4 + 5 DSP48E1 |
 | `riscv_xbt_alu (Brent-Kung)` | **5,622 LUTs** | 0 | 7,202 cells | Area-optimized execution unit (697 LUT2 + 759 LUT3 + 1322 LUT4 + 1858 LUT5 + 986 LUT6) |
 | `trium_cpu_core` | **9,061 LUTs** | **5,119 FFs** | 14,859 cells | Complete 5-stage core with 32x128 register file, branch & forwarding units, 90 CARRY4 |
 
@@ -369,7 +369,7 @@ For SoC integration, `verification/chipyard/XbtRoCCAccelerator.scala` and `verif
 | **Lean 4** | `BalancedTernary.lean`, `HamiltonianTernary.lean`, `TernaryAlgebraProofs.lean`, `TernaryCompilerMath.lean`, `TernaryPhase3Math.lean` | **5 files / 0 `sorry`** | `lean BalancedTernary.lean` (and sibling `.lean` files) |
 | **Rocq 9** | `proofs/rocq/BalancedTernaryFoundations.v`, `CoreMath.v`, `CoreLowering.v`, `ImplementationBridge.v` | **4 files / 66 theorems / 0 axioms** | `rocq compile proofs/rocq/BalancedTernaryFoundations.v` |
 | **Z3 SMT** | Root `verify_z3_*.py` solvers + `verification/` SMT suite (Kogge-Stone, SWAR, BigInt divmod, BTFP FMA, ISA, layouts, SDK contracts) | **14 root + 11 suite** | `python3 verify_z3_kogge_stone.py` |
-| **Golden Model** | `verification/golden_model/xbt_golden.py` (RISC-V Custom-0 `0x0B` v1 + v2 ISA) | **14,331 v1+v2 checks** (0 failures) | `python3 tools/run_hardware_benchmarks.py` |
+| **Golden Model** | `verification/golden_model/xbt_golden.py` (RISC-V Custom-0 `0x0B` v1 + v2 ISA) | **16,331 v1+v2 checks** (0 failures) | `python3 tools/run_hardware_benchmarks.py` |
 | **CTest Suite** | Unit, SDK, Core IR, GEMM layout, CodeGen, Target, and Simulator tests | **90 CTest targets** | `ctest --test-dir build --output-on-failure` |
 
 ### Honest Maturity Matrix
@@ -408,7 +408,7 @@ For SoC integration, `verification/chipyard/XbtRoCCAccelerator.scala` and `verif
 ├── targets/                                    # Declarative YAML hardware descriptions
 ├── hw/                                         # riscv_xbt_extension.sv, trium_cpu_core.sv, tb_riscv_xbt_alu.sv, tb_trium_cpu_core.sv, cmos2_map.v, synth_xbt_yosys.ys
 ├── proofs/rocq/                                # 4 Rocq 9 formal proof files (66 theorems, 0 axioms)
-├── verification/                               # Golden model (14,331 checks), Z3 suite (11), Chipyard RoCC
+├── verification/                               # Golden model (16,331 checks), Z3 suite (11), Chipyard RoCC
 ├── tools/                                      # trium_workflow.py, gen_targets.py, gen_backend.py, ternary_bench.cpp, run_hardware_benchmarks.py
 └── *.lean, verify_z3_*.py                      # 5 Lean 4 proof files (0 sorry) & 14 root Z3 SMT scripts
 ```

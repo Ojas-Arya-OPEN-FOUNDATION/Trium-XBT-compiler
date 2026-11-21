@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "timestamp_utc": "2026-11-21T08:55:43.310169+00:00",
+  "timestamp_utc": "2026-11-21T09:17:55.157491+00:00",
   "platform": "Darwin arm64",
   "python": "3.9.6",
   "tools_detected": {
@@ -14,27 +14,27 @@
       "status": "pass",
       "checks": 16331,
       "failures": 0,
-      "elapsed_ms": 951.62,
-      "dot64_10k_ms": 453.57,
+      "elapsed_ms": 987.91,
+      "dot64_10k_ms": 481.92,
       "dot64_checksum": 39
     },
     "external_simulator_pipe": {
       "status": "pass",
-      "elapsed_ms": 1566.61,
+      "elapsed_ms": 1654.4,
       "result": "2/2"
     },
     "rtl_testbench": {
       "status": "pass",
       "tool": "verilator",
       "returncode": 0,
-      "elapsed_ms": 10376.27,
-      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 280 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:548: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.055 devel\n- Verilator: $finish at 523ns; walltime 0.001 s; speed 826.224 us/s\n- Verilator: cpu 0.001 s on 1 threads; allocated 2 MB\n",
+      "elapsed_ms": 10717.12,
+      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 280 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:548: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.055 devel\n- Verilator: $finish at 523ns; walltime 0.001 s; speed 944.043 us/s\n- Verilator: cpu 0.001 s on 1 threads; allocated 2 MB\n",
       "stderr_tail": ""
     },
     "yosys_synthesis": {
       "status": "pass",
       "tool": "yosys",
-      "elapsed_ms": 3538.57,
+      "elapsed_ms": 3632.16,
       "module_cell_counts": {
         "xbt_btha64": 1664,
         "xbt_kogge_stone_adder64": 19192,
@@ -48,7 +48,7 @@
     "yosys_abc_synthesis": {
       "status": "pass",
       "tool": "yosys+abc",
-      "elapsed_ms": 20539.17,
+      "elapsed_ms": 20831.78,
       "modules": {
         "xbt_btha64": {
           "cells": 768,
@@ -87,11 +87,11 @@
     "yosys_fpga_xilinx": {
       "status": "pass",
       "tool": "yosys_xilinx",
-      "elapsed_ms": 70264.66,
+      "elapsed_ms": 71267.3,
       "modules": {
         "xbt_btha64": {
           "cells": 768,
-          "luts": 512,
+          "luts": 256,
           "ffs": 0
         },
         "xbt_kogge_stone_adder64_v2": {
@@ -106,12 +106,12 @@
         },
         "xbt_planar_dot64": {
           "cells": 662,
-          "luts": 678,
+          "luts": 339,
           "ffs": 0
         },
         "xbt_base243_decoder": {
           "cells": 212,
-          "luts": 124,
+          "luts": 62,
           "ffs": 0
         },
         "riscv_xbt_alu (Brent-Kung)": {

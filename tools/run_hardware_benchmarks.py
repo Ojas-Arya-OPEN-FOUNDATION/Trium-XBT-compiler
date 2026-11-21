@@ -287,11 +287,15 @@ def run_yosys_abc_synthesis() -> Dict[str, Any]:
     sections = re.findall(r"=== ABC CMOS-2:\s+(.+?)\s+===(.*?)(?==== ABC CMOS-2:|\Z)", r.stdout, re.DOTALL)
     for name, body in sections:
         name = name.strip()
-        stat_blocks = list(re.finditer(r"Printing statistics\.(.*?)(\n\s*\n\s*\n|\Z)", body, re.DOTALL))
+        idx = body.rfind("Printing statistics.")
         cells = 0
-        if stat_blocks:
-            last_stat = stat_blocks[-1].group(1)
-            target_text = last_stat.split("=== design hierarchy ===")[-1] if "=== design hierarchy ===" in last_stat else last_stat
+        if idx != -1:
+            final_stat = body[idx:]
+            if "=== design hierarchy ===" in final_stat:
+                target_text = final_stat.split("=== design hierarchy ===")[-1]
+            else:
+                m_blk = list(re.finditer(r"===\s+([^\n]+?)\s+===(.*?)(?====|\Z)", final_stat, re.DOTALL))
+                target_text = m_blk[-1].group(2) if m_blk else final_stat
             for line in target_text.splitlines():
                 m_c = re.search(r"^\s*(\d+)\s+cells", line) or re.search(r"Number of cells:\s+(\d+)", line)
                 if m_c:
@@ -341,11 +345,15 @@ def run_yosys_fpga_xilinx() -> Dict[str, Any]:
     sections = re.findall(r"=== FPGA xc7 LUT/FF:\s+(.+?)\s+===(.*?)(?==== FPGA xc7 LUT/FF:|\Z)", r.stdout, re.DOTALL)
     for name, body in sections:
         name = name.strip()
-        stat_blocks = list(re.finditer(r"Printing statistics\.(.*?)(\n\s*\n\s*\n|\Z)", body, re.DOTALL))
-        if not stat_blocks:
+        idx = body.rfind("Printing statistics.")
+        if idx == -1:
             continue
-        last_stat = stat_blocks[-1].group(1)
-        target_text = last_stat.split("=== design hierarchy ===")[-1] if "=== design hierarchy ===" in last_stat else last_stat
+        final_stat = body[idx:]
+        if "=== design hierarchy ===" in final_stat:
+            target_text = final_stat.split("=== design hierarchy ===")[-1]
+        else:
+            m_blk = list(re.finditer(r"===\s+([^\n]+?)\s+===(.*?)(?====|\Z)", final_stat, re.DOTALL))
+            target_text = m_blk[-1].group(2) if m_blk else final_stat
 
         cells = 0
         luts = 0
