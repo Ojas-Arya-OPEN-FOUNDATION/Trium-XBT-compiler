@@ -173,17 +173,26 @@ void test_backend_refuses() {
     std::printf("  Xbt backend refuses what it cannot lower\n");
     auto* b = BackendRegistry::instance().find("xbt");
 
-    // Multi-trit scalar multiplication: the Xbt MUL is lane-wise and would
-    // silently drop inter-lane carries.
+    // Floating-point Sqrt: Xbt has no floating-point sqrt instruction.
     ir::Program p;
-    p.functions.push_back(make_fn("bigmul", binop(ir::Op::Mul, intlit(1000), intlit(37))));
+    auto f_expr = std::make_shared<ir::Expr>();
+    f_expr->op = ir::Op::Floating;
+    f_expr->type = ir::Type::Float64;
+    f_expr->floating = 2.0;
+
+    auto sqrt_expr = std::make_shared<ir::Expr>();
+    sqrt_expr->op = ir::Op::Sqrt;
+    sqrt_expr->type = ir::Type::Float64;
+    sqrt_expr->operands = {f_expr};
+
+    p.functions.push_back(make_fn("bad_sqrt", sqrt_expr));
 
     auto r = b->lower(p);
     check(!r.unsupported.empty(), "unsupported construct is reported");
     check(r.unsupported.size() == 1, "exactly one function reported");
-    check(r.output.find(".globl bigmul") == std::string::npos,
+    check(r.output.find(".globl bad_sqrt") == std::string::npos,
           "no code is emitted for a function that cannot be lowered");
-    check(r.unsupported[0].find("lane-wise") != std::string::npos,
+    check(r.unsupported[0].find("instruction selection not implemented") != std::string::npos,
           "the reason names the actual semantic problem");
 }
 
@@ -191,9 +200,19 @@ void test_mixed_program_reports_partial() {
     std::printf("  mixed program reports partial lowering\n");
     auto* b = BackendRegistry::instance().find("xbt");
 
+    auto f_expr = std::make_shared<ir::Expr>();
+    f_expr->op = ir::Op::Floating;
+    f_expr->type = ir::Type::Float64;
+    f_expr->floating = 2.0;
+
+    auto sqrt_expr = std::make_shared<ir::Expr>();
+    sqrt_expr->op = ir::Op::Sqrt;
+    sqrt_expr->type = ir::Type::Float64;
+    sqrt_expr->operands = {f_expr};
+
     ir::Program p;
     p.functions.push_back(make_fn("ok_add", binop(ir::Op::Add, intlit(1), intlit(2))));
-    p.functions.push_back(make_fn("bad_mul", binop(ir::Op::Mul, intlit(100), intlit(100))));
+    p.functions.push_back(make_fn("bad_sqrt", sqrt_expr));
 
     auto r = b->lower(p);
     check(r.output.find("ok_add") != std::string::npos,

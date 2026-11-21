@@ -140,21 +140,27 @@ static void test_systemverilog_rtl_presence() {
     // checked against reference arithmetic in test_coprocessor_execution(); the RTL
     // itself is only linted when a real simulator is installed.
     std::ifstream sv_file;
+    std::string found_path;
     // Resolve path independent of CWD: try a few candidates, then __FILE__-relative.
     const char* candidates[] = {
         "hw/riscv_xbt_extension.sv",
         "../../hw/riscv_xbt_extension.sv",
         "../hw/riscv_xbt_extension.sv"
     };
-    for (const char* c : candidates) { sv_file.open(c); if (sv_file.is_open()) break; sv_file.clear(); }
+    for (const char* c : candidates) {
+        sv_file.open(c);
+        if (sv_file.is_open()) { found_path = c; break; }
+        sv_file.clear();
+    }
     if (!sv_file.is_open()) {
         std::string here = __FILE__;
         size_t slash = here.find_last_of("/\\");
         std::string dir = (slash == std::string::npos) ? std::string() : here.substr(0, slash);
         // ascend until we find hw/riscv_xbt_extension.sv
         for (int up = 0; up < 8 && !dir.empty(); ++up) {
-            sv_file.open(dir + "/hw/riscv_xbt_extension.sv");
-            if (sv_file.is_open()) break;
+            std::string p = dir + "/hw/riscv_xbt_extension.sv";
+            sv_file.open(p);
+            if (sv_file.is_open()) { found_path = p; break; }
             sv_file.clear();
             size_t s = dir.find_last_of("/\\");
             if (s == std::string::npos) break;
@@ -197,8 +203,8 @@ static void test_systemverilog_rtl_presence() {
     if (verilator.empty()) {
         std::cout << "  [SKIP] Verilator RTL lint: no verilator on PATH (RTL not simulated)\n";
     } else {
-        std::string command = "\"" + verilator + "\" --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSED "
-                              "\"hw/riscv_xbt_extension.sv\" >/dev/null 2>&1";
+        std::string command = "\"" + verilator + "\" --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSED \"" +
+                              found_path + "\" >/dev/null 2>&1";
         int status = std::system(command.c_str());
         assert(status == 0 && "Verilator lint of hw/riscv_xbt_extension.sv failed");
         std::cout << "  [PASS] Verilator lint of hw/riscv_xbt_extension.sv\n";

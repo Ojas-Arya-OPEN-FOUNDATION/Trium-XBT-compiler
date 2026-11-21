@@ -17,47 +17,47 @@ design -save xbt_rtl
 # 1. xbt_btha64 (64-Trit Balanced Ternary Half-Adder)
 log "=== Synthesizing xbt_btha64 ==="
 design -load xbt_rtl
-synth -top xbt_btha64
-abc -g cmos2
+synth -top xbt_btha64 -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
 # 2. xbt_kogge_stone_adder64 (v1 6-Stage Kogge-Stone Adder)
 log "=== Synthesizing xbt_kogge_stone_adder64 ==="
 design -load xbt_rtl
-synth -top xbt_kogge_stone_adder64
-abc -g cmos2
+synth -top xbt_kogge_stone_adder64 -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
 # 3. xbt_kogge_stone_adder64_v2 (v2 Monotone Lattice Kogge-Stone Adder)
 log "=== Synthesizing xbt_kogge_stone_adder64_v2 ==="
 design -load xbt_rtl
-synth -top xbt_kogge_stone_adder64_v2
-abc -g cmos2
+synth -top xbt_kogge_stone_adder64_v2 -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
 # 4. xbt_planar_dot64 (64-Trit Planar Dot Product Unit)
 log "=== Synthesizing xbt_planar_dot64 ==="
 design -load xbt_rtl
-synth -top xbt_planar_dot64
-abc -g cmos2
+synth -top xbt_planar_dot64 -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
 # 5. xbt_base243_decoder (Division-Free Base-243 Unpacker)
 log "=== Synthesizing xbt_base243_decoder ==="
 design -load xbt_rtl
-synth -top xbt_base243_decoder
-abc -g cmos2
+synth -top xbt_base243_decoder -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat
 
 # 6. riscv_xbt_alu (Top-Level v1 + v2 Custom-0 Execution Unit)
 log "=== Synthesizing riscv_xbt_alu ==="
 design -load xbt_rtl
-synth -top riscv_xbt_alu
-abc -g cmos2
+synth -top riscv_xbt_alu -noabc
+techmap -map hw/cmos2_map.v
 opt_clean -purge
 stat

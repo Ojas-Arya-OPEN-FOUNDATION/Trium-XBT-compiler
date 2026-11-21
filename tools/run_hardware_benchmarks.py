@@ -153,6 +153,8 @@ def run_rtl_testbench() -> Dict[str, Any]:
                 "--binary",
                 "-Wall",
                 "-Wno-DECLFILENAME",
+                "--top-module",
+                "tb_riscv_xbt_alu",
                 "-Mdir",
                 tmp,
                 str(rtl),
@@ -234,7 +236,7 @@ def run_yosys_synthesis() -> Dict[str, Any]:
         m_mod = re.search(r"===\s+(\w+)\s+===", line)
         if m_mod:
             current = m_mod.group(1)
-        m_cells = re.search(r"Number of cells:\s+(\d+)", line)
+        m_cells = re.search(r"Number of cells:\s+(\d+)", line) or re.search(r"^\s*(\d+)\s+cells", line)
         if m_cells and current:
             modules[current] = int(m_cells.group(1))
             current = None

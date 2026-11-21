@@ -434,24 +434,115 @@ void test_refuses_unsupported() {
     }
     check(threw, "unsupported IR op must raise rather than emit a stub");
 
-    // Multi-trit scalar multiplication must also be refused, because the Xbt
-    // MUL is lane-wise and would silently drop inter-lane carries.
+    // Sqrt has no Xbt lowering; the selector must refuse, not emit a stub.
+    auto sqrt_expr = std::make_shared<ir::Expr>();
+    sqrt_expr->op = ir::Op::Sqrt;
+    sqrt_expr->type = ir::Type::Float64;
+    sqrt_expr->operands = {f_expr};
+
     ir::Function g;
     g.name = "g";
-    g.result = ir::Type::Int39;
+    g.result = ir::Type::Float64;
     ir::Statement r;
     r.kind = ir::StatementKind::Return;
-    r.type = ir::Type::Int39;
-    r.value = binop(ir::Op::Mul, intlit(1000), intlit(37));
+    r.type = ir::Type::Float64;
+    r.value = sqrt_expr;
     g.body.push_back(r);
-    bool mul_threw = false;
+    bool sqrt_threw = false;
     try {
         bt::target::xbt::InstructionSelector sel;
         sel.lower_function(g);
     } catch (const std::runtime_error&) {
-        mul_threw = true;
+        sqrt_threw = true;
     }
-    check(mul_threw, "multi-trit scalar Mul must be refused (MUL is lane-wise)");
+    check(sqrt_threw, "unsupported Sqrt must be refused");
+}
+
+void test_call() {
+    std::printf("  function call lowering (Op::Call)\n");
+    auto call_expr = std::make_shared<ir::Expr>();
+    call_expr->op = ir::Op::Call;
+    call_expr->name = "helper";
+    call_expr->type = ir::Type::Int39;
+    call_expr->operands = {param(1), intlit(42)};
+
+    ir::Function f;
+    f.name = "caller";
+    f.result = ir::Type::Int39;
+    f.parameters.push_back({1, ir::Type::Int39});
+    ir::Statement ret;
+    ret.kind = ir::StatementKind::Return;
+    ret.type = ir::Type::Int39;
+    ret.value = call_expr;
+    f.body.push_back(ret);
+
+    bt::target::xbt::InstructionSelector sel;
+    auto lowered = sel.lower_function(f);
+    check(!lowered.code.empty(), "call lowering produced instructions");
+    std::string asm_text = bt::target::xbt::emit_assembly(lowered);
+    check(asm_text.find("call helper") != std::string::npos, "assembly contains call helper");
+    check(asm_text.find("sd ra, 0(sp)") != std::string::npos, "prologue saves return address");
+    check(asm_text.find("ld ra, 0(sp)") != std::string::npos, "epilogue restores return address");
+    check(lowered.metrics.function_calls == 1, "metrics record 1 function call");
+}
+
+void test_runtime_multiply() {
+    std::printf("  runtime-by-runtime scalar multiply (Op::Mul)\n");
+    ir::Function f;
+    f.name = "mul_runtime";
+    f.result = ir::Type::Int39;
+    f.parameters.push_back({1, ir::Type::Int39});
+    f.parameters.push_back({2, ir::Type::Int39});
+    ir::Statement ret;
+    ret.kind = ir::StatementKind::Return;
+    ret.type = ir::Type::Int39;
+    ret.value = binop(ir::Op::Mul, param(1), param(2));
+    f.body.push_back(ret);
+
+    bt::target::xbt::InstructionSelector sel;
+    auto lowered = sel.lower_function(f);
+    check(!lowered.code.empty(), "runtime multiply produced instructions");
+    std::string asm_text = bt::target::xbt::emit_assembly(lowered);
+    check(asm_text.find("mul x") != std::string::npos, "assembly contains mul x instruction");
+    check(lowered.metrics.runtime_muls == 1, "metrics record 1 runtime mul");
+}
+
+void test_stack_spilling() {
+    std::printf("  stack spilling under high register pressure\n");
+    ir::Function f;
+    f.name = "spill_test";
+    f.result = ir::Type::Int39;
+    f.parameters.push_back({1, ir::Type::Int39});
+
+    for (uint32_t i = 2; i <= 6; ++i) {
+        ir::Statement s;
+        s.kind = ir::StatementKind::Let;
+        s.symbol = i;
+        s.type = ir::Type::Int39;
+        s.value = binop(ir::Op::Add, param(i - 1), intlit(i));
+        f.body.push_back(s);
+    }
+
+    auto sum1 = binop(ir::Op::Add, param(2), param(3));
+    auto sum2 = binop(ir::Op::Add, sum1, param(4));
+    auto sum3 = binop(ir::Op::Add, sum2, param(5));
+    auto sum4 = binop(ir::Op::Add, sum3, param(6));
+    ir::Statement ret;
+    ret.kind = ir::StatementKind::Return;
+    ret.type = ir::Type::Int39;
+    ret.value = sum4;
+    f.body.push_back(ret);
+
+    bt::target::xbt::InstructionSelector sel(4); // limit to only 4 registers!
+    auto lowered = sel.lower_function(f);
+    check(!lowered.code.empty(), "spill test lowered successfully");
+    check(lowered.metrics.stack_spills > 0, "metrics record stack spills under limit=4");
+    check(lowered.metrics.stack_reloads > 0, "metrics record stack reloads");
+    std::string asm_text = bt::target::xbt::emit_assembly(lowered);
+    check(asm_text.find("sd x") != std::string::npos, "assembly contains stack store (sd)");
+    check(asm_text.find("ld x") != std::string::npos, "assembly contains stack load (ld)");
+    check(asm_text.find("addi sp, sp, -") != std::string::npos, "prologue allocates stack frame");
+    check(asm_text.find("addi sp, sp, ") != std::string::npos, "epilogue frees stack frame");
 }
 
 } // namespace
@@ -471,6 +562,9 @@ int main() {
     test_sign_and_cmov_encoded();
     test_assembly_output();
     test_refuses_unsupported();
+    test_call();
+    test_runtime_multiply();
+    test_stack_spilling();
 
     std::printf("\n%d checks, %d failure(s)\n", g_checks, g_failures);
     if (g_failures) {

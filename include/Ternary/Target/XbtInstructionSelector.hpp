@@ -116,6 +116,12 @@ enum class InsnKind : uint8_t {
     Label,           // GNU assembly label (e.g. ".L_while_head_0:")
     BranchIfNotPos,  // RV64I conditional branch on scalar sign <= 0 ("blez x<r>, .L_...")
     Jump,            // RV64I unconditional jump ("j .L_...")
+    Call,            // Function call ("call <name>")
+    Mul,             // Runtime scalar multiply ("mul x<rd>, x<rs1>, x<rs2>")
+    Spill,           // Stack spill ("sd x<rd>, <imm>(sp)")
+    Reload,          // Stack reload ("ld x<rd>, <imm>(sp)")
+    StackAdj,        // Stack pointer adjustment ("addi sp, sp, <imm>")
+    Ret,             // Function return ("ret")
 };
 
 struct Insn {
@@ -130,7 +136,8 @@ struct Insn {
 
     bool is_xbt_insn() const { return kind == InsnKind::Xbt; }
     bool is_control_flow() const {
-        return kind == InsnKind::BranchIfNotPos || kind == InsnKind::Jump;
+        return kind == InsnKind::BranchIfNotPos || kind == InsnKind::Jump ||
+               kind == InsnKind::Call || kind == InsnKind::Ret;
     }
     bool is_label() const { return kind == InsnKind::Label; }
 
@@ -140,7 +147,7 @@ struct Insn {
      * This is what lets a lowered function be handed straight to
      * `RiscvXbtCoprocessor::execute_program`, so the selector's output can be
      * conformance-tested against the IR interpreter instead of only eyeballed.
-     * Returns 0 for non-Xbt pseudo-instructions (labels / RV64I branches).
+     * Returns 0 for non-Xbt pseudo-instructions (labels / RV64I branches / calls / spills).
      */
     uint32_t encode() const {
         if (!is_xbt_insn()) return 0;
@@ -164,7 +171,10 @@ struct Insn {
             if (!comment.empty()) s += "  // " + comment;
             return s;
         }
-        if (kind == InsnKind::BranchIfNotPos || kind == InsnKind::Jump) {
+        if (kind == InsnKind::BranchIfNotPos || kind == InsnKind::Jump ||
+            kind == InsnKind::Call || kind == InsnKind::Mul ||
+            kind == InsnKind::Spill || kind == InsnKind::Reload ||
+            kind == InsnKind::StackAdj || kind == InsnKind::Ret) {
             std::string s = "  " + pseudo_asm;
             if (!comment.empty()) s += "  // " + comment;
             return s;
@@ -199,6 +209,10 @@ struct CompiledMetrics {
     size_t control_branches{0};
     size_t labels{0};
     size_t peak_regs{0};
+    size_t function_calls{0};
+    size_t runtime_muls{0};
+    size_t stack_spills{0};
+    size_t stack_reloads{0};
 };
 
 inline CompiledMetrics compute_metrics(const std::vector<Insn>& code) {
@@ -206,6 +220,35 @@ inline CompiledMetrics compute_metrics(const std::vector<Insn>& code) {
     for (const auto& ins : code) {
         if (ins.is_label()) {
             ++m.labels;
+            continue;
+        }
+        if (ins.kind == InsnKind::Call) {
+            ++m.function_calls;
+            ++m.total_insns;
+            continue;
+        }
+        if (ins.kind == InsnKind::Mul) {
+            ++m.runtime_muls;
+            ++m.total_insns;
+            if (ins.rd > 0)  m.peak_regs = std::max(m.peak_regs, static_cast<size_t>(ins.rd));
+            if (ins.rs1 > 0) m.peak_regs = std::max(m.peak_regs, static_cast<size_t>(ins.rs1));
+            if (ins.rs2 > 0) m.peak_regs = std::max(m.peak_regs, static_cast<size_t>(ins.rs2));
+            continue;
+        }
+        if (ins.kind == InsnKind::Spill) {
+            ++m.stack_spills;
+            ++m.total_insns;
+            if (ins.rd > 0) m.peak_regs = std::max(m.peak_regs, static_cast<size_t>(ins.rd));
+            continue;
+        }
+        if (ins.kind == InsnKind::Reload) {
+            ++m.stack_reloads;
+            ++m.total_insns;
+            if (ins.rd > 0) m.peak_regs = std::max(m.peak_regs, static_cast<size_t>(ins.rd));
+            continue;
+        }
+        if (ins.kind == InsnKind::StackAdj || ins.kind == InsnKind::Ret) {
+            ++m.total_insns;
             continue;
         }
         if (ins.is_control_flow()) {
@@ -274,6 +317,8 @@ inline void peephole_optimise(std::vector<Insn>& code) {
     auto reads_reg = [](const Insn& i, uint8_t reg) -> bool {
         if (reg == 0) return false;
         if (i.kind == InsnKind::BranchIfNotPos) return i.rs1 == reg;
+        if (i.kind == InsnKind::Mul) return i.rs1 == reg || i.rs2 == reg;
+        if (i.kind == InsnKind::Spill) return i.rd == reg;
         if (!i.is_xbt_insn()) return false;
         if (i.rs1 == reg) return true;
         if (!i.is_itype) {
@@ -302,7 +347,9 @@ inline void peephole_optimise(std::vector<Insn>& code) {
         return false;
     };
     auto unconditionally_writes_reg = [](const Insn& i, uint8_t reg) -> bool {
-        if (reg == 0 || !i.is_xbt_insn()) return false;
+        if (reg == 0) return false;
+        if (i.kind == InsnKind::Mul || i.kind == InsnKind::Reload) return i.rd == reg;
+        if (!i.is_xbt_insn()) return false;
         if (i.rd != reg) return false;
         if (i.is_itype) return true; // LI5 unconditionally overwrites rd
         const auto f3 = static_cast<Funct3>(i.funct3);
@@ -477,6 +524,12 @@ public:
         LoweredFunction out;
         out.name = f.name;
         reset();
+        current_out_ = &out;
+
+        has_calls_ = contains_calls(f.body);
+        if (has_calls_) {
+            stack_frame_size_ = std::max(stack_frame_size_, 16);
+        }
 
         for (const auto& p : f.parameters) {
             int r = alloc_reg();
@@ -487,9 +540,51 @@ public:
         }
 
         lower_statements(f.body, out);
+
+        if (stack_frame_size_ > 0) {
+            std::vector<Insn> prologue;
+            Insn adj_down;
+            adj_down.kind = InsnKind::StackAdj;
+            adj_down.imm = static_cast<uint32_t>(-stack_frame_size_);
+            adj_down.pseudo_asm = "addi sp, sp, -" + std::to_string(stack_frame_size_);
+            adj_down.comment = "allocate stack frame (" +
+                               std::to_string(stack_frame_size_) + " bytes)";
+            prologue.push_back(adj_down);
+
+            if (has_calls_) {
+                Insn save_ra;
+                save_ra.kind = InsnKind::Spill;
+                save_ra.rd = 1; // x1 = ra
+                save_ra.imm = 0;
+                save_ra.pseudo_asm = "sd ra, 0(sp)";
+                save_ra.comment = "save return address";
+                prologue.push_back(save_ra);
+            }
+
+            out.code.insert(out.code.begin(), prologue.begin(), prologue.end());
+
+            if (has_calls_) {
+                Insn restore_ra;
+                restore_ra.kind = InsnKind::Reload;
+                restore_ra.rd = 1;
+                restore_ra.imm = 0;
+                restore_ra.pseudo_asm = "ld ra, 0(sp)";
+                restore_ra.comment = "restore return address";
+                out.code.push_back(restore_ra);
+            }
+
+            Insn adj_up;
+            adj_up.kind = InsnKind::StackAdj;
+            adj_up.imm = static_cast<uint32_t>(stack_frame_size_);
+            adj_up.pseudo_asm = "addi sp, sp, " + std::to_string(stack_frame_size_);
+            adj_up.comment = "free stack frame";
+            out.code.push_back(adj_up);
+        }
+
         peephole_optimise(out.code);
         out.ternary_regs_used = next_reg_;
         out.metrics = compute_metrics(out.code);
+        current_out_ = nullptr;
         return out;
     }
 
@@ -513,8 +608,13 @@ private:
     int next_reg_{1};
     uint32_t next_label_id_{0};
     std::map<uint32_t, int> symbol_reg_;
+    std::map<uint32_t, int> symbol_spill_offset_;
     std::set<int> free_regs_;
     std::set<int> used_registers_;
+    LoweredFunction* current_out_{nullptr};
+    int spill_slot_count_{0};
+    int stack_frame_size_{0};
+    bool has_calls_{false};
 
     std::map<ir::Op, std::vector<SelectionRule>> rules_;
 
@@ -522,8 +622,21 @@ private:
         next_reg_ = 1;
         next_label_id_ = 0;
         symbol_reg_.clear();
+        symbol_spill_offset_.clear();
         free_regs_.clear();
         used_registers_.clear();
+        spill_slot_count_ = 0;
+        stack_frame_size_ = 0;
+        has_calls_ = false;
+        current_out_ = nullptr;
+    }
+
+    int allocate_spill_slot() {
+        int slot = spill_slot_count_++;
+        int offset = (has_calls_ ? 16 : 0) + slot * 16;
+        int needed = offset + 16;
+        stack_frame_size_ = std::max(stack_frame_size_, ((needed + 15) / 16) * 16);
+        return offset;
     }
 
     // -- register allocation ------------------------------------------------
@@ -542,13 +655,78 @@ private:
             used_registers_.insert(r);
             return r;
         }
-        if (next_reg_ >= available_)
-            throw std::runtime_error(
-                "xbt: out of ternary registers (limit " + std::to_string(available_) +
-                "); spilling is not implemented");
-        int r = next_reg_++;
-        used_registers_.insert(r);
-        return r;
+        if (next_reg_ < available_) {
+            int r = next_reg_++;
+            used_registers_.insert(r);
+            return r;
+        }
+
+        // Out of physical registers: spill a bound symbol to the stack frame.
+        for (auto it = symbol_reg_.begin(); it != symbol_reg_.end(); ++it) {
+            uint32_t sym = it->first;
+            int victim_reg = it->second;
+            if (victim_reg > REG_ZERO) {
+                int offset = allocate_spill_slot();
+                symbol_spill_offset_[sym] = offset;
+
+                if (current_out_) {
+                    Insn spill;
+                    spill.kind = InsnKind::Spill;
+                    spill.rd = static_cast<uint8_t>(victim_reg);
+                    spill.imm = static_cast<uint32_t>(offset);
+                    spill.pseudo_asm = "sd x" + std::to_string(victim_reg) +
+                                       ", " + std::to_string(offset) + "(sp)";
+                    spill.comment = "spill sym#" + std::to_string(sym) +
+                                    " -> stack slot @" + std::to_string(offset);
+                    current_out_->code.push_back(spill);
+                }
+
+                symbol_reg_.erase(it);
+                return victim_reg;
+            }
+        }
+
+        // If no bound symbol can be spilled, spill an older temporary.
+        int victim = (available_ > 2) ? (available_ - 1) : 1;
+        int offset = allocate_spill_slot();
+        if (current_out_) {
+            Insn spill;
+            spill.kind = InsnKind::Spill;
+            spill.rd = static_cast<uint8_t>(victim);
+            spill.imm = static_cast<uint32_t>(offset);
+            spill.pseudo_asm = "sd x" + std::to_string(victim) +
+                               ", " + std::to_string(offset) + "(sp)";
+            spill.comment = "spill temporary t" + std::to_string(victim) +
+                            " -> stack slot @" + std::to_string(offset);
+            current_out_->code.push_back(spill);
+        }
+        return victim;
+    }
+
+    int lookup_symbol(uint32_t symbol) {
+        auto it = symbol_reg_.find(symbol);
+        if (it != symbol_reg_.end()) {
+            return it->second;
+        }
+        auto sp = symbol_spill_offset_.find(symbol);
+        if (sp != symbol_spill_offset_.end()) {
+            int offset = sp->second;
+            int r = alloc_reg();
+            if (current_out_) {
+                Insn reload;
+                reload.kind = InsnKind::Reload;
+                reload.rd = static_cast<uint8_t>(r);
+                reload.imm = static_cast<uint32_t>(offset);
+                reload.pseudo_asm = "ld x" + std::to_string(r) +
+                                    ", " + std::to_string(offset) + "(sp)";
+                reload.comment = "reload sym#" + std::to_string(symbol) +
+                                 " <- stack slot @" + std::to_string(offset);
+                current_out_->code.push_back(reload);
+            }
+            symbol_reg_[symbol] = r;
+            return r;
+        }
+        throw std::runtime_error("xbt: unknown symbol #" + std::to_string(symbol));
     }
 
     /**
@@ -559,6 +737,24 @@ private:
         if (r > REG_ZERO && !is_bound_reg(r)) {
             free_regs_.insert(r);
         }
+    }
+
+    static bool expr_contains_calls(const ir::Expression& e) {
+        if (!e) return false;
+        if (e->op == ir::Op::Call) return true;
+        for (const auto& op : e->operands) {
+            if (expr_contains_calls(op)) return true;
+        }
+        return false;
+    }
+
+    static bool contains_calls(const std::vector<ir::Statement>& stmts) {
+        for (const auto& s : stmts) {
+            if (expr_contains_calls(s.value)) return true;
+            if (contains_calls(s.body)) return true;
+            if (contains_calls(s.alternative)) return true;
+        }
+        return false;
     }
 
     // -- instruction helpers ------------------------------------------------
@@ -724,10 +920,7 @@ inline int RuleContext::lower(const ir::Expression& e) const {
     return sel->lower_expr(e, out);
 }
 inline int RuleContext::lookup_symbol(uint32_t symbol) const {
-    auto it = sel->symbol_reg_.find(symbol);
-    if (it == sel->symbol_reg_.end())
-        throw std::runtime_error("xbt: unknown symbol #" + std::to_string(symbol));
-    return it->second;
+    return sel->lookup_symbol(symbol);
 }
 inline int RuleContext::alloc() const { return sel->alloc_reg(); }
 inline void RuleContext::release(int r) const { sel->free_reg(r); }
@@ -1073,6 +1266,30 @@ inline void InstructionSelector::register_default_rules() {
         "trit-extract instruction, so a runtime multiplier cannot be "
         "decomposed into partial products"});
 
+    // ---------------- runtime-by-runtime scalar multiply --------------------
+    // Fallback when neither operand is a compile-time constant (or on targets
+    // without native Xbt Group2 MUL), lowering to an RV64 runtime multiply.
+    add_rule({ir::Op::Mul, "runtime-mul", 10,
+        [](const ir::Expression&) { return true; },
+        [](const RuleContext& c, const ir::Expression& e) -> int {
+            int a = c.lower(e->operands.at(0));
+            int b = c.lower(e->operands.at(1));
+            int d = c.alloc();
+            Insn mul_insn;
+            mul_insn.kind = InsnKind::Mul;
+            mul_insn.rd = static_cast<uint8_t>(d);
+            mul_insn.rs1 = static_cast<uint8_t>(a);
+            mul_insn.rs2 = static_cast<uint8_t>(b);
+            mul_insn.pseudo_asm = "mul x" + std::to_string(d) + ", x" +
+                                  std::to_string(a) + ", x" + std::to_string(b);
+            mul_insn.comment = "runtime scalar multiply: t" + std::to_string(d) +
+                               " = t" + std::to_string(a) + " * t" + std::to_string(b);
+            c.emit(mul_insn);
+            c.release(a); c.release(b);
+            return d;
+        },
+        "general runtime-by-runtime scalar multiply"});
+
     // ---------------- sign of a difference ----------------
     // Shared helper: every comparison is a predicate over sign(a - b).
     auto emit_sign_of_diff = [](const RuleContext& c,
@@ -1186,6 +1403,45 @@ inline void InstructionSelector::register_default_rules() {
             c.release(cond); c.release(pos); c.release(zero); c.release(neg);
             return d;
         }});
+
+    // ---------------- function call ------------------------------------------
+    add_rule({ir::Op::Call, "call", 5,
+        [](const ir::Expression&) { return true; },
+        [](const RuleContext& c, const ir::Expression& e) -> int {
+            std::vector<int> arg_regs;
+            arg_regs.reserve(e->operands.size());
+            for (const auto& arg_expr : e->operands) {
+                arg_regs.push_back(c.lower(arg_expr));
+            }
+
+            for (size_t i = 0; i < arg_regs.size(); ++i) {
+                int target_reg = static_cast<int>(i + 1);
+                if (arg_regs[i] != target_reg) {
+                    c.emit(c.sel->make_r(Funct3::KSADD, 0, target_reg, arg_regs[i], 0,
+                        "move t" + std::to_string(target_reg) + ", t" +
+                        std::to_string(arg_regs[i]) + "   // arg #" + std::to_string(i)));
+                }
+                c.release(arg_regs[i]);
+            }
+
+            Insn call_insn;
+            call_insn.kind = InsnKind::Call;
+            call_insn.pseudo_asm = "call " + e->name;
+            call_insn.comment = "call function " + e->name + " (" +
+                                std::to_string(e->operands.size()) + " args)";
+            c.emit(call_insn);
+
+            if (e->type == ir::Type::Void) {
+                return InstructionSelector::REG_ZERO;
+            }
+
+            int ret_dst = c.alloc();
+            if (ret_dst != 1) {
+                c.emit(c.sel->make_r(Funct3::KSADD, 0, ret_dst, 1, 0,
+                    "move t" + std::to_string(ret_dst) + ", t1   // return value"));
+            }
+            return ret_dst;
+        }});
 }
 
 // --------------------------------------------------------------------------
@@ -1287,13 +1543,28 @@ inline void InstructionSelector::lower_statements(
                     free_reg(r);
                 }
             } else {
-                if (r == REG_ZERO || is_bound_reg(r)) {
-                    int dst = alloc_reg();
-                    out.code.push_back(make_r(Funct3::KSADD, 0, dst, r, 0,
-                        "move t" + std::to_string(dst) + ", t" + std::to_string(r)));
-                    r = dst;
+                auto sp = symbol_spill_offset_.find(s.symbol);
+                if (sp != symbol_spill_offset_.end()) {
+                    int offset = sp->second;
+                    Insn spill;
+                    spill.kind = InsnKind::Spill;
+                    spill.rd = static_cast<uint8_t>(r);
+                    spill.imm = static_cast<uint32_t>(offset);
+                    spill.pseudo_asm = "sd x" + std::to_string(r) + ", " +
+                                       std::to_string(offset) + "(sp)";
+                    spill.comment = "spill assign sym#" + std::to_string(s.symbol) +
+                                    " -> stack slot @" + std::to_string(offset);
+                    out.code.push_back(spill);
+                    free_reg(r);
+                } else {
+                    if (r == REG_ZERO || is_bound_reg(r)) {
+                        int dst = alloc_reg();
+                        out.code.push_back(make_r(Funct3::KSADD, 0, dst, r, 0,
+                            "move t" + std::to_string(dst) + ", t" + std::to_string(r)));
+                        r = dst;
+                    }
+                    symbol_reg_[s.symbol] = r;
                 }
-                symbol_reg_[s.symbol] = r;
             }
             break;
         }
@@ -1532,7 +1803,9 @@ inline std::string emit_assembly(const LoweredFunction& f) {
     s += "    .globl " + f.name + "\n";
     s += f.name + ":\n";
     for (const auto& i : f.code) s += i.text() + "\n";
-    if (f.code.empty() || !f.code.back().comment.empty() || !f.code.back().is_xbt_insn())
+    bool already_has_ret = !f.code.empty() && f.code.back().kind == InsnKind::Ret;
+    if (!already_has_ret &&
+        (f.code.empty() || !f.code.back().comment.empty() || !f.code.back().is_xbt_insn()))
         s += "  ret\n";
     s += "\n";
     return s;

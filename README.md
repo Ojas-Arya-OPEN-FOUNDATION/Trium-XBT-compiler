@@ -55,7 +55,7 @@ flowchart TD
         IR --> ISEL
         ISEL --> SIM["POSIX-Pipe ExternalSimulator\nConformance Runner & Golden Model (14,331 checks)"]
         ISEL --> RTL["Synthesizable SystemVerilog RTL\nhw/riscv_xbt_extension.sv • hw/trium_cpu_core.sv"]
-        RTL --> EDA["Verilator / Icarus (tb_riscv_xbt_alu.sv)\nYosys (synth_xbt_yosys.ys) • Chipyard WithXbtRoCCAccelerator"]
+        RTL --> EDA["Verilator / Icarus (tb_riscv_xbt_alu.sv • tb_trium_cpu_core.sv)\nYosys (synth_xbt_yosys.ys) • Chipyard WithXbtRoCCAccelerator"]
     end
 
     style Shared fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
@@ -292,15 +292,31 @@ python3 tools/run_hardware_benchmarks.py
 ```bash
 # Verilator lint + binary simulation of riscv_xbt_alu (v1 + v2 ISA) & Kogge-Stone v2
 verilator --lint-only -Wall -Wno-DECLFILENAME hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv
-verilator --binary -Wall -Wno-DECLFILENAME hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv \
-  && ./obj_dir/Vtb_riscv_xbt_alu
+verilator --binary -Wall -Wno-DECLFILENAME --top-module tb_riscv_xbt_alu \
+  hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv && ./obj_dir/Vtb_riscv_xbt_alu
+
+# Verilator simulation of the standalone 5-stage pipelined CPU core (hw/trium_cpu_core.sv)
+# Executes real multi-instruction loop + XBT.DOT64 program, retiring 34 instructions over 67 cycles
+verilator --binary -Wall -Wno-DECLFILENAME -Wno-UNUSED --top-module tb_trium_cpu_core \
+  hw/riscv_xbt_extension.sv hw/trium_cpu_core.sv hw/tb_trium_cpu_core.sv && ./obj_dir/Vtb_trium_cpu_core
 
 # Icarus Verilog simulation (IEEE 1800-2017 SystemVerilog)
 iverilog -g2012 -o tb_xbt hw/riscv_xbt_extension.sv hw/tb_riscv_xbt_alu.sv && vvp tb_xbt
 
-# Yosys CMOS-2 standard-cell synthesis & exact gate/cell statistics
+# Yosys CMOS-2 standard-cell synthesis & exact gate/cell statistics (hw/cmos2_map.v)
 yosys -s hw/synth_xbt_yosys.ys
 ```
+
+#### Synthesized CMOS-2 Standard-Cell Gate Counts (Yosys 0.71)
+
+| RTL Module | CMOS-2 Cell Count | Description |
+| :--- | :--- | :--- |
+| `xbt_btha64` | **1,664 cells** | 64-trit Dual-Rail Balanced Ternary Half-Adder |
+| `xbt_kogge_stone_adder64` | **19,192 cells** | 64-trit 6-Stage Parallel-Prefix Adder (v1) |
+| `xbt_kogge_stone_adder64_v2` | **16,128 cells** | 64-trit Monotone Lattice Prefix Adder (v2, **16.0% smaller**) |
+| `xbt_planar_dot64` | **2,738 cells** | 64-trit Planar Dot Product & Hamming Accumulator |
+| `xbt_base243_decoder` | **2,033 cells** | 5-trit Base-243 Compressed Stream Decoder |
+| `riscv_xbt_alu` | **14,635 cells** (local) / **43,590 cells** (hierarchical) | Complete RISC-V Custom-0 (0x0B) Execution Unit |
 
 *Note: When `verilator`, `iverilog`, or `yosys` are absent on a machine, `tools/run_hardware_benchmarks.py` records those stages explicitly as `skipped` (`tool_not_installed`) rather than substituting analytical estimates. Pass `--require-eda` in CI to enforce EDA availability.*
 
@@ -328,8 +344,8 @@ For SoC integration, `verification/chipyard/XbtRoCCAccelerator.scala` and `verif
 | **Bit-Sliced Ternary GEMM (`TernaryMicroKernel.hpp`)** | **Measured & Verified** | Bit-exact `int64` GEMM; `222.07 G MAC/s` on Xeon 8481C (`2.00×` BLAS FP32); `105.20 GOPS` (`1.27×` `vdotq_s32`) on Apple M2 | ARM64 dual-rail popcount still uses scalar `uint64_t` popcount (NEON `vcntq_u8 + vpadalq_u8` optimization is next) |
 | **`libtrium_sdk` (C, C++20, Python, Rust)** | **Stable ABI v1 (API 1.3)** | Parity-checked across C/C++/Python/Rust; explicit backends (`cpu`, `vulkan`, `native`), no silent fallbacks | Requires explicit `BT_SDK_LIBRARY` path for local source builds; no prebuilt PyPI/crates.io binaries yet |
 | **Vulkan / CUDA Map Kernels** | **Functional / Host-Dependent** | GLSL SPIR-V emission + Vulkan compute path (`include/Ternary/Kernel/Vulkan.hpp`); CUDA map runner (`tools/cuda_map.py`) | Requires host Vulkan/CUDA runtime; GEMM GPU dispatch remains under qualification (`docs/HARDWARE_GPU_QUALIFICATION.md`) |
-| **Declarative Targets & `XbtInstructionSelector`** | **Verified in Software** | `targets/*.yaml` schema validation, C++ codegen, rule-driven v1+v2 selection, real POSIX-pipe `ExternalSimulator` | Targets emit assembly/simulation contracts; no upstream binutils/LLVM MC binary linker yet |
-| **RISC-V `Xbt` RTL & Chipyard RoCC (`hw/`)** | **Pre-Silicon RTL** | Synthesizable IEEE 1800-2017 SystemVerilog (`riscv_xbt_extension.sv`, `trium_cpu_core.sv`), Verilator/Icarus TB, Yosys script, Chipyard `WithXbtRoCCAccelerator` | **Pre-silicon**: not yet taped out, place-and-routed to GDSII, or benchmarked on physical FPGA hardware |
+| **Declarative Targets & `XbtInstructionSelector`** | **Verified in Software** | `targets/*.yaml` schema validation, C++ codegen, rule-driven v1+v2 selection, function `Call`, runtime-by-runtime `Mul`, stack spilling under register pressure, real POSIX-pipe `ExternalSimulator` | Targets emit assembly/simulation contracts; no upstream binutils/LLVM MC binary linker yet |
+| **RISC-V `Xbt` RTL & Chipyard RoCC (`hw/`)** | **Pre-Silicon RTL & Verified** | Synthesizable IEEE 1800-2017 SystemVerilog (`riscv_xbt_extension.sv`, `trium_cpu_core.sv`), Verilator/Icarus ALU & 5-stage CPU testbenches (100% pass), CMOS-2 Yosys synthesis (cell counts verified), Chipyard `WithXbtRoCCAccelerator` | **Pre-silicon**: not yet taped out, place-and-routed to GDSII, or benchmarked on physical FPGA hardware |
 
 ---
 
@@ -354,7 +370,7 @@ For SoC integration, `verification/chipyard/XbtRoCCAccelerator.scala` and `verif
 │   ├── python/trium/                           # Python SDK package (`trium`)
 │   └── rust/                                   # Rust crate (`bt_runtime::sdk`)
 ├── targets/                                    # Declarative YAML hardware descriptions
-├── hw/                                         # riscv_xbt_extension.sv, trium_cpu_core.sv, tb_riscv_xbt_alu.sv, synth_xbt_yosys.ys
+├── hw/                                         # riscv_xbt_extension.sv, trium_cpu_core.sv, tb_riscv_xbt_alu.sv, tb_trium_cpu_core.sv, cmos2_map.v, synth_xbt_yosys.ys
 ├── proofs/rocq/                                # 4 Rocq 9 formal proof files (66 theorems, 0 axioms)
 ├── verification/                               # Golden model (14,331 checks), Z3 suite (11), Chipyard RoCC
 ├── tools/                                      # trium_workflow.py, gen_targets.py, gen_backend.py, ternary_bench.cpp, run_hardware_benchmarks.py

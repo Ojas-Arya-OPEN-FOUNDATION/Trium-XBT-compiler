@@ -297,30 +297,25 @@ void test_target_routing() {
           "ternary-torus emits the native MUL");
 }
 
-void test_runtime_refusal() {
-    std::printf("  runtime x runtime is refused, not silently wrong\n");
-    // Two runtime values cannot be decomposed: extracting a runtime operand's
-    // trits is impossible without a trit-extract instruction the ISA lacks.
-    bool threw = false;
-    std::string msg;
-    try {
-        ir::Function f;
-        f.name = "f"; f.result = ir::Type::Int39;
-        f.parameters.push_back({1u, ir::Type::Int39});
-        f.parameters.push_back({2u, ir::Type::Int39});
-        ir::Statement r;
-        r.kind = ir::StatementKind::Return; r.type = ir::Type::Int39;
-        r.value = mul(param(1), param(2));
-        f.body.push_back(r);
-        InstructionSelector sel;
-        (void)sel.lower_function(f);
-    } catch (const std::exception& e) {
-        threw = true;
-        msg = e.what();
+void test_runtime_multiply() {
+    std::printf("  runtime x runtime multiply lowers to runtime mul instruction\n");
+    ir::Function f;
+    f.name = "f"; f.result = ir::Type::Int39;
+    f.parameters.push_back({1u, ir::Type::Int39});
+    f.parameters.push_back({2u, ir::Type::Int39});
+    ir::Statement r;
+    r.kind = ir::StatementKind::Return; r.type = ir::Type::Int39;
+    r.value = mul(param(1), param(2));
+    f.body.push_back(r);
+    InstructionSelector sel;
+    auto lowered = sel.lower_function(f);
+    check(!lowered.code.empty(), "runtime multiply lowered into instructions");
+    bool has_mul = false;
+    for (const auto& ins : lowered.code) {
+        if (ins.kind == InsnKind::Mul) has_mul = true;
     }
-    check(threw, "runtime x runtime multiply is refused");
-    check(msg.find("constant") != std::string::npos,
-          "the refusal explains what would have to be true");
+    check(has_mul, "runtime multiply emitted InsnKind::Mul");
+    check(lowered.metrics.runtime_muls == 1, "metrics record exactly 1 runtime mul");
 }
 
 }  // namespace
@@ -331,7 +326,7 @@ int main() {
     test_shl3_executes();
     test_constant_multiply();
     test_target_routing();
-    test_runtime_refusal();
+    test_runtime_multiply();
     std::printf("%d checks, %d failures\n", g_checks, g_fails);
     return g_fails == 0 ? 0 : 1;
 }

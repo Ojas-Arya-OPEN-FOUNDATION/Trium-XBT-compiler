@@ -65,7 +65,14 @@ Testing/
 tools/.toolchains/
 ffi/rust/target/
 
-# Generated conformance vectors (regenerate with:
+# Verilator obj_dir
+obj_dir/
+
+# Experiments and local sandbox
+experiments/
+gpu_portable/
+
+# Conformance vectors (regenerate with:
 #   python3 -m verification.gen_vectors)
 # These are derived from the verified specification, so they are build
 # artifacts, not sources. Roughly 11 MB.

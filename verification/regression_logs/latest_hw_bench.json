@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "timestamp_utc": "2026-11-20T12:56:27.501055+00:00",
+  "timestamp_utc": "2026-11-21T05:24:55.089774+00:00",
   "platform": "Darwin arm64",
   "python": "3.9.6",
   "tools_detected": {
-    "verilator": false,
+    "verilator": true,
     "iverilog": false,
-    "yosys": false,
+    "yosys": true,
     "g++": true
   },
   "suites": {
@@ -14,30 +14,36 @@
       "status": "pass",
       "checks": 14331,
       "failures": 0,
-      "elapsed_ms": 650.16,
-      "dot64_10k_ms": 466.52,
+      "elapsed_ms": 632.45,
+      "dot64_10k_ms": 453.78,
       "dot64_checksum": 39
     },
     "external_simulator_pipe": {
       "status": "pass",
-      "elapsed_ms": 1404.43,
+      "elapsed_ms": 1320.71,
       "result": "2/2"
     },
     "rtl_testbench": {
-      "status": "skipped",
-      "reason": "tool_not_installed",
-      "missing_tools": [
-        "verilator",
-        "iverilog"
-      ]
+      "status": "pass",
+      "tool": "verilator",
+      "returncode": 0,
+      "elapsed_ms": 10197.61,
+      "stdout_tail": "=== Running tb_riscv_xbt_alu (v1 + v2 + KSADD_v2) ===\n=== tb_riscv_xbt_alu summary: 276 passed, 0 failed ===\n- /Users/mohana/Desktop/Balanced ternary system /hw/tb_riscv_xbt_alu.sv:496: Verilog $finish\n- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01\n- Verilator: $finish at 519ns; walltime 0.000 s; speed 2.227 ms/s\n- Verilator: cpu 0.000 s on 1 threads; allocated 2 MB\n",
+      "stderr_tail": ""
     },
     "yosys_synthesis": {
-      "status": "skipped",
-      "reason": "tool_not_installed",
-      "missing_tools": [
-        "yosys"
-      ]
+      "status": "pass",
+      "tool": "yosys",
+      "elapsed_ms": 6131.22,
+      "module_cell_counts": {
+        "xbt_btha64": 1664,
+        "xbt_kogge_stone_adder64": 19192,
+        "xbt_kogge_stone_adder64_v2": 16128,
+        "xbt_planar_dot64": 2738,
+        "xbt_base243_decoder": 2033,
+        "riscv_xbt_alu": 14635
+      }
     }
   },
-  "overall_status": "partial_eda_skipped"
+  "overall_status": "pass"
 }

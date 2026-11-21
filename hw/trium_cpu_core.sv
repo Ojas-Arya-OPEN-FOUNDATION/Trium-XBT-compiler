@@ -18,6 +18,7 @@
 //   - Memory Hierarchy: Word / Half / Byte access with Base-243 1-cycle unpacker
 // =============================================================================
 
+`timescale 1ns/1ps
 `default_nettype none
 
 // -----------------------------------------------------------------------------
@@ -525,6 +526,7 @@ module trium_cpu_core (
     logic signed [63:0] dot_res_scalar;
     logic [7:0]         dot_res_biased;
     logic [63:0]        dot_res_p, dot_res_n;
+    wire                _unused_core_signals = &{1'b0, branch_sign, ks_cout_p, ks_cout_n, dot_res_scalar[63:8], 1'b0};
 
     xbt_planar_dot64 dot_inst (
         .a_p     (alu_in_a_p),

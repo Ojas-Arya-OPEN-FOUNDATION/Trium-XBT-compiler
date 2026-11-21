@@ -15,7 +15,9 @@
 //   5. riscv_xbt_alu              - Top-Level RISC-V RoCC / Custom-0 Execution Unit (v1 + v2)
 // =============================================================================
 
+`timescale 1ns/1ps
 `default_nettype none
+/* verilator lint_off MULTITOP */
 
 // -----------------------------------------------------------------------------
 // 1. 64-Trit Dual-Rail Balanced Ternary Half-Adder (BTHA)
@@ -78,15 +80,13 @@ module xbt_kogge_stone_adder64 (
     logic [63:0] ym_p [0:6];
     logic [63:0] ym_n [0:6];
 
-    always_comb begin
-        // Level 0 initialization
-        yp_p[0] = (a_p | b_p) & ~(a_n | b_n);
-        yp_n[0] = 64'd0;
-        y0_p[0] = c1_p;
-        y0_n[0] = c1_n;
-        ym_p[0] = 64'd0;
-        ym_n[0] = (a_n | b_n) & ~(a_p | b_p);
-    end
+    // Level 0 initialization
+    assign yp_p[0] = (a_p | b_p) & ~(a_n | b_n);
+    assign yp_n[0] = 64'd0;
+    assign y0_p[0] = c1_p;
+    assign y0_n[0] = c1_n;
+    assign ym_p[0] = 64'd0;
+    assign ym_n[0] = (a_n | b_n) & ~(a_p | b_p);
 
     // 6 Kogge-Stone parallel-prefix doubling stages: d = 1, 2, 4, 8, 16, 32
     genvar s;
@@ -95,32 +95,26 @@ module xbt_kogge_stone_adder64 (
             localparam int D = 1 << s;
             localparam logic [63:0] LOW_MASK = (64'd1 << D) - 64'd1;
 
-            logic [63:0] lp_p, lp_n, l0_p, l0_n, lm_p, lm_n;
-            logic [63:0] zp, z0, zm;
+            wire [63:0] lp_p = (yp_p[s] << D) | LOW_MASK;
+            wire [63:0] lp_n = (yp_n[s] << D);
+            wire [63:0] l0_p = (y0_p[s] << D);
+            wire [63:0] l0_n = (y0_n[s] << D);
+            wire [63:0] lm_p = (ym_p[s] << D);
+            wire [63:0] lm_n = (ym_n[s] << D) | LOW_MASK;
 
-            always_comb begin
-                // Shift lower prefix state by D; fill low D lanes with identity map I
-                lp_p = (yp_p[s] << D) | LOW_MASK;
-                lp_n = (yp_n[s] << D);
-                l0_p = (y0_p[s] << D);
-                l0_n = (y0_n[s] << D);
-                lm_p = (ym_p[s] << D);
-                lm_n = (ym_n[s] << D) | LOW_MASK;
+            wire [63:0] zp = ~(lp_p | lp_n);
+            wire [63:0] z0 = ~(l0_p | l0_n);
+            wire [63:0] zm = ~(lm_p | lm_n);
 
-                zp = ~(lp_p | lp_n);
-                z0 = ~(l0_p | l0_n);
-                zm = ~(lm_p | lm_n);
+            // Compose H o L for all 64 lanes in parallel
+            assign yp_p[s+1] = (lp_p & yp_p[s]) | (zp & y0_p[s]) | (lp_n & ym_p[s]);
+            assign yp_n[s+1] = (lp_p & yp_n[s]) | (zp & y0_n[s]) | (lp_n & ym_n[s]);
 
-                // Compose H o L for all 64 lanes in parallel
-                yp_p[s+1] = (lp_p & yp_p[s]) | (zp & y0_p[s]) | (lp_n & ym_p[s]);
-                yp_n[s+1] = (lp_p & yp_n[s]) | (zp & y0_n[s]) | (lp_n & ym_n[s]);
+            assign y0_p[s+1] = (l0_p & yp_p[s]) | (z0 & y0_p[s]) | (l0_n & ym_p[s]);
+            assign y0_n[s+1] = (l0_p & yp_n[s]) | (z0 & y0_n[s]) | (l0_n & ym_n[s]);
 
-                y0_p[s+1] = (l0_p & yp_p[s]) | (z0 & y0_p[s]) | (l0_n & ym_p[s]);
-                y0_n[s+1] = (l0_p & yp_n[s]) | (z0 & y0_n[s]) | (l0_n & ym_n[s]);
-
-                ym_p[s+1] = (lm_p & yp_p[s]) | (zm & y0_p[s]) | (lm_n & ym_p[s]);
-                ym_n[s+1] = (lm_p & yp_n[s]) | (zm & y0_n[s]) | (lm_n & ym_n[s]);
-            end
+            assign ym_p[s+1] = (lm_p & yp_p[s]) | (zm & y0_p[s]) | (lm_n & ym_p[s]);
+            assign ym_n[s+1] = (lm_p & yp_n[s]) | (zm & y0_n[s]) | (lm_n & ym_n[s]);
         end
     endgenerate
 
@@ -174,36 +168,33 @@ module xbt_kogge_stone_adder64_v2 (
 
         s1_p = {d_p[63:1], bit0_sp};
         s1_n = {d_n[63:1], bit0_sn};
-
-        f0_p[0] = {c1_p[63:1], (c1_p[0] | bit0_cp) & ~(c1_n[0] | bit0_cn)};
-        f0_n[0] = {c1_n[63:1], (c1_n[0] | bit0_cn) & ~(c1_p[0] | bit0_cp)};
-        fp_p[0] = (a_p | b_p) & ~(a_n | b_n);
-        fp_n[0] = 64'd0;
-        fm_p[0] = 64'd0;
-        fm_n[0] = (a_n | b_n) & ~(a_p | b_p);
     end
+
+    assign f0_p[0] = {c1_p[63:1], (c1_p[0] | bit0_cp) & ~(c1_n[0] | bit0_cn)};
+    assign f0_n[0] = {c1_n[63:1], (c1_n[0] | bit0_cn) & ~(c1_p[0] | bit0_cp)};
+    assign fp_p[0] = (a_p | b_p) & ~(a_n | b_n);
+    assign fp_n[0] = 64'd0;
+    assign fm_p[0] = 64'd0;
+    assign fm_n[0] = (a_n | b_n) & ~(a_p | b_p);
 
     // Stages 0..4 (shifts 1, 2, 4, 8, 16): Monotone Lattice Absorption (No LOW_MASK needed!)
     genvar s;
     generate
         for (s = 0; s < 5; s = s + 1) begin : gen_ks_fast
             localparam int SHIFT = 1 << s;
-            logic [63:0] l_fm_p, l_fm_n, l_f0_p, l_f0_n, l_fp_p, l_fp_n;
-            always_comb begin
-                l_fm_p = fm_p[s] << SHIFT;
-                l_fm_n = fm_n[s] << SHIFT;
-                l_f0_p = f0_p[s] << SHIFT;
-                l_f0_n = f0_n[s] << SHIFT;
-                l_fp_p = fp_p[s] << SHIFT;
-                l_fp_n = fp_n[s] << SHIFT;
+            wire [63:0] l_fm_p = fm_p[s] << SHIFT;
+            wire [63:0] l_fm_n = fm_n[s] << SHIFT;
+            wire [63:0] l_f0_p = f0_p[s] << SHIFT;
+            wire [63:0] l_f0_n = f0_n[s] << SHIFT;
+            wire [63:0] l_fp_p = fp_p[s] << SHIFT;
+            wire [63:0] l_fp_n = fp_n[s] << SHIFT;
 
-                fm_p[s+1] = fm_p[s] | (f0_p[s] & ~l_fm_n) | (fp_p[s] & l_fm_p);
-                fm_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fm_p) | (fm_n[s] & l_fm_n);
-                f0_p[s+1] = fm_p[s] | (f0_p[s] & ~l_f0_n) | (fp_p[s] & l_f0_p);
-                f0_n[s+1] = fp_n[s] | (f0_n[s] & ~l_f0_p) | (fm_n[s] & l_f0_n);
-                fp_p[s+1] = fm_p[s] | (f0_p[s] & ~l_fp_n) | (fp_p[s] & l_fp_p);
-                fp_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fp_n);
-            end
+            assign fm_p[s+1] = fm_p[s] | (f0_p[s] & ~l_fm_n) | (fp_p[s] & l_fm_p);
+            assign fm_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fm_p) | (fm_n[s] & l_fm_n);
+            assign f0_p[s+1] = fm_p[s] | (f0_p[s] & ~l_f0_n) | (fp_p[s] & l_f0_p);
+            assign f0_n[s+1] = fp_n[s] | (f0_n[s] & ~l_f0_p) | (fm_n[s] & l_f0_n);
+            assign fp_p[s+1] = fm_p[s] | (f0_p[s] & ~l_fp_n) | (fp_p[s] & l_fp_p);
+            assign fp_n[s+1] = fp_n[s] | (f0_n[s] & ~l_fp_p) | (fm_n[s] & l_fp_n);
         end
     endgenerate
 
@@ -552,6 +543,7 @@ module riscv_xbt_alu (
     logic [63:0] shl3_keep;
     logic        shl3_ovf;
     logic [5:0]  li5_shamt;
+    wire         _unused_bits = &{1'b0, rs1_scalar[63:8], imm12[11], 1'b0};
 
     xbt_btha64 u_btha (
         .a_p     (rs1_p),
