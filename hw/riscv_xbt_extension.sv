@@ -658,6 +658,43 @@ module riscv_xbt_alu #(
     // Shared combinational helpers for v1/v2 ops
     logic [63:0] prod_p, prod_n;
     logic        sign_p, sign_n;
+    // 6-level parallel binary tree for sign(rs1): O(log2 64) = 6 stages (~12 CMOS-2 gates)
+    // instead of a 64-stage linear priority chain (~128 gates).
+    logic [63:0] sgn_l0_p, sgn_l0_n;
+    logic [31:0] sgn_l1_p, sgn_l1_n;
+    logic [15:0] sgn_l2_p, sgn_l2_n;
+    logic [7:0]  sgn_l3_p, sgn_l3_n;
+    logic [3:0]  sgn_l4_p, sgn_l4_n;
+    logic [1:0]  sgn_l5_p, sgn_l5_n;
+
+    assign sgn_l0_p = rs1_p;
+    assign sgn_l0_n = rs1_n;
+
+    genvar gi;
+    generate
+        for (gi = 0; gi < 32; gi = gi + 1) begin : gen_sgn_l1
+            assign sgn_l1_p[gi] = sgn_l0_p[2*gi+1] | (~sgn_l0_n[2*gi+1] & sgn_l0_p[2*gi]);
+            assign sgn_l1_n[gi] = sgn_l0_n[2*gi+1] | (~sgn_l0_p[2*gi+1] & sgn_l0_n[2*gi]);
+        end
+        for (gi = 0; gi < 16; gi = gi + 1) begin : gen_sgn_l2
+            assign sgn_l2_p[gi] = sgn_l1_p[2*gi+1] | (~sgn_l1_n[2*gi+1] & sgn_l1_p[2*gi]);
+            assign sgn_l2_n[gi] = sgn_l1_n[2*gi+1] | (~sgn_l1_p[2*gi+1] & sgn_l1_n[2*gi]);
+        end
+        for (gi = 0; gi < 8; gi = gi + 1) begin : gen_sgn_l3
+            assign sgn_l3_p[gi] = sgn_l2_p[2*gi+1] | (~sgn_l2_n[2*gi+1] & sgn_l2_p[2*gi]);
+            assign sgn_l3_n[gi] = sgn_l2_n[2*gi+1] | (~sgn_l2_p[2*gi+1] & sgn_l2_n[2*gi]);
+        end
+        for (gi = 0; gi < 4; gi = gi + 1) begin : gen_sgn_l4
+            assign sgn_l4_p[gi] = sgn_l3_p[2*gi+1] | (~sgn_l3_n[2*gi+1] & sgn_l3_p[2*gi]);
+            assign sgn_l4_n[gi] = sgn_l3_n[2*gi+1] | (~sgn_l3_p[2*gi+1] & sgn_l3_n[2*gi]);
+        end
+        for (gi = 0; gi < 2; gi = gi + 1) begin : gen_sgn_l5
+            assign sgn_l5_p[gi] = sgn_l4_p[2*gi+1] | (~sgn_l4_n[2*gi+1] & sgn_l4_p[2*gi]);
+            assign sgn_l5_n[gi] = sgn_l4_n[2*gi+1] | (~sgn_l4_p[2*gi+1] & sgn_l4_n[2*gi]);
+        end
+    endgenerate
+    assign sign_p = sgn_l5_p[1] | (~sgn_l5_n[1] & sgn_l5_p[0]);
+    assign sign_n = sgn_l5_n[1] | (~sgn_l5_p[1] & sgn_l5_n[0]);
     logic signed [63:0] pack243_val;
     logic [4:0]  shl3_shamt;
     logic [63:0] shl3_keep;
@@ -742,18 +779,7 @@ module riscv_xbt_alu #(
         prod_p = (rs1_p & rs2_p) | (rs1_n & rs2_n);
         prod_n = (rs1_p & rs2_n) | (rs1_n & rs2_p);
 
-        // Priority encoder for sign(rs1) (ascending scan: MSB non-zero trit wins)
-        sign_p = 1'b0;
-        sign_n = 1'b0;
-        for (int i = 0; i < 64; i++) begin
-            if (rs1_p[i]) begin
-                sign_p = 1'b1;
-                sign_n = 1'b0;
-            end else if (rs1_n[i]) begin
-                sign_p = 1'b0;
-                sign_n = 1'b1;
-            end
-        end
+        // sign_p / sign_n computed above by 6-level parallel binary tree
 
         // Base-243 pack of rs1[4:0]: 121 + sum_{k=0..4} trit(k) * 3^k
         pack243_val = 64'sd121
