@@ -9,7 +9,7 @@
 [![Lean 4](https://img.shields.io/badge/Lean_4-5_Files_%7C_0_sorry-brightgreen.svg)](BalancedTernary.lean)
 [![Rocq 9](https://img.shields.io/badge/Rocq_9-4_Files_%7C_66_Theorems_%7C_0_Axioms-brightgreen.svg)](proofs/rocq/BalancedTernaryFoundations.v)
 [![Z3 SMT](https://img.shields.io/badge/Z3_SMT-14_Root_%2B_11_Suite-brightgreen.svg)](verify_z3_kogge_stone.py)
-[![Golden Model](https://img.shields.io/badge/Xbt_Golden_Model-14%2C331_v1%2Bv2_Checks-brightgreen.svg)](verification/golden_model/xbt_golden.py)
+[![Golden Model](https://img.shields.io/badge/Xbt_Golden_Model-16%2C331_v1%2Bv2_Checks-brightgreen.svg)](verification/golden_model/xbt_golden.py)
 [![CTest](https://img.shields.io/badge/CTest-90_Targets-success.svg)](CMakeLists.txt)
 [![Silicon RTL](https://img.shields.io/badge/RTL-RISC--V_Xbt_Pre--Silicon-blueviolet.svg)](hw/riscv_xbt_extension.sv)
 
@@ -33,7 +33,7 @@ Balanced ternary (`{-1, 0, +1}`) eliminates hardware multipliers for ternary wei
 | Track | Focus | Core Components | Current Status |
 | :--- | :--- | :--- | :--- |
 | **Track 1 — Present-Day Hardware Compiler & SDK** | High-throughput balanced ternary execution on commodity x86_64, ARM64, Vulkan, and CUDA | Checked scalar Core IR (`int39`, `BTFP<1..40>`), AVX-512/AVX2/NEON bit-sliced ternary GEMM (`include/Ternary/Blas/TernaryMicroKernel.hpp`), Vulkan/CUDA map kernels, `libtrium_sdk` (C, C++20, Python `trium`, Rust `bt_runtime::sdk`), unified `tools/trium_workflow.py` | **Measured & verified on bare-metal CPUs** (90 CTest targets; Xeon Platinum 8481C & Apple M2 reproductions) |
-| **Track 2 — Next-Generation Ternary & RISC-V `Xbt` Hardware Compiler** | Target-agnostic backend authoring, ISA selection, co-simulation, and synthesizable RTL | Declarative YAML targets (`targets/*.yaml` → `tools/gen_targets.py` → `tools/gen_backend.py`), rule-driven `XbtInstructionSelector` (v1+v2 Custom-0 `0x0B`), POSIX-pipe `ExternalSimulator`, `hw/riscv_xbt_extension.sv`, 5-stage `hw/trium_cpu_core.sv`, `hw/tb_riscv_xbt_alu.sv`, `hw/synth_xbt_yosys.ys`, Chipyard `WithXbtRoCCAccelerator`, `tools/run_hardware_benchmarks.py` | **Pre-silicon RTL & conformance verified** (16,331 Golden Model v1+v2 checks; EDA scripts ready; not yet taped out or FPGA-measured) |
+| **Track 2 — Next-Generation Ternary & RISC-V `Xbt` Hardware Compiler** | Target-agnostic backend authoring, ISA selection, co-simulation, and synthesizable RTL | Declarative YAML targets (`targets/*.yaml` → `tools/gen_targets.py` → `tools/gen_backend.py`), rule-driven `XbtInstructionSelector` (v1+v2 Custom-0 `0x0B`), POSIX-pipe `ExternalSimulator`, `hw/riscv_xbt_extension.sv`, 5-stage `hw/trium_cpu_core.sv`, `hw/tb_riscv_xbt_alu.sv`, `hw/synth_xbt_yosys.ys`, Chipyard `WithXbtRoCCAccelerator`, `tools/run_hardware_benchmarks.py` | **Pre-silicon RTL & synthesis verified** (16,331 Golden Model checks; 280 Verilator ALU checks; ABC `ltp = 59` gates; Artix-7 `4,929 LUTs`) |
 
 ```mermaid
 flowchart TD
